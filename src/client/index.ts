@@ -15,3 +15,9 @@ export {
   RedmineNotFoundError,
   httpErrorFor,
 } from './errors.js';
+export {
+  getIssue,
+  listIssues,
+  type RedmineIssuePayload,
+  type ListIssuesOptions,
+} from './issues.js';
