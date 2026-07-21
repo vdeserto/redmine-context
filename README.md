@@ -8,6 +8,31 @@ Consumidor de Redmine que entrega contexto completo de issues — texto e mídia
 
 - Node.js ≥ 20
 
+## Quickstart
+
+Do login ao contexto da issue no seu LLM, em três passos:
+
+```bash
+# 1) login — autentica e grava a api_key da instância na cascata de credenciais
+#    (senha ou, em contas com 2FA, cole a api_key quando solicitado).
+redmine-context login --url https://redmine.example
+
+# 2) issue — imprime o bundle Markdown completo da issue em stdout
+#    (descrição + histórico + custom fields + anexos + relações + pai/filhos).
+redmine-context issue 42 --url https://redmine.example
+#    --json grava/emite o bundle JSON canônico; --out <dir> grava em arquivo.
+
+# 3) mcp add — registra o MCP server no seu cliente (ex.: Claude) para expor a
+#    tool read-only get_issue_context, usando a mesma credencial da cascata.
+claude mcp add redmine-context \
+  --env REDMINE_URL=https://redmine.example \
+  -- npx -y redmine-context mcp
+```
+
+Para o ambiente Docker local (http), passe `--insecure` na CLI e
+`REDMINE_INSECURE=1` no ambiente do MCP server (TLS é obrigatório por padrão;
+ver [Ambiente de teste](#ambiente-de-teste) e [E2E](#e2e-dogfood-cli--mcp)).
+
 ## Scripts
 
 | Script | O que faz |
@@ -17,6 +42,7 @@ Consumidor de Redmine que entrega contexto completo de issues — texto e mídia
 | `npm test` | Vitest com cobertura (threshold 80%) |
 | `npm run build` | Compila para `dist/` |
 | `npm run seed` | Popula fixtures base no Redmine via REST (ver [Seed](#seed-de-fixtures)) |
+| `npm run e2e` | Roteiro E2E de dogfood (CLI + MCP) contra o Docker (ver [E2E](#e2e-dogfood-cli--mcp)) |
 
 ## Estrutura
 
@@ -101,6 +127,29 @@ Config via ambiente (defaults combinam com o compose de teste):
 > por sessão e **não bloqueia a REST API via Basic auth**; ainda assim o seed o
 > zera de forma proativa e idempotente (`PUT /users/{id}.json`, mantendo a mesma
 > senha) para manter o admin utilizável em web + API.
+
+### E2E dogfood (CLI + MCP)
+
+Com Docker disponível, o roteiro E2E automatizado valida o fluxo real
+ponta-a-ponta (issue #20 / M1-14):
+
+```bash
+npm run e2e
+```
+
+O script (`scripts/e2e.mjs`, Node puro, sem dependências, log em stderr, exit
+`!= 0` em falha) sobe o stack (ou assume up com `E2E_ASSUME_UP=1`), espera
+healthy + one-shots, roda o seed, builda, exercita a **CLI** para as 3 issues
+do seed (grep das strings das fixtures: descrição, journal, custom field, anexo,
+relação e pai/filho), sobe o **MCP server** como subprocess e chama
+`get_issue_context` via um cliente JSON-RPC stdio mínimo (initialize →
+initialized → tools/call), compara **MCP vs CLI** byte-a-byte, mede o tempo
+issue→bundle (cache quente, orçamento < 30 s), testa a **recusa de http:// sem
+`--insecure`** (exit `!= 0`) e faz o teardown (`down -v`) ao final.
+
+> A api_key é obtida no fluxo real (`GET /users/current.json` com Basic auth
+> admin). Contra o Docker local (http) a CLI usa `--insecure` e o MCP server
+> lê `REDMINE_INSECURE=1` do ambiente.
 
 ### Reproduzir instância limpa / derrubar
 

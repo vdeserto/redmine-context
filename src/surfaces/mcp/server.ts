@@ -44,8 +44,20 @@ export interface McpServerDeps {
   env: NodeJS.ProcessEnv;
   /** Versão da ferramenta gravada no bundle. */
   toolVersion: string;
+  /**
+   * Permite `http://` (sem TLS) com aviso ruidoso. Derivado de `REDMINE_INSECURE`
+   * no ambiente do processo. Default: `false` (só `https://`). Espelha a flag
+   * `--insecure` da CLI para os ambientes de teste/CI que usam http local.
+   */
+  insecure?: boolean;
   /** Sink de diagnóstico (progresso/erros) — SEMPRE stderr no stdio transport. */
   log?: (message: string) => void;
+}
+
+/** Interpreta `REDMINE_INSECURE` (`1`/`true`, case-insensitive) como boolean. */
+function parseInsecure(env: NodeJS.ProcessEnv): boolean {
+  const raw = env.REDMINE_INSECURE;
+  return raw !== undefined && /^(1|true)$/i.test(raw.trim());
 }
 
 /** Nome canônico da tool exposta pelo server. */
@@ -141,6 +153,7 @@ export function createGetIssueContextHandler(
         issueId: args.issue_id,
         format,
         toolVersion: deps.toolVersion,
+        insecure: deps.insecure ?? false,
       })) {
         if (event.kind === 'progress') {
           deps.log?.(event.message);
@@ -192,6 +205,7 @@ export function defaultMcpDeps(): McpServerDeps {
     resolveApiKey: core.resolveApiKey,
     env: process.env,
     toolVersion: core.TOOL_VERSION,
+    insecure: parseInsecure(process.env),
     // Diagnóstico SEMPRE em stderr: o stdout pertence ao protocolo stdio.
     log: (message: string) => void process.stderr.write(`${message}\n`),
   };

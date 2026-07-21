@@ -16,6 +16,7 @@ import type { CoreEvent, IssueBundleResult } from '../../../src/index.js';
 import {
   createGetIssueContextHandler,
   createMcpServer,
+  defaultMcpDeps,
   type McpServerDeps,
 } from '../../../src/surfaces/mcp/server.js';
 
@@ -101,6 +102,26 @@ describe('MCP: get_issue_context handler', () => {
     await handler({ issue_id: 7 });
 
     expect(core.fetchIssueBundle).toHaveBeenCalledWith(expect.objectContaining({ format: 'md' }));
+  });
+
+  it('insecure default: repassa insecure=false ao core', async () => {
+    vi.mocked(core.resolveApiKey).mockResolvedValue('key');
+    vi.mocked(core.fetchIssueBundle).mockReturnValue(bundleStream('MD'));
+    const handler = createGetIssueContextHandler(makeDeps());
+
+    await handler({ issue_id: 7 });
+
+    expect(core.fetchIssueBundle).toHaveBeenCalledWith(expect.objectContaining({ insecure: false }));
+  });
+
+  it('insecure habilitado: repassa insecure=true ao core (http local)', async () => {
+    vi.mocked(core.resolveApiKey).mockResolvedValue('key');
+    vi.mocked(core.fetchIssueBundle).mockReturnValue(bundleStream('MD'));
+    const handler = createGetIssueContextHandler(makeDeps({ insecure: true }));
+
+    await handler({ issue_id: 7 });
+
+    expect(core.fetchIssueBundle).toHaveBeenCalledWith(expect.objectContaining({ insecure: true }));
   });
 
   it('404: isError com mensagem tipada de issue inexistente', async () => {
@@ -199,5 +220,28 @@ describe('MCP: createMcpServer', () => {
     const server = createMcpServer(makeDeps());
     expect(server).toBeDefined();
     expect(typeof server.connect).toBe('function');
+  });
+});
+
+describe('MCP: defaultMcpDeps', () => {
+  const prev = process.env.REDMINE_INSECURE;
+  afterEach(() => {
+    if (prev === undefined) delete process.env.REDMINE_INSECURE;
+    else process.env.REDMINE_INSECURE = prev;
+  });
+
+  it('insecure=false quando REDMINE_INSECURE ausente', () => {
+    delete process.env.REDMINE_INSECURE;
+    expect(defaultMcpDeps().insecure).toBe(false);
+  });
+
+  it('insecure=true quando REDMINE_INSECURE=1', () => {
+    process.env.REDMINE_INSECURE = '1';
+    expect(defaultMcpDeps().insecure).toBe(true);
+  });
+
+  it('insecure=true quando REDMINE_INSECURE=true (case-insensitive)', () => {
+    process.env.REDMINE_INSECURE = 'TRUE';
+    expect(defaultMcpDeps().insecure).toBe(true);
   });
 });
