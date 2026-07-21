@@ -134,12 +134,15 @@ export function redactSecret(text: string, apiKey: string): string {
 /**
  * Valida o esquema da URL base conforme a política de TLS do ADR-003.
  *
+ * Exportada para ser reutilizada por outros fluxos de autenticação (ex.: login
+ * por senha em `config/login.ts`), evitando duplicar a política de TLS.
+ *
  * @param baseUrl - URL base a validar.
  * @param insecure - Se `true`, permite `http://` com aviso ruidoso.
  * @param logger - Logger para o aviso de conexão insegura.
  * @throws {Error} Se `http://` for usado sem `insecure`, ou se o esquema for inválido.
  */
-function assertTlsPolicy(baseUrl: string, insecure: boolean, logger: Logger): void {
+export function validateBaseUrl(baseUrl: string, insecure: boolean, logger: Logger): void {
   let parsed: URL;
   try {
     parsed = new URL(baseUrl);
@@ -186,7 +189,7 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
   if (apiKey.length === 0) {
     throw new Error('apiKey é obrigatória e não pode ser vazia.');
   }
-  assertTlsPolicy(baseUrl, insecure, logger);
+  validateBaseUrl(baseUrl, insecure, logger);
 
   const redact = (text: string): string => redactSecret(text, apiKey);
 

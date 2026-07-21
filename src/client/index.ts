@@ -3,6 +3,7 @@ export const MODULE_NAME = 'client' as const;
 export {
   createHttpClient,
   redactSecret,
+  validateBaseUrl,
   type HttpClient,
   type HttpClientOptions,
   type Logger,
