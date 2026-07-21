@@ -22,6 +22,22 @@ Consumidor de Redmine que entrega contexto completo de issues — texto e mídia
 
 `src/` segue os 6 módulos do core (ADR-005): `client` (REST Redmine), `normalize`, `extract` (pipeline de mídia), `bundle`, `config` (auth/credenciais), `cache`. Superfícies (CLI/TUI/MCP) chegam nos milestones M1–M2.
 
+## MCP server (stdio)
+
+O subcomando `redmine-context mcp` sobe um servidor [MCP](https://modelcontextprotocol.io) sobre stdio, expondo uma tool read-only:
+
+- `get_issue_context(issue_id: number, format?: 'markdown' | 'json')` — busca a issue na instância configurada, normaliza e retorna o bundle (Markdown por padrão).
+
+A instância vem sempre da configuração do processo (`REDMINE_URL` + cascata de credencial, `REDMINE_API_KEY` no modo headless): **nenhuma tool aceita URL/host arbitrário**. Erros 403/404 e credencial ausente retornam um erro MCP claro (`isError`). O stdout é reservado ao protocolo; logs vão para stderr.
+
+Registro no Claude:
+
+```bash
+claude mcp add redmine-context -- npx -y redmine-context mcp
+```
+
+Configure o ambiente do servidor com `REDMINE_URL` e `REDMINE_API_KEY` (ou rode `redmine-context login` para gravar a credencial na cascata).
+
 ## Ambiente de teste
 
 Um ambiente Redmine + Postgres descartável, usado pelos testes locais e
