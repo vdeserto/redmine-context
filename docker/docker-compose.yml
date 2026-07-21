@@ -54,6 +54,13 @@ services:
   # step. The official image exposes no env for this setting, so we flip it in
   # the DB (idempotent). Updating updated_on invalidates Redmine's settings
   # cache, so the next request already sees rest_api_enabled=1.
+  #
+  # It also clears the default admin's must_change_passwd flag. The official
+  # image seeds admin/admin with must_change_passwd=true, which hard-blocks the
+  # REST API via Basic auth with 403 (session/web is unaffected). Since the
+  # default password 'admin' is below Redmine's min length (8), it cannot be
+  # re-set through the API/web after a real change — so clearing the flag in the
+  # DB (idempotent) is the only way to keep admin/admin usable for the API.
   enable-rest-api:
     image: postgres:16-alpine
     depends_on:
@@ -71,7 +78,39 @@ services:
             WHERE NOT EXISTS (SELECT 1 FROM settings WHERE name = 'rest_api_enabled');
             UPDATE settings SET value = '1', updated_on = NOW()
             WHERE name = 'rest_api_enabled';
+            UPDATE users SET must_change_passwd = false
+            WHERE login = 'admin' AND must_change_passwd = true;
           "
+    restart: "no"
+
+  # One-shot: carrega os dados default do Redmine (trackers, statuses, priorities,
+  # roles) numa instalação fresh — sem eles, POST /issues.json falha com 422 e não
+  # há REST API para criá-los. Idempotente: o rake avisa quando já carregado.
+  load-default-data:
+    image: redmine:6
+    depends_on:
+      enable-rest-api:
+        condition: service_completed_successfully
+    environment:
+      RAILS_ENV: production
+      REDMINE_LANG: en
+      SECRET_KEY_BASE: ${REDMINE_SECRET_KEY_BASE:-please-change-me-in-real-envs}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        cd /usr/src/redmine
+        cat > config/database.yml <<EOF
+        production:
+          adapter: postgresql
+          host: postgres
+          database: ${POSTGRES_DB:-redmine}
+          username: ${POSTGRES_USER:-redmine}
+          password: ${POSTGRES_PASSWORD:-redmine}
+        EOF
+        bundle exec rake redmine:load_default_data 2>&1 | tee /tmp/out
+        # Idempotente: sucesso ("Default configuration data loaded") ou
+        # re-execução ("Some configuration data is already loaded") saem 0.
+        grep -qiE 'loaded' /tmp/out
     restart: "no"
 
 volumes:
