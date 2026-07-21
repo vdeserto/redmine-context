@@ -1,0 +1,79 @@
+# Test/CI environment for redmine-context.
+# Brings up Redmine (REST API enabled) backed by Postgres, with named volumes
+# and healthchecks. The same file is reused by the CI pipeline (no fork).
+#
+#   docker compose -f docker/docker-compose.yml up -d
+#   docker/wait-for-healthy.sh
+#   docker compose -f docker/docker-compose.yml down -v   # clean teardown
+#
+# Parametrize via environment (see .env.example):
+#   REDMINE_PORT (default 3080), POSTGRES_USER/PASSWORD/DB, REDMINE_SECRET_KEY_BASE
+name: redmine-context-test
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-redmine}
+      POSTGRES_USER: ${POSTGRES_USER:-redmine}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-redmine}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-redmine} -d ${POSTGRES_DB:-redmine}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  redmine:
+    image: redmine:6
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      REDMINE_DB_POSTGRES: postgres
+      REDMINE_DB_DATABASE: ${POSTGRES_DB:-redmine}
+      REDMINE_DB_USERNAME: ${POSTGRES_USER:-redmine}
+      REDMINE_DB_PASSWORD: ${POSTGRES_PASSWORD:-redmine}
+      REDMINE_SECRET_KEY_BASE: ${REDMINE_SECRET_KEY_BASE:-please-change-me-in-real-envs}
+    ports:
+      - "${REDMINE_PORT:-3080}:3000"
+    volumes:
+      - redmine_files:/usr/src/redmine/files
+    healthcheck:
+      # The official redmine image ships wget (not curl); a 200 on / proves the
+      # web app finished migrating the DB and is serving.
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:3000/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 24
+      start_period: 40s
+
+  # One-shot: enables the REST API right after Redmine is up, with no manual
+  # step. The official image exposes no env for this setting, so we flip it in
+  # the DB (idempotent). Updating updated_on invalidates Redmine's settings
+  # cache, so the next request already sees rest_api_enabled=1.
+  enable-rest-api:
+    image: postgres:16-alpine
+    depends_on:
+      redmine:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:-redmine}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        psql -h postgres -U "${POSTGRES_USER:-redmine}" -d "${POSTGRES_DB:-redmine}" \
+          -v ON_ERROR_STOP=1 -c "
+            INSERT INTO settings (name, value, updated_on)
+            SELECT 'rest_api_enabled', '1', NOW()
+            WHERE NOT EXISTS (SELECT 1 FROM settings WHERE name = 'rest_api_enabled');
+            UPDATE settings SET value = '1', updated_on = NOW()
+            WHERE name = 'rest_api_enabled';
+          "
+    restart: "no"
+
+volumes:
+  pgdata:
+  redmine_files:
