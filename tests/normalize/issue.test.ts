@@ -110,14 +110,19 @@ describe('normalizeIssue: payload completo (caso esperado)', () => {
     });
   });
 
-  it('deixa o escopo da #12 como coleções vazias / ausências explícitas', () => {
+  it('preenche o escopo da #12 (custom_fields, relations, watchers) do payload', () => {
     const issue = normalizeIssue(fullPayload());
 
-    expect(issue.custom_fields).toEqual([]);
-    expect(issue.relations).toEqual([]);
+    expect(issue.custom_fields).toEqual([
+      { id: 1, name: 'Severidade', value: 'Alta', raw_value: 'Alta' },
+    ]);
+    expect(issue.relations).toEqual([
+      { id: 30, issue_id: 100, issue_to_id: 101, relation_type: 'precedes', delay: null },
+    ]);
+    expect(issue.watchers).toEqual([{ id: 9, name: 'Watcher' }]);
+    // fullPayload não traz parent/children.
     expect(issue.children).toEqual([]);
     expect(issue.parent).toBeUndefined();
-    expect(issue.watchers).toBeUndefined();
   });
 });
 
