@@ -76,6 +76,23 @@ describe('contract: modelo normalizado (ADR-005)', () => {
       value: ['prod', 'staging'],
       raw_value: ['prod', 'staging'],
     };
+    // Custom field vazio: value normaliza ausência para null; raw_value preserva o bruto ("" ou null).
+    const cfEmpty: CustomField = {
+      id: 3,
+      name: 'Observações',
+      value: null,
+      raw_value: '',
+    };
+    const cfNullFromApi: CustomField = {
+      id: 4,
+      name: 'Data limite',
+      value: null,
+      raw_value: null,
+      field_format: 'date',
+    };
+    expect(cfEmpty.value).toBeNull();
+    expect(cfEmpty.raw_value).toBe('');
+    expect(cfNullFromApi.raw_value).toBeNull();
 
     const journal: Journal = {
       id: 10,

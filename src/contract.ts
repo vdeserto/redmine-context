@@ -17,13 +17,15 @@ export interface RedmineRef {
 
 /**
  * Custom field normalizado — SEM coerção de tipo (ADR-005).
- * `raw_value` preserva o valor bruto; em campos "multiple" é `string[]`.
+ * `raw_value` preserva o valor bruto exatamente como a API devolveu (incl. `null`
+ * ou `""` em campo vazio); em campos "multiple" é `string[]`.
+ * `value` normaliza apenas ausência: `""`/`null`/ausente → `null`. Nada além disso.
  */
 export interface CustomField {
   id: number;
   name: string;
   value: string | string[] | null;
-  raw_value: string | string[];
+  raw_value: string | string[] | null;
   field_format?: string;
 }
 
