@@ -14,6 +14,18 @@ export {
   type IssueBundleResult,
 } from './fetch-issue-bundle.js';
 
+// Orquestração de busca (filtros + full-text best-effort) para a tool MCP (#19).
+export {
+  fetchIssueSearch,
+  SEARCH_DEFAULT_LIMIT,
+  type FetchIssueSearchOptions,
+  type IssueSearchFilters,
+  type IssueSearchResult,
+} from './fetch-issue-search.js';
+
+// Primitiva full-text `/search.json` (usada pela orquestração acima).
+export { searchIssues, type SearchIssuesOptions, type SearchIssuesPage } from './client/index.js';
+
 // Erros HTTP tipados — usados pelas superfícies para mapear exit codes (ADR-005).
 export {
   RedmineHttpError,
