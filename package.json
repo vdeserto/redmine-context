@@ -4,6 +4,9 @@
   "description": "Consumidor de Redmine que entrega contexto completo de issues (texto + mídia extraída localmente) para qualquer LLM",
   "type": "module",
   "license": "MIT",
+  "bin": {
+    "redmine-context": "dist/surfaces/cli/main.js"
+  },
   "engines": {
     "node": ">=20"
   },
