@@ -1,84 +1,40 @@
 /**
- * Normalização do payload bruto de issue (issue #11).
+ * Normalização do payload bruto de issue (issues #11/#12).
  *
  * Converte o {@link RedmineIssuePayload} devolvido por `getIssue`
- * (`/issues/{id}.json?include=journals,attachments`) no modelo estável
- * {@link Issue} do contrato. Escopo: NÚCLEO apenas — id, subject, description,
- * refs (project/tracker/status/priority/author/assigned_to), datas, journals e
- * attachments. Custom fields, relations, parent/children e watchers ficam para
- * a issue #12: aqui saem como coleções vazias / ausências explícitas.
+ * (`/issues/{id}.json?include=journals,attachments,relations,children`) no modelo
+ * estável {@link Issue} do contrato. Cobre o núcleo (#11) — id, subject,
+ * description, refs, datas, journals e attachments — e as coleções aninhadas
+ * (#12) delegadas a `./collections.js`: custom_fields, relations, parent/children
+ * e watchers.
  *
  * Parsing 100% defensivo (estilo `src/client/issues.ts`): payload parcial ou
  * malformado NUNCA lança — cada campo degrada para um default estável.
  */
 
 import type { RedmineIssuePayload } from '../client/issues.js';
-import type {
-  Attachment,
-  Issue,
-  Journal,
-  JournalDetail,
-  RedmineRef,
-} from '../contract.js';
+import type { Attachment, Issue, Journal, JournalDetail, RedmineRef } from '../contract.js';
+import {
+  normalizeChildren,
+  normalizeCustomFields,
+  normalizeParent,
+  normalizeRelations,
+  normalizeWatchers,
+} from './collections.js';
+import {
+  asArray,
+  asNumber,
+  asRecord,
+  asString,
+  asStringOrNull,
+  isDefined,
+  normalizeRef,
+} from './helpers.js';
 
 /** Ref placeholder para campos obrigatórios do contrato ausentes no payload. */
 // Congelado: instância compartilhada entre todas as issues degradadas — mutação
 // acidental corromperia o placeholder globalmente (modo strict lança).
 const NULL_REF: RedmineRef = Object.freeze({ id: 0, name: '' });
-
-/**
- * Converte um valor desconhecido em `Record<string, unknown>` para acesso seguro.
- *
- * @param value - Valor a inspecionar.
- * @returns O objeto tipado, ou `undefined` se não for um objeto simples.
- */
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
-    return value as Record<string, unknown>;
-  }
-  return undefined;
-}
-
-/** Devolve o array bruto, ou `[]` quando o valor não é um array. */
-function asArray(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : [];
-}
-
-/** `string` quando o valor é textual, senão `undefined`. */
-function asString(value: unknown): string | undefined {
-  return typeof value === 'string' ? value : undefined;
-}
-
-/** `number` quando o valor é numérico, senão `undefined`. */
-function asNumber(value: unknown): number | undefined {
-  return typeof value === 'number' ? value : undefined;
-}
-
-/** Preserva `string`/`null` de details brutos; tipos inesperados viram `null`. */
-function asStringOrNull(value: unknown): string | null {
-  if (value === null) return null;
-  return typeof value === 'string' ? value : null;
-}
-
-/** Type guard para remover `undefined` após um `map` defensivo. */
-function isDefined<T>(value: T | undefined): value is T {
-  return value !== undefined;
-}
-
-/**
- * Normaliza uma ref nomeada do Redmine (`{ id, name }`).
- *
- * @param value - Valor bruto (objeto esperado).
- * @returns A ref quando há `id` numérico; senão `undefined`. `name` não-string
- *   degrada para `""`.
- */
-function normalizeRef(value: unknown): RedmineRef | undefined {
-  const record = asRecord(value);
-  if (record === undefined) return undefined;
-  const id = asNumber(record.id);
-  if (id === undefined) return undefined;
-  return { id, name: asString(record.name) ?? '' };
-}
 
 /** Ref obrigatória do contrato: cai para {@link NULL_REF} se ausente/inválida. */
 function requireRef(value: unknown): RedmineRef {
@@ -161,17 +117,25 @@ function normalizeAttachment(value: unknown): Attachment | undefined {
 /**
  * Normaliza o payload bruto de uma issue no modelo {@link Issue} do contrato.
  *
- * Escopo issue #11 (núcleo): id, subject, description, refs, datas, journals e
- * attachments. Campos da issue #12 (custom_fields, relations, parent/children,
- * watchers) saem vazios/ausentes. Nunca lança: payload parcial/malformado
- * degrada campo a campo para defaults estáveis.
+ * Núcleo (#11): id, subject, description, refs, datas, journals e attachments.
+ * Coleções (#12): custom_fields, relations, parent/children e watchers. Nunca
+ * lança: payload parcial/malformado degrada campo a campo para defaults estáveis.
+ *
+ * `watchers` só aparece quando a chave está presente no payload; a ausência
+ * (include não pedido ou 403) omite o campo como degradação. A API de issue não
+ * devolve `field_format` dos custom fields — o chamador pode anotá-lo via
+ * `fieldFormats` (ex.: a partir de `/custom_fields.json`).
  *
  * @param payload - Payload bruto de `getIssue`.
+ * @param fieldFormats - Mapa opcional `custom_field_id → field_format`.
  * @returns A issue normalizada, sempre válida perante o contrato.
  * @example
  * const issue = normalizeIssue(await getIssue(http, 100));
  */
-export function normalizeIssue(payload: RedmineIssuePayload): Issue {
+export function normalizeIssue(
+  payload: RedmineIssuePayload,
+  fieldFormats?: Map<number, string>,
+): Issue {
   const record = asRecord(payload) ?? {};
 
   const issue: Issue = {
@@ -186,16 +150,19 @@ export function normalizeIssue(payload: RedmineIssuePayload): Issue {
     updated_on: asString(record.updated_on) ?? '',
     journals: asArray(record.journals).map(normalizeJournal).filter(isDefined),
     attachments: asArray(record.attachments).map(normalizeAttachment).filter(isDefined),
-    // Escopo issue #12: preenchidos noutra camada.
-    custom_fields: [],
-    relations: [],
-    children: [],
+    custom_fields: normalizeCustomFields(record.custom_fields, fieldFormats),
+    relations: normalizeRelations(record.relations),
+    children: normalizeChildren(record.children),
   };
 
   const description = asString(record.description);
   if (description !== undefined && description !== '') issue.description = description;
   const assignedTo = normalizeRef(record.assigned_to);
   if (assignedTo !== undefined) issue.assigned_to = assignedTo;
+  const parent = normalizeParent(record.parent);
+  if (parent !== undefined) issue.parent = parent;
+  // Ausência da chave `watchers` = degradação (403/include ausente): campo omitido.
+  if ('watchers' in record) issue.watchers = normalizeWatchers(record.watchers);
 
   return issue;
 }
