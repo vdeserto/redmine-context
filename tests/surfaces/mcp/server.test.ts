@@ -7,14 +7,16 @@ vi.mock('../../../src/index.js', async (importOriginal) => {
   return {
     ...actual,
     fetchIssueBundle: vi.fn(),
+    fetchIssueSearch: vi.fn(),
     resolveApiKey: vi.fn(),
   };
 });
 
 import * as core from '../../../src/index.js';
-import type { CoreEvent, IssueBundleResult } from '../../../src/index.js';
+import type { CoreEvent, IssueBundleResult, IssueSearchResult } from '../../../src/index.js';
 import {
   createGetIssueContextHandler,
+  createSearchIssuesHandler,
   createMcpServer,
   defaultMcpDeps,
   type McpServerDeps,
@@ -41,6 +43,7 @@ function makeDeps(overrides: Partial<McpServerDeps> = {}): McpServerDeps & { log
   const logs: string[] = [];
   return {
     fetchIssueBundle: core.fetchIssueBundle,
+    searchIssues: core.fetchIssueSearch,
     resolveApiKey: core.resolveApiKey,
     env: { REDMINE_URL: 'https://redmine.example' } as NodeJS.ProcessEnv,
     toolVersion: '9.9.9',
@@ -48,6 +51,11 @@ function makeDeps(overrides: Partial<McpServerDeps> = {}): McpServerDeps & { log
     logs,
     ...overrides,
   };
+}
+
+/** Resultado de busca fake para o core mockado. */
+function searchResult(overrides: Partial<IssueSearchResult> = {}): IssueSearchResult {
+  return { content: '# Resultados\n', count: 0, warnings: [], degraded: false, ...overrides };
 }
 
 /** Extrai o texto concatenado de um CallToolResult. */
@@ -215,8 +223,105 @@ describe('MCP: get_issue_context handler', () => {
   });
 });
 
+describe('MCP: search_issues handler', () => {
+  it('sucesso: repassa filtros/query/limit ao core e retorna a lista compacta', async () => {
+    vi.mocked(core.resolveApiKey).mockResolvedValue('key');
+    vi.mocked(core.fetchIssueSearch).mockResolvedValue(searchResult({ content: 'LISTA', count: 2 }));
+    const handler = createSearchIssuesHandler(makeDeps());
+
+    const result = await handler({
+      query: 'timeout',
+      project_id: 5,
+      status_id: 'open',
+      assigned_to_id: 'me',
+      updated_on: '>=2026-01-01',
+      limit: 10,
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(textOf(result)).toBe('LISTA');
+    expect(core.fetchIssueSearch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        baseUrl: 'https://redmine.example',
+        apiKey: 'key',
+        query: 'timeout',
+        limit: 10,
+        filters: { project_id: 5, status_id: 'open', assigned_to_id: 'me', updated_on: '>=2026-01-01' },
+      }),
+    );
+  });
+
+  it('limite default: ausência de limit usa 25', async () => {
+    vi.mocked(core.resolveApiKey).mockResolvedValue('key');
+    vi.mocked(core.fetchIssueSearch).mockResolvedValue(searchResult());
+    const handler = createSearchIssuesHandler(makeDeps());
+
+    await handler({ query: 'x' });
+
+    expect(core.fetchIssueSearch).toHaveBeenCalledWith(expect.objectContaining({ limit: 25 }));
+  });
+
+  it('degradação: não é isError; o aviso vem no payload e é logado', async () => {
+    vi.mocked(core.resolveApiKey).mockResolvedValue('key');
+    vi.mocked(core.fetchIssueSearch).mockResolvedValue(
+      searchResult({ content: 'PARCIAL', degraded: true, warnings: ['full-text indisponível'] }),
+    );
+    const deps = makeDeps();
+    const handler = createSearchIssuesHandler(deps);
+
+    const result = await handler({ query: 'x' });
+
+    expect(result.isError).toBeFalsy();
+    expect(textOf(result)).toBe('PARCIAL');
+    expect(deps.logs.join('')).toContain('full-text indisponível');
+  });
+
+  it('401: isError orientando a verificar a credencial', async () => {
+    vi.mocked(core.resolveApiKey).mockResolvedValue('key');
+    vi.mocked(core.fetchIssueSearch).mockRejectedValue(new core.RedmineAuthError('auth', 401, 'u'));
+    const handler = createSearchIssuesHandler(makeDeps());
+
+    const result = await handler({ query: 'x' });
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain('REDMINE_API_KEY');
+  });
+
+  it('403: isError com mensagem de acesso negado', async () => {
+    vi.mocked(core.resolveApiKey).mockResolvedValue('key');
+    vi.mocked(core.fetchIssueSearch).mockRejectedValue(new core.RedmineForbiddenError('fb', 403, 'u'));
+    const handler = createSearchIssuesHandler(makeDeps());
+
+    const result = await handler({});
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain('403');
+  });
+
+  it('erro genérico: isError com a mensagem do erro', async () => {
+    vi.mocked(core.resolveApiKey).mockResolvedValue('key');
+    vi.mocked(core.fetchIssueSearch).mockRejectedValue(new Error('boom busca'));
+    const handler = createSearchIssuesHandler(makeDeps());
+
+    const result = await handler({ query: 'x' });
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain('boom busca');
+  });
+
+  it('sem REDMINE_URL: isError sem chamar o core', async () => {
+    const handler = createSearchIssuesHandler(makeDeps({ env: {} as NodeJS.ProcessEnv }));
+
+    const result = await handler({ query: 'x' });
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain('REDMINE_URL');
+    expect(core.fetchIssueSearch).not.toHaveBeenCalled();
+  });
+});
+
 describe('MCP: createMcpServer', () => {
-  it('constrói um McpServer com a tool registrada (read-only, sem URL/host)', () => {
+  it('constrói um McpServer com as tools registradas (read-only, sem URL/host)', () => {
     const server = createMcpServer(makeDeps());
     expect(server).toBeDefined();
     expect(typeof server.connect).toBe('function');

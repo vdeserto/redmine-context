@@ -17,7 +17,7 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 
 import * as core from '../../index.js';
-import type { BundleFormat, resolveApiKey } from '../../index.js';
+import type { BundleFormat, IssueSearchFilters, resolveApiKey } from '../../index.js';
 
 /** Formato aceito pela tool MCP (nomes amigáveis expostos ao cliente). */
 export type McpFormat = 'markdown' | 'json';
@@ -30,6 +30,22 @@ export interface GetIssueContextArgs {
   format?: McpFormat | undefined;
 }
 
+/** Argumentos da tool `search_issues` já validados pelo schema zod. */
+export interface SearchIssuesArgs {
+  /** Termo full-text opcional (`/search.json`, best-effort). */
+  query?: string | undefined;
+  /** Filtro `project_id`. */
+  project_id?: number | undefined;
+  /** Filtro `status_id` (`'open'`, `'closed'`, `'*'` ou um id). */
+  status_id?: number | string | undefined;
+  /** Filtro `assigned_to_id` (um id ou `'me'`). */
+  assigned_to_id?: number | string | undefined;
+  /** Filtro `updated_on` no formato do Redmine (ex.: `>=2026-01-01`). */
+  updated_on?: string | undefined;
+  /** Máximo de resultados. Default: {@link SEARCH_DEFAULT_LIMIT}. */
+  limit?: number | undefined;
+}
+
 /**
  * Dependências injetáveis do server MCP — permitem testar o handler sem tocar o
  * processo real nem a rede. Os defaults (ver {@link defaultMcpDeps}) apontam para
@@ -38,6 +54,8 @@ export interface GetIssueContextArgs {
 export interface McpServerDeps {
   /** Orquestração get → normalize → bundle do core. */
   fetchIssueBundle: typeof core.fetchIssueBundle;
+  /** Orquestração de busca (filtros + full-text best-effort) do core. */
+  searchIssues: typeof core.fetchIssueSearch;
   /** Resolução de credencial pela cascata (arquivo → env). */
   resolveApiKey: typeof resolveApiKey;
   /** Ambiente consultado para `REDMINE_URL` e pela cascata de credencial. */
@@ -60,8 +78,17 @@ function parseInsecure(env: NodeJS.ProcessEnv): boolean {
   return raw !== undefined && /^(1|true)$/i.test(raw.trim());
 }
 
-/** Nome canônico da tool exposta pelo server. */
+/** Nome canônico da tool de contexto de issue. */
 export const TOOL_NAME = 'get_issue_context';
+
+/** Nome canônico da tool de busca de issues. */
+export const SEARCH_TOOL_NAME = 'search_issues';
+
+/** Limite default de resultados da tool `search_issues` (documentado no schema). */
+export const SEARCH_DEFAULT_LIMIT = 25;
+
+/** Teto de resultados aceito pela tool `search_issues`. */
+const SEARCH_MAX_LIMIT = 100;
 
 /** Schema zod dos argumentos da tool (sem URL/host: a instância vem da env). */
 const INPUT_SCHEMA = {
@@ -70,6 +97,35 @@ const INPUT_SCHEMA = {
     .enum(['markdown', 'json'])
     .optional()
     .describe("Formato de saída: 'markdown' (padrão) ou 'json'"),
+} as const;
+
+/** Schema zod da tool `search_issues` (read-only, sem URL/host). */
+const SEARCH_INPUT_SCHEMA = {
+  query: z
+    .string()
+    .min(1)
+    .optional()
+    .describe('Termo full-text via /search.json (best-effort). Se a busca falhar, degrada para os filtros estruturados com aviso.'),
+  project_id: z.number().int().positive().optional().describe('Filtro estruturado project_id'),
+  status_id: z
+    .union([z.number().int(), z.string()])
+    .optional()
+    .describe("Filtro status_id: um id, 'open', 'closed' ou '*'"),
+  assigned_to_id: z
+    .union([z.number().int(), z.string()])
+    .optional()
+    .describe("Filtro assigned_to_id: um id ou 'me'"),
+  updated_on: z
+    .string()
+    .optional()
+    .describe('Filtro updated_on no formato do Redmine (ex.: >=2026-01-01, <=2026-12-31)'),
+  limit: z
+    .number()
+    .int()
+    .positive()
+    .max(SEARCH_MAX_LIMIT)
+    .optional()
+    .describe(`Máximo de resultados paginados (default ${SEARCH_DEFAULT_LIMIT}, teto ${SEARCH_MAX_LIMIT})`),
 } as const;
 
 /** Extrai uma mensagem legível de um erro desconhecido. */
@@ -110,6 +166,47 @@ function typedErrorMessage(error: unknown, issueId: number): string {
   return messageOf(error);
 }
 
+/** Instância resolvida a partir da env: base URL + credencial já validadas. */
+interface ResolvedInstance {
+  baseUrl: string;
+  apiKey: string;
+}
+
+/**
+ * Resolve `REDMINE_URL` + credencial da env (nunca de argumentos das tools).
+ *
+ * Fonte única da política "sem URL/host nos argumentos": ambas as tools passam
+ * por aqui. Em falha devolve um {@link CallToolResult} de erro orientado; em
+ * sucesso, a instância pronta para uso.
+ *
+ * @param deps - Ver {@link McpServerDeps}.
+ * @returns A instância resolvida, ou um CallToolResult de erro (`isError`).
+ */
+async function resolveInstance(deps: McpServerDeps): Promise<ResolvedInstance | CallToolResult> {
+  const baseUrl = deps.env.REDMINE_URL;
+  if (baseUrl === undefined || baseUrl.length === 0) {
+    return errorResult('Instância não configurada. Defina REDMINE_URL no ambiente do processo.');
+  }
+
+  let apiKey: string | undefined;
+  try {
+    apiKey = await deps.resolveApiKey(baseUrl, { env: deps.env });
+  } catch (error) {
+    return errorResult(messageOf(error));
+  }
+  if (apiKey === undefined || apiKey.length === 0) {
+    return errorResult(
+      `Nenhuma credencial encontrada para ${baseUrl}. Configure REDMINE_API_KEY (ou o arquivo de credenciais via 'redmine-context login').`,
+    );
+  }
+  return { baseUrl, apiKey };
+}
+
+/** Type guard: distingue a instância resolvida de um CallToolResult de erro. */
+function isResolved(value: ResolvedInstance | CallToolResult): value is ResolvedInstance {
+  return 'baseUrl' in value;
+}
+
 /**
  * Cria o handler da tool `get_issue_context`, testável isoladamente.
  *
@@ -127,22 +224,9 @@ export function createGetIssueContextHandler(
   deps: McpServerDeps,
 ): (args: GetIssueContextArgs) => Promise<CallToolResult> {
   return async (args: GetIssueContextArgs): Promise<CallToolResult> => {
-    const baseUrl = deps.env.REDMINE_URL;
-    if (baseUrl === undefined || baseUrl.length === 0) {
-      return errorResult('Instância não configurada. Defina REDMINE_URL no ambiente do processo.');
-    }
-
-    let apiKey: string | undefined;
-    try {
-      apiKey = await deps.resolveApiKey(baseUrl, { env: deps.env });
-    } catch (error) {
-      return errorResult(messageOf(error));
-    }
-    if (apiKey === undefined || apiKey.length === 0) {
-      return errorResult(
-        `Nenhuma credencial encontrada para ${baseUrl}. Configure REDMINE_API_KEY (ou o arquivo de credenciais via 'redmine-context login').`,
-      );
-    }
+    const resolved = await resolveInstance(deps);
+    if (!isResolved(resolved)) return resolved;
+    const { baseUrl, apiKey } = resolved;
 
     const format: BundleFormat = args.format === 'json' ? 'json' : 'md';
     try {
@@ -172,6 +256,71 @@ export function createGetIssueContextHandler(
 }
 
 /**
+ * Traduz erros da busca em mensagens claras (sem `issue_id`, que não se aplica).
+ *
+ * @param error - Erro capturado durante a busca.
+ * @returns Mensagem a exibir no `isError`.
+ */
+function typedSearchErrorMessage(error: unknown): string {
+  if (error instanceof core.RedmineAuthError) {
+    return 'Falha de autenticação (401). Verifique a credencial em REDMINE_API_KEY.';
+  }
+  if (error instanceof core.RedmineForbiddenError) {
+    return 'Acesso negado (403). A credencial não tem permissão para esta busca.';
+  }
+  return messageOf(error);
+}
+
+/** Monta os filtros estruturados a partir dos argumentos definidos da tool. */
+function searchFiltersOf(args: SearchIssuesArgs): IssueSearchFilters {
+  return {
+    project_id: args.project_id,
+    status_id: args.status_id,
+    assigned_to_id: args.assigned_to_id,
+    updated_on: args.updated_on,
+  };
+}
+
+/**
+ * Cria o handler da tool `search_issues`, testável isoladamente.
+ *
+ * Resolve a instância/credencial da env (nunca de argumentos), delega à
+ * orquestração `fetchIssueSearch` (filtros + full-text best-effort) e devolve a
+ * lista compacta em Markdown. A degradação da busca full-text NÃO é erro: o
+ * aviso já vem embutido no payload retornado pelo core.
+ *
+ * @param deps - Ver {@link McpServerDeps}.
+ * @returns Função assíncrona que recebe os argumentos e devolve um CallToolResult.
+ * @example
+ * const handler = createSearchIssuesHandler(defaultMcpDeps());
+ * const result = await handler({ query: 'timeout', project_id: 5 });
+ */
+export function createSearchIssuesHandler(
+  deps: McpServerDeps,
+): (args: SearchIssuesArgs) => Promise<CallToolResult> {
+  return async (args: SearchIssuesArgs): Promise<CallToolResult> => {
+    const resolved = await resolveInstance(deps);
+    if (!isResolved(resolved)) return resolved;
+    const { baseUrl, apiKey } = resolved;
+
+    try {
+      const result = await deps.searchIssues({
+        baseUrl,
+        apiKey,
+        filters: searchFiltersOf(args),
+        query: args.query,
+        limit: args.limit ?? SEARCH_DEFAULT_LIMIT,
+      });
+      // Degradação vira aviso no corpo (não isError); logamos para diagnóstico.
+      if (result.degraded) deps.log?.(result.warnings.join(' '));
+      return textResult(result.content);
+    } catch (error) {
+      return errorResult(typedSearchErrorMessage(error));
+    }
+  };
+}
+
+/**
  * Constrói um {@link McpServer} com a tool `get_issue_context` registrada.
  *
  * A tool é read-only e não expõe URL/host — a instância vem sempre da env.
@@ -182,6 +331,7 @@ export function createGetIssueContextHandler(
 export function createMcpServer(deps: McpServerDeps): McpServer {
   const server = new McpServer({ name: core.TOOL_NAME, version: deps.toolVersion });
   const handler = createGetIssueContextHandler(deps);
+  const searchHandler = createSearchIssuesHandler(deps);
 
   server.registerTool(
     TOOL_NAME,
@@ -195,6 +345,18 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     (args) => handler(args),
   );
 
+  server.registerTool(
+    SEARCH_TOOL_NAME,
+    {
+      title: 'Buscar issues no Redmine',
+      description:
+        'Busca issues na instância configurada (REDMINE_URL) por filtros estruturados (project_id, status_id, assigned_to_id, updated_on) e, opcionalmente, texto livre (query, best-effort via /search). Retorna uma lista compacta paginada. Read-only.',
+      inputSchema: SEARCH_INPUT_SCHEMA,
+      annotations: { readOnlyHint: true, openWorldHint: true },
+    },
+    (args) => searchHandler(args),
+  );
+
   return server;
 }
 
@@ -202,6 +364,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
 export function defaultMcpDeps(): McpServerDeps {
   return {
     fetchIssueBundle: core.fetchIssueBundle,
+    searchIssues: core.fetchIssueSearch,
     resolveApiKey: core.resolveApiKey,
     env: process.env,
     toolVersion: core.TOOL_VERSION,

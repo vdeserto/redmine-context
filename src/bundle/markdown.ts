@@ -75,10 +75,14 @@ function fenceBlock(text: string): string {
 /**
  * Isola conteúdo não confiável numa fence inline (uma linha).
  *
+ * Exportada para ser reutilizada por outros renderizadores do bundle (ex.: a
+ * lista compacta de resultados de busca, M1-13) sem duplicar a marcação
+ * anti prompt-injection.
+ *
  * @param text - Conteúdo derivado do Redmine.
  * @returns Fence inline `<untrusted-content>...</untrusted-content>`.
  */
-function fenceInline(text: string): string {
+export function fenceInline(text: string): string {
   return `<untrusted-content>${neutralizeFence(text)}</untrusted-content>`;
 }
 

@@ -23,3 +23,10 @@ export {
   type RedmineIssuePayload,
   type ListIssuesOptions,
 } from './issues.js';
+export {
+  searchIssues,
+  SEARCH_MAX_LIMIT,
+  type SearchIssuesOptions,
+  type SearchIssuesPage,
+  type RedmineSearchHit,
+} from './search.js';
