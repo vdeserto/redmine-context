@@ -191,3 +191,13 @@ describe('cascata (arquivo → env)', () => {
     expect(() => new CascadingCredentialStore([])).toThrow(CredentialStoreError);
   });
 });
+
+describe('FileCredentialStore: arquivo corrompido', () => {
+  it('JSON inválido gera CredentialStoreError acionável, sem expor conteúdo', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'rc-cred-'));
+    const filePath = join(dir, 'credentials.json');
+    await writeFile(filePath, '{ not json !!!', { mode: 0o600 });
+    const store = new FileCredentialStore({ filePath });
+    await expect(store.get('https://r.example')).rejects.toThrow(/corrompido.*login novamente/s);
+  });
+});

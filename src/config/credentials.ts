@@ -116,8 +116,18 @@ function isNotFound(cause: unknown): boolean {
 }
 
 /** Faz o parse defensivo do arquivo, descartando entradas malformadas. */
-function parseCredentials(raw: string): CredentialsFile {
-  const parsed: unknown = JSON.parse(raw);
+function parseCredentials(raw: string, filePath: string): CredentialsFile {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    // JSON inválido não pode ser ignorado em silêncio (a key "sumiria"):
+    // erro tipado orienta a correção sem expor o conteúdo do arquivo.
+    throw new CredentialStoreError(
+      `Arquivo de credenciais corrompido (JSON inválido): ${filePath}. ` +
+        'Corrija ou remova o arquivo e faça login novamente.',
+    );
+  }
   if (typeof parsed !== 'object' || parsed === null) {
     return {};
   }
@@ -199,7 +209,7 @@ export class FileCredentialStore implements CredentialStore {
       throw cause;
     }
     this.assertSecureMode(mode);
-    return parseCredentials(await readFile(this.filePath, 'utf8'));
+    return parseCredentials(await readFile(this.filePath, 'utf8'), this.filePath);
   }
 
   /** Escreve o arquivo garantindo dir `0700` e arquivo `0600`. */
