@@ -57,7 +57,9 @@ const ABSENT_REF = '(nenhum)';
  * @returns Texto com tokens de fence defangados.
  */
 function neutralizeFence(text: string): string {
-  return text.replace(/<(\/?)untrusted-content>/gi, '<​$1untrusted-content>');
+  // Tolerante a espaços internos: "< /untrusted-content >" também fecharia o
+  // fence aos olhos de um LLM — normaliza qualquer variante.
+  return text.replace(/<\s*(\/?)\s*untrusted-content\s*>/gi, '<​$1untrusted-content>');
 }
 
 /**
@@ -131,17 +133,22 @@ function renderCustomFields(issue: Issue): string {
   const rows = byId(issue.custom_fields).map((field) => {
     const text = customFieldText(field.value);
     const value = text === null ? '_(vazio)_' : fenceInline(text);
-    return `- **${field.name}:** ${value}`;
+    // O nome do custom field é definido pelo admin da instância — derivado.
+    return `- **${fenceInline(field.name)}:** ${value}`;
   });
   return ['## Custom Fields', '', ...rows].join('\n');
 }
 
-/** Renderiza os `details` estruturais de um journal (metadados de histórico). */
+/**
+ * Renderiza os `details` de um journal. `name` e old/new_value são derivados
+ * (em details de "description"/"subject" os values carregam o texto completo
+ * do campo) — todos passam pelo fence inline.
+ */
 function renderJournalDetails(journal: Journal): string[] {
   return journal.details.map((detail) => {
-    const from = detail.old_value ?? '∅';
-    const to = detail.new_value ?? '∅';
-    return `  - ${detail.name}: ${from} → ${to}`;
+    const from = detail.old_value === null || detail.old_value === undefined ? '∅' : fenceInline(detail.old_value);
+    const to = detail.new_value === null || detail.new_value === undefined ? '∅' : fenceInline(detail.new_value);
+    return `  - ${fenceInline(detail.name)}: ${from} → ${to}`;
   });
 }
 

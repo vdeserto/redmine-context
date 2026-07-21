@@ -95,10 +95,18 @@ function renderOptionalRef(ref: RedmineRef | undefined): JsonValue {
 function renderDetail(detail: JournalDetail): JsonValue {
   const out: { [key: string]: JsonValue } = {
     property: detail.property,
+    // `name` fica estrutural: vocabulário fixo em property=attr e id em
+    // property=cf — é chave programática do status history.
     name: detail.name,
   };
-  if ('old_value' in detail) out.old_value = detail.old_value ?? null;
-  if ('new_value' in detail) out.new_value = detail.new_value ?? null;
+  // old/new_value carregam texto derivado (ex.: descrição inteira em
+  // details de "description") — mesma categoria de confiança de notes.
+  if ('old_value' in detail) {
+    out.old_value = detail.old_value === null || detail.old_value === undefined ? null : untrusted(detail.old_value);
+  }
+  if ('new_value' in detail) {
+    out.new_value = detail.new_value === null || detail.new_value === undefined ? null : untrusted(detail.new_value);
+  }
   return out;
 }
 
