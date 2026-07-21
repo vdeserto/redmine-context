@@ -50,10 +50,10 @@ services:
       retries: 24
       start_period: 40s
 
-  # One-shot: enables the REST API right after Redmine is up, with no manual
-  # step. The official image exposes no env for this setting, so we flip it in
-  # the DB (idempotent). Updating updated_on invalidates Redmine's settings
-  # cache, so the next request already sees rest_api_enabled=1.
+  # One-shot: enables the REST API right after the default data is loaded, with
+  # no manual step. The official image exposes no env for this setting, so we
+  # flip it in the DB (idempotent). Updating updated_on invalidates Redmine's
+  # settings cache, so the next request already sees rest_api_enabled=1.
   #
   # It also clears the default admin's must_change_passwd flag. The official
   # image seeds admin/admin with must_change_passwd=true, which hard-blocks the
@@ -61,11 +61,18 @@ services:
   # default password 'admin' is below Redmine's min length (8), it cannot be
   # re-set through the API/web after a real change — so clearing the flag in the
   # DB (idempotent) is the only way to keep admin/admin usable for the API.
+  #
+  # It also seeds the 'Severidade' custom field (list) for issues. There is no
+  # POST /custom_fields.json in the REST API, so — for this test/CI environment
+  # only — we create it via idempotent SQL. It depends on load-default-data
+  # (which runs first) because an IssueCustomField is only editable on issues
+  # whose trackers are linked in custom_fields_trackers; those trackers are
+  # created by load-default-data. The seed script then just assigns values.
   enable-rest-api:
     image: postgres:16-alpine
     depends_on:
-      redmine:
-        condition: service_healthy
+      load-default-data:
+        condition: service_completed_successfully
     environment:
       PGPASSWORD: ${POSTGRES_PASSWORD:-redmine}
     entrypoint: ["/bin/sh", "-c"]
@@ -80,17 +87,39 @@ services:
             WHERE name = 'rest_api_enabled';
             UPDATE users SET must_change_passwd = false
             WHERE login = 'admin' AND must_change_passwd = true;
+            -- Custom field 'Severidade' (list) para issues. Idempotente.
+            INSERT INTO custom_fields
+              (type, name, field_format, possible_values, regexp, min_length,
+               max_length, is_required, is_for_all, is_filter, position,
+               searchable, default_value, editable, visible, multiple, format_store)
+            SELECT 'IssueCustomField', 'Severidade', 'list',
+              E'---\n- Baixa\n- Média\n- Alta\n', '', 0, 0,
+              false, true, true, 1, true, '', true, true, false, E'--- {}\n'
+            WHERE NOT EXISTS (
+              SELECT 1 FROM custom_fields
+              WHERE type = 'IssueCustomField' AND name = 'Severidade');
+            -- Associa o custom field a todos os trackers (obrigatório para ser
+            -- editável nas issues). Idempotente via NOT EXISTS.
+            INSERT INTO custom_fields_trackers (custom_field_id, tracker_id)
+            SELECT cf.id, t.id
+            FROM custom_fields cf CROSS JOIN trackers t
+            WHERE cf.type = 'IssueCustomField' AND cf.name = 'Severidade'
+              AND NOT EXISTS (
+                SELECT 1 FROM custom_fields_trackers x
+                WHERE x.custom_field_id = cf.id AND x.tracker_id = t.id);
           "
     restart: "no"
 
   # One-shot: carrega os dados default do Redmine (trackers, statuses, priorities,
   # roles) numa instalação fresh — sem eles, POST /issues.json falha com 422 e não
   # há REST API para criá-los. Idempotente: o rake avisa quando já carregado.
+  # Roda antes de enable-rest-api para que os trackers existam ao criar o custom
+  # field (a REST em si não é pré-requisito do rake).
   load-default-data:
     image: redmine:6
     depends_on:
-      enable-rest-api:
-        condition: service_completed_successfully
+      redmine:
+        condition: service_healthy
     environment:
       RAILS_ENV: production
       REDMINE_LANG: en
