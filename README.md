@@ -79,3 +79,5 @@ O script `wait-for-healthy.sh` aceita `TIMEOUT`, `INTERVAL` e `COMPOSE_FILE`.
 
 > As credenciais acima são exclusivas do ambiente de teste (defaults no
 > compose/`.env.example`); não há credenciais hardcoded fora dele.
+
+> Nota (CI): o one-shot `enable-rest-api` roda após o Redmine ficar healthy; em pipelines, aguarde o exit 0 dele (`docker compose wait enable-rest-api`) antes do smoke test da API.
