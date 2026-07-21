@@ -70,6 +70,12 @@ export function redactSecret(text: string, apiKey: string): string {
   let out = text;
   if (apiKey.length > 0) {
     out = out.split(apiKey).join(REDACTED);
+    // URLs são percent-encoded: uma key com caracteres URL-unsafe não casaria
+    // com a forma bruta acima.
+    const encoded = encodeURIComponent(apiKey);
+    if (encoded !== apiKey) {
+      out = out.split(encoded).join(REDACTED);
+    }
   }
   // Redige também o valor de `key=` na querystring, caso a URL tenha sido montada
   // com um segredo diferente do informado (defesa em profundidade).

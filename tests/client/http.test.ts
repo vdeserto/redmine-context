@@ -188,3 +188,15 @@ describe('redação de segredos (api_key NUNCA logada)', () => {
     expect(redactSecret('nada a redigir', '')).toBe('nada a redigir');
   });
 });
+
+describe('redactSecret: api_key com caracteres URL-unsafe', () => {
+  it('redige a forma bruta e a forma percent-encoded da key', async () => {
+    const { redactSecret } = await import('../../src/client/http.js');
+    const key = 'ab&c=d/e f';
+    const encoded = encodeURIComponent(key);
+    const text = `raw:${key} url:https://r.example/issues.json?key=${encoded}&x=1`;
+    const out = redactSecret(text, key);
+    expect(out).not.toContain(key);
+    expect(out).not.toContain(encoded);
+  });
+});
