@@ -15,6 +15,7 @@ import { pathToFileURL } from 'node:url';
 import { runIssue, runLogin } from './commands.js';
 import { prompt, promptPassword } from './prompts.js';
 import type { ParsedArgs, RunDeps } from './types.js';
+import { runStdioServer } from '../mcp/server.js';
 
 /** Flags que consomem o próximo token como valor (as demais são booleanas). */
 const VALUE_FLAGS = new Set(['out', 'url', 'api-key']);
@@ -25,6 +26,7 @@ const HELP = `redmine-context — contexto completo de issues do Redmine para LL
 Uso:
   redmine-context issue <id> [opções]
   redmine-context login [opções]
+  redmine-context mcp
 
 Comando issue:
   Busca a issue, normaliza e imprime o bundle em stdout (Markdown por padrão).
@@ -42,6 +44,11 @@ Comando login:
   --url <url>       URL da instância Redmine.
   --api-key <key>   Salva a api_key diretamente, sem senha.
   --insecure        Permite http:// sem TLS (não recomendado).
+
+Comando mcp:
+  Sobe um servidor MCP (stdio) expondo a tool read-only get_issue_context.
+  A instância vem de REDMINE_URL + credencial da cascata (REDMINE_API_KEY);
+  nenhuma tool aceita URL/host arbitrário. Logs vão para stderr.
 
 Credenciais:
   A api_key é resolvida na ordem: arquivo de credenciais -> REDMINE_API_KEY.
@@ -130,6 +137,11 @@ export async function run(argv: string[], overrides: Partial<RunDeps> = {}): Pro
   }
   if (command === 'login') {
     return runLogin(parsed, deps);
+  }
+  if (command === 'mcp') {
+    // Wire fino: o server bloqueia até o transporte stdio fechar (então exit 0).
+    await runStdioServer({ env: deps.env });
+    return 0;
   }
 
   deps.stderr(`Comando desconhecido: ${command}\n\n${HELP}`);
