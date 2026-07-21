@@ -7,6 +7,7 @@ export {
   type HttpClientOptions,
   type Logger,
   type QueryParams,
+  type RetryOptions,
 } from './http.js';
 export {
   RedmineHttpError,

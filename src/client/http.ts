@@ -1,8 +1,9 @@
 /**
  * Client HTTP base do Redmine — autenticação por api_key e TLS obrigatório (ADR-003).
  *
- * Escopo M1: apenas `GET`. Sem retry, paginação ou timeout sofisticado
- * (issues #9/#10). Usa `fetch` nativo do Node ≥ 20, sem dependência nova.
+ * Escopo M1: apenas `GET`, agora com retry/backoff exponencial (issue #10)
+ * para 429/5xx/erros de rede. Sem paginação ou timeout sofisticado (issue #9).
+ * Usa `fetch` nativo do Node ≥ 20, sem dependência nova.
  */
 
 import { httpErrorFor, type RedmineHttpError } from './errors.js';
@@ -14,6 +15,17 @@ export interface Logger {
 
 /** Parâmetros de query aceitos por uma requisição GET. */
 export type QueryParams = Record<string, string | number | boolean>;
+
+/**
+ * Ajustes do retry com backoff exponencial (issue #10). Só se aplica a falhas
+ * transientes: 429, 5xx e erros de rede. Erros 4xx (exceto 429) nunca retentam.
+ */
+export interface RetryOptions {
+  /** Número máximo de tentativas (inclui a primeira). Default: 3; mínimo 1. */
+  maxAttempts?: number;
+  /** Atraso base em ms para o backoff exponencial (`base * 2^tentativa`). Default: 250. */
+  baseDelayMs?: number;
+}
 
 /** Opções de construção do client HTTP. */
 export interface HttpClientOptions {
@@ -33,6 +45,8 @@ export interface HttpClientOptions {
   insecure?: boolean;
   /** Logger para avisos; default no-op (não introduz lib de logging no M1). */
   logger?: Logger;
+  /** Política de retry para falhas transientes. Ver {@link RetryOptions}. */
+  retry?: RetryOptions;
 }
 
 /** Client HTTP mínimo do M1 — expõe apenas `get`. */
@@ -57,6 +71,41 @@ const API_KEY_HEADER = 'X-Redmine-API-Key';
 const REDACTED = '[REDACTED]';
 
 const noopLogger: Logger = { warn: () => undefined };
+
+/** Tentativas default quando `retry.maxAttempts` não é informado. */
+const DEFAULT_MAX_ATTEMPTS = 3;
+/** Atraso base (ms) default do backoff quando `retry.baseDelayMs` não é informado. */
+const DEFAULT_BASE_DELAY_MS = 250;
+
+/** Aguarda `ms` milissegundos; isolado num `setTimeout` para ser mockável com fake timers. */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Indica se um status HTTP é transiente e merece nova tentativa.
+ * Retentam: 429 (throttling) e 5xx (falha do servidor). Demais 4xx são definitivos.
+ *
+ * @param status - Código HTTP da resposta.
+ * @returns `true` se vale a pena retentar.
+ */
+function isRetryableStatus(status: number): boolean {
+  return status === 429 || status >= 500;
+}
+
+/**
+ * Calcula o atraso do backoff exponencial com jitter para a tentativa `attempt` (0-based).
+ * `baseDelay * 2^attempt` mais um jitter aleatório pequeno para evitar thundering herd.
+ *
+ * @param attempt - Índice da tentativa já realizada (0 na primeira falha).
+ * @param baseDelayMs - Atraso base em milissegundos.
+ * @returns Atraso, em milissegundos, antes da próxima tentativa.
+ */
+function backoffDelay(attempt: number, baseDelayMs: number): number {
+  const exponential = baseDelayMs * 2 ** attempt;
+  const jitter = Math.random() * baseDelayMs;
+  return exponential + jitter;
+}
 
 /**
  * Remove qualquer ocorrência da api_key (em texto ou em `?key=`) de uma string.
@@ -131,6 +180,8 @@ function assertTlsPolicy(baseUrl: string, insecure: boolean, logger: Logger): vo
 export function createHttpClient(options: HttpClientOptions): HttpClient {
   const { baseUrl, apiKey, keyInQuery = false, insecure = false } = options;
   const logger = options.logger ?? noopLogger;
+  const maxAttempts = Math.max(1, options.retry?.maxAttempts ?? DEFAULT_MAX_ATTEMPTS);
+  const baseDelayMs = options.retry?.baseDelayMs ?? DEFAULT_BASE_DELAY_MS;
 
   if (apiKey.length === 0) {
     throw new Error('apiKey é obrigatória e não pode ser vazia.');
@@ -166,25 +217,40 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
         headers[API_KEY_HEADER] = apiKey;
       }
 
-      let response: Response;
-      try {
-        response = await fetch(url, { method: 'GET', headers });
-      } catch (cause) {
-        const reason = cause instanceof Error ? cause.message : String(cause);
-        throw new Error(`Falha de rede ao acessar ${safeUrl}: ${redact(reason)}`);
-      }
+      // Retry com backoff exponencial: só falhas transientes (429/5xx/rede) retentam.
+      // `attempt` é 0-based; a última tentativa (attempt === maxAttempts - 1) sempre
+      // propaga o erro tipado original, sem embrulhar (issue #10).
+      for (let attempt = 0; ; attempt++) {
+        const lastAttempt = attempt >= maxAttempts - 1;
 
-      if (!response.ok) {
-        const message = `GET ${safeUrl} respondeu ${response.status} ${redact(response.statusText)}`;
-        const error: RedmineHttpError = httpErrorFor(message, response.status, safeUrl);
-        throw error;
-      }
+        let response: Response;
+        try {
+          response = await fetch(url, { method: 'GET', headers });
+        } catch (cause) {
+          if (!lastAttempt) {
+            await sleep(backoffDelay(attempt, baseDelayMs));
+            continue;
+          }
+          const reason = cause instanceof Error ? cause.message : String(cause);
+          throw new Error(`Falha de rede ao acessar ${safeUrl}: ${redact(reason)}`);
+        }
 
-      try {
-        return (await response.json()) as unknown;
-      } catch (cause) {
-        const reason = cause instanceof Error ? cause.message : String(cause);
-        throw new Error(`Resposta de ${safeUrl} não é JSON válido: ${redact(reason)}`);
+        if (!response.ok) {
+          if (isRetryableStatus(response.status) && !lastAttempt) {
+            await sleep(backoffDelay(attempt, baseDelayMs));
+            continue;
+          }
+          const message = `GET ${safeUrl} respondeu ${response.status} ${redact(response.statusText)}`;
+          const error: RedmineHttpError = httpErrorFor(message, response.status, safeUrl);
+          throw error;
+        }
+
+        try {
+          return (await response.json()) as unknown;
+        } catch (cause) {
+          const reason = cause instanceof Error ? cause.message : String(cause);
+          throw new Error(`Resposta de ${safeUrl} não é JSON válido: ${redact(reason)}`);
+        }
       }
     },
   };
