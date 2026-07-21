@@ -182,7 +182,7 @@ function byId<T extends { id: number }>(items: readonly T[]): T[] {
 function renderIssue(issue: Issue): JsonValue {
   const out: { [key: string]: JsonValue } = {
     id: issue.id,
-    subject: issue.subject,
+    subject: untrusted(issue.subject),
     description: issue.description === undefined ? null : untrusted(issue.description),
     project: renderRef(issue.project),
     tracker: renderRef(issue.tracker),

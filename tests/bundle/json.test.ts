@@ -215,3 +215,14 @@ describe('buildJsonBundle: bundle JSON determinístico', () => {
     expect(detail).toEqual({ property: 'attr', name: 'status_id', old_value: '1', new_value: '2' });
   });
 });
+
+describe('untrusted: subject da issue', () => {
+  it('subject é marcado {untrusted: true} como description e notes', () => {
+    const bundle = buildJsonBundle(fullIssue(), META);
+    const body = JSON.parse(bundle.canonical) as {
+      issue: { subject: { untrusted: boolean; value: string } };
+    };
+    expect(body.issue.subject.untrusted).toBe(true);
+    expect(typeof body.issue.subject.value).toBe('string');
+  });
+});
