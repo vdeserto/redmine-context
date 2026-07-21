@@ -2,7 +2,8 @@
 
 > Backlog completo (87 itens): `documentation/development/BACKLOG.md`
 > Docs: ADRs em `documentation/adr/ADR-001..005`, PRD em `documentation/prd/PRD-redmine-context.md`
-> Estágio do fluxo: /plan:draft ✅ → /plan:refine ✅ → /plan:breakdown ✅ → **próximo: /plan:publish**
+> Estágio do fluxo: /plan:draft ✅ → /plan:refine ✅ → /plan:breakdown ✅ → /plan:publish ✅ (2026-07-21) → **próximo: /plan:pathfind**
+> Publicado: repo https://github.com/vdeserto/redmine-context (privado) · 87 issues (#1–#87) · 5 milestones · 19 labels · 15 sub-issues linkadas · mapeamento em `documentation/development/ISSUE-MAP.json`
 
 ## Breakdown (resumo)
 87 itens: M1=21 · M2=19 · M3=16 · M4=17 · M5=14 (6 epics, 15 sub-issues, 5 gap analysis; EAT ≤ 30min/item, ≈ 28h). Validado pelo fft-po (9 ajustes aplicados, incl. novo M3-13 get_attachment_text e dogfood M1 desbloqueado de search_issues). Convenções GitHub (labels, milestones, template de issue, sub-issues via create_subissue com fallback task-list, branch `type/M<n>-<seq>-<slug>`, squash merge, Projects) documentadas no BACKLOG.md — o /plan:publish deve segui-las, começando pelo bootstrap do repo (git init -b main + gh repo create --private).
