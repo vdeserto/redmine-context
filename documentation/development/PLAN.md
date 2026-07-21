@@ -2,7 +2,8 @@
 
 > Backlog completo (87 itens): `documentation/development/BACKLOG.md`
 > Docs: ADRs em `documentation/adr/ADR-001..005`, PRD em `documentation/prd/PRD-redmine-context.md`
-> Estágio do fluxo: /plan:draft ✅ → /plan:refine ✅ → /plan:breakdown ✅ → /plan:publish ✅ (2026-07-21) → **próximo: /plan:pathfind**
+> Estágio do fluxo: planning pipeline completo ✅ (draft → refine → breakdown → publish → pathfind, 2026-07-21) → **agora: dev flow por issue** (`/dev:kickoff #1`)
+> Mapa de execução: `documentation/development/EXECUTION-MAP.md` · branches `milestone/M1..M5` sequenciais
 > Publicado: repo https://github.com/vdeserto/redmine-context (privado) · 87 issues (#1–#87) · 5 milestones · 19 labels · 15 sub-issues linkadas · mapeamento em `documentation/development/ISSUE-MAP.json`
 
 ## Breakdown (resumo)
