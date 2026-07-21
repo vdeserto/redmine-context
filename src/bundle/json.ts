@@ -95,10 +95,18 @@ function renderOptionalRef(ref: RedmineRef | undefined): JsonValue {
 function renderDetail(detail: JournalDetail): JsonValue {
   const out: { [key: string]: JsonValue } = {
     property: detail.property,
+    // `name` fica estrutural: vocabulário fixo em property=attr e id em
+    // property=cf — é chave programática do status history.
     name: detail.name,
   };
-  if ('old_value' in detail) out.old_value = detail.old_value ?? null;
-  if ('new_value' in detail) out.new_value = detail.new_value ?? null;
+  // old/new_value carregam texto derivado (ex.: descrição inteira em
+  // details de "description") — mesma categoria de confiança de notes.
+  if ('old_value' in detail) {
+    out.old_value = detail.old_value === null || detail.old_value === undefined ? null : untrusted(detail.old_value);
+  }
+  if ('new_value' in detail) {
+    out.new_value = detail.new_value === null || detail.new_value === undefined ? null : untrusted(detail.new_value);
+  }
   return out;
 }
 
@@ -161,15 +169,25 @@ function renderChild(child: IssueChild): JsonValue {
   return out;
 }
 
-/** Comparador estável de journals: `created_on` e, em empate, `id`. */
-function compareJournals(a: Journal, b: Journal): number {
+/**
+ * Comparador estável de journals: `created_on` e, em empate, `id`.
+ *
+ * Exportado para que o bundle Markdown (#16) reutilize EXATAMENTE a mesma
+ * ordenação cronológica do JSON, sem duplicar a regra de desempate.
+ */
+export function compareJournals(a: Journal, b: Journal): number {
   if (a.created_on < b.created_on) return -1;
   if (a.created_on > b.created_on) return 1;
   return a.id - b.id;
 }
 
-/** Ordena por `id` sem mutar o array de entrada. */
-function byId<T extends { id: number }>(items: readonly T[]): T[] {
+/**
+ * Ordena por `id` sem mutar o array de entrada.
+ *
+ * Exportado para reuso pelo bundle Markdown (#16): attachments, relations,
+ * custom_fields e children compartilham a MESMA ordenação estável do JSON.
+ */
+export function byId<T extends { id: number }>(items: readonly T[]): T[] {
   return [...items].sort((a, b) => a.id - b.id);
 }
 

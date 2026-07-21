@@ -212,7 +212,14 @@ describe('buildJsonBundle: bundle JSON determinístico', () => {
       issue: { journals: Array<{ details: Array<Record<string, unknown>> }> };
     };
     const detail = body.issue.journals[0]?.details[0];
-    expect(detail).toEqual({ property: 'attr', name: 'status_id', old_value: '1', new_value: '2' });
+    // old/new_value são derivados (podem carregar texto completo do campo) —
+    // marcados untrusted desde o fix do review da #16; name segue estrutural.
+    expect(detail).toEqual({
+      property: 'attr',
+      name: 'status_id',
+      old_value: { untrusted: true, value: '1' },
+      new_value: { untrusted: true, value: '2' },
+    });
   });
 });
 
