@@ -1,0 +1,304 @@
+#!/bin/bash
+# FlowForge v2.0 Commit Message Hook
+# Validates commit message format and adds task references
+
+set -e
+
+# Source common functions
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/common-functions.sh"
+
+# Get commit message file
+COMMIT_MSG_FILE="$1"
+
+if [ ! -f "$COMMIT_MSG_FILE" ]; then
+    echo -e "${RED}❌ Commit message file not found${NC}"
+    exit 1
+fi
+
+echo -e "${BLUE}📝 FlowForge v2.0 Commit Message Validation${NC}"
+
+# Read commit message
+COMMIT_MSG=$(cat "$COMMIT_MSG_FILE")
+
+# Function to validate commit format
+validate_commit_format() {
+    local msg="$1"
+    
+    # Check for empty message
+    if [ -z "$msg" ] || [ "$msg" == "" ]; then
+        echo -e "${RED}❌ Empty commit message${NC}"
+        return 1
+    fi
+    
+    # Get first line (subject)
+    local subject=$(echo "$msg" | head -n 1)
+    
+    # Check subject length (max 72 characters)
+    if [ ${#subject} -gt 72 ]; then
+        echo -e "${YELLOW}⚠️  Subject line exceeds 72 characters (${#subject})${NC}"
+        echo -e "${YELLOW}   Consider shortening: $subject${NC}"
+    fi
+    
+    # Check for conventional commit format
+    if [[ "$subject" =~ ^(feat|fix|docs|style|refactor|test|chore|perf|ci|build|revert)(\(.+\))?:\ .+ ]]; then
+        echo -e "${GREEN}✓ Conventional commit format detected${NC}"
+    else
+        echo -e "${YELLOW}ℹ️  Consider using conventional format:${NC}"
+        echo -e "${YELLOW}   feat: add new feature${NC}"
+        echo -e "${YELLOW}   fix: fix bug${NC}"
+        echo -e "${YELLOW}   docs: update documentation${NC}"
+    fi
+    
+    # Check for WIP commits
+    if [[ "$subject" =~ ^(WIP|wip) ]]; then
+        echo -e "${YELLOW}⚠️  WIP commit detected - consider completing before push${NC}"
+    fi
+    
+    return 0
+}
+
+# Function to add task reference
+add_task_reference() {
+    local msg="$1"
+    local current_task=$(get_current_task)
+    
+    if [ -z "$current_task" ]; then
+        return 0
+    fi
+    
+    # Check if task reference already exists
+    if echo "$msg" | grep -qE "#$current_task\b"; then
+        echo -e "${GREEN}✓ Task reference #$current_task already present${NC}"
+        return 0
+    fi
+    
+    # Add task reference to commit message
+    echo -e "${BLUE}  Adding task reference #$current_task${NC}"
+    
+    # Check if there's a body
+    local line_count=$(echo "$msg" | wc -l)
+    
+    if [ $line_count -eq 1 ]; then
+        # Single line - add task reference on new line
+        echo "$msg" > "$COMMIT_MSG_FILE"
+        echo "" >> "$COMMIT_MSG_FILE"
+        echo "Task: #$current_task" >> "$COMMIT_MSG_FILE"
+    else
+        # Multi-line - add to body if not present
+        echo "$msg" > "$COMMIT_MSG_FILE"
+        echo "" >> "$COMMIT_MSG_FILE"
+        echo "Task: #$current_task" >> "$COMMIT_MSG_FILE"
+    fi
+    
+    return 0
+}
+
+# Function to add time tracking info
+add_time_tracking_info() {
+    local msg="$1"
+    local session_file="$FLOWFORGE_DIR/sessions/current.json"
+    
+    if [ ! -f "$session_file" ]; then
+        return 0
+    fi
+    
+    # Get session time for this commit
+    local last_commit_time=$(jq -r '.commits[-1].timestamp // .startTime' "$session_file" 2>/dev/null)
+    local current_time=$(format_timestamp)
+    
+    if [ -n "$last_commit_time" ] && [ "$last_commit_time" != "null" ]; then
+        local duration=$(calculate_duration "$last_commit_time" "$current_time")
+        
+        # Only add if significant time (> 1 minute)
+        if [ $duration -gt 60 ]; then
+            local formatted_duration=$(format_duration $duration)
+            
+            # Check if time tracking already in message
+            if ! echo "$msg" | grep -q "Time:"; then
+                echo "" >> "$COMMIT_MSG_FILE"
+                echo "Time: $formatted_duration" >> "$COMMIT_MSG_FILE"
+                echo -e "${GREEN}✓ Added time tracking: $formatted_duration${NC}"
+            fi
+        fi
+    fi
+    
+    return 0
+}
+
+# Function to check for sensitive information
+check_sensitive_info() {
+    local msg="$1"
+    
+    # Patterns to check for sensitive data
+    local patterns=(
+        "password"
+        "secret"
+        "token"
+        "api[_-]?key"
+        "private[_-]?key"
+        "BEGIN RSA"
+        "BEGIN DSA"
+        "BEGIN EC"
+        "BEGIN OPENSSH"
+        "aws_access_key"
+        "aws_secret"
+    )
+    
+    for pattern in "${patterns[@]}"; do
+        if echo "$msg" | grep -qiE "$pattern"; then
+            echo -e "${YELLOW}⚠️  Possible sensitive information in commit message${NC}"
+            echo -e "${YELLOW}   Pattern detected: $pattern${NC}"
+            echo -e "${YELLOW}   Review message before proceeding${NC}"
+            
+            read -p "Continue anyway? (y/n): " -n 1 -r
+            echo
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                return 1
+            fi
+        fi
+    done
+    
+    return 0
+}
+
+# Function to add co-author info
+add_coauthor_info() {
+    local msg="$1"
+    local config_file="$FLOWFORGE_DIR/config.json"
+    
+    # Check if pair programming is enabled
+    local pair_enabled=$(read_json_value "$config_file" ".collaboration.pairProgramming" "false")
+    
+    if [ "$pair_enabled" == "true" ]; then
+        local coauthor=$(read_json_value "$config_file" ".collaboration.coAuthor" "")
+        
+        if [ -n "$coauthor" ] && [ "$coauthor" != "null" ]; then
+            # Check if co-author already in message
+            if ! echo "$msg" | grep -q "Co-authored-by:"; then
+                echo "" >> "$COMMIT_MSG_FILE"
+                echo "Co-authored-by: $coauthor" >> "$COMMIT_MSG_FILE"
+                echo -e "${GREEN}✓ Added co-author: $coauthor${NC}"
+            fi
+        fi
+    fi
+    
+    return 0
+}
+
+# Function to validate against templates
+validate_against_template() {
+    local msg="$1"
+    local template_file="$FF_ROOT/.gitmessage"
+    
+    if [ ! -f "$template_file" ]; then
+        return 0
+    fi
+    
+    # Check if message follows template structure
+    local template_sections=$(grep -E '^#' "$template_file" | wc -l)
+    
+    if [ $template_sections -gt 0 ]; then
+        echo -e "${BLUE}  Checking against commit template...${NC}"
+        
+        # Basic validation - check if major sections are present
+        if ! echo "$msg" | grep -qE '(What|Why|How)'; then
+            echo -e "${YELLOW}ℹ️  Consider following the commit template structure${NC}"
+            echo -e "${YELLOW}   Use: git commit -t .gitmessage${NC}"
+        fi
+    fi
+    
+    return 0
+}
+
+# Function to add metadata
+add_commit_metadata() {
+    local msg="$1"
+    local session_file="$FLOWFORGE_DIR/sessions/current.json"
+    
+    # Add session ID if available
+    if [ -f "$session_file" ]; then
+        local session_id=$(read_json_value "$session_file" ".id" "")
+        
+        if [ -n "$session_id" ] && [ "$session_id" != "null" ]; then
+            if ! echo "$msg" | grep -q "Session:"; then
+                echo "" >> "$COMMIT_MSG_FILE"
+                echo "Session: $session_id" >> "$COMMIT_MSG_FILE"
+            fi
+        fi
+    fi
+    
+    # Add branch info for context
+    local branch=$(get_current_branch)
+    if [[ "$branch" =~ ^(feature|fix|hotfix)/([0-9]+)- ]]; then
+        local issue_num="${BASH_REMATCH[2]}"
+        
+        if ! echo "$msg" | grep -qE "#$issue_num\b"; then
+            echo "" >> "$COMMIT_MSG_FILE"
+            echo "Branch: $branch" >> "$COMMIT_MSG_FILE"
+        fi
+    fi
+    
+    return 0
+}
+
+# Main execution
+main() {
+    echo -e "${BLUE}═══════════════════════════════════════════${NC}"
+    
+    # Log the hook event
+    log_hook_event "commit-msg" "start" "Validating commit message"
+    
+    # Read current message
+    COMMIT_MSG=$(cat "$COMMIT_MSG_FILE")
+    
+    # Skip if this is a merge, revert, or amend
+    if echo "$COMMIT_MSG" | grep -qE '^(Merge|Revert|fixup!|squash!)'; then
+        echo -e "${BLUE}ℹ️  Special commit type detected - minimal validation${NC}"
+        exit 0
+    fi
+    
+    # 1. Validate commit format
+    echo -e "${BLUE}▶ Validating commit format...${NC}"
+    if ! validate_commit_format "$COMMIT_MSG"; then
+        log_hook_event "commit-msg" "failed" "Invalid commit format"
+        exit 1
+    fi
+    
+    # 2. Check for sensitive information
+    echo -e "${BLUE}▶ Checking for sensitive information...${NC}"
+    if ! check_sensitive_info "$COMMIT_MSG"; then
+        log_hook_event "commit-msg" "failed" "Sensitive information detected"
+        exit 1
+    fi
+    
+    # 3. Add task reference
+    echo -e "${BLUE}▶ Adding task reference...${NC}"
+    add_task_reference "$COMMIT_MSG"
+    
+    # 4. Add time tracking info
+    echo -e "${BLUE}▶ Adding time tracking info...${NC}"
+    add_time_tracking_info "$COMMIT_MSG"
+    
+    # 5. Add co-author info
+    echo -e "${BLUE}▶ Checking for co-authors...${NC}"
+    add_coauthor_info "$COMMIT_MSG"
+    
+    # 6. Validate against template
+    validate_against_template "$COMMIT_MSG"
+    
+    # 7. Add metadata
+    echo -e "${BLUE}▶ Adding metadata...${NC}"
+    add_commit_metadata "$COMMIT_MSG"
+    
+    echo -e "${BLUE}═══════════════════════════════════════════${NC}"
+    echo -e "${GREEN}✅ Commit message validated and enhanced${NC}"
+    
+    # Log success
+    log_hook_event "commit-msg" "complete" "Message validated successfully"
+    
+    exit 0
+}
+
+# Run main function
+main "$@"

@@ -1,0 +1,626 @@
+# Command: flowforge:project:plan
+# Version: 2.0.0
+# Description: FlowForge project plan command
+
+---
+description: AI-powered planning wizard for creating milestones or sprints with automatic task generation
+argument-hint: "[feature-description]"
+---
+
+# 📋 AI Planning Wizard
+
+## 🔧 Setup Error Handling
+```bash
+# Enable strict error handling
+set -euo pipefail
+
+# Error handler function
+handle_error() {
+    local exit_code=$?
+    local line_number=$1
+    echo "❌ Error on line $line_number (exit code: $exit_code)"
+    
+    # Provide helpful error messages based on context
+    if [[ "${BASH_COMMAND:-}" =~ "gh issue create" ]]; then
+        echo "💡 GitHub CLI failed - check if 'gh' is installed and authenticated"
+        echo "   Install: https://cli.github.com/"
+        echo "   Authenticate: gh auth login"
+    elif [[ "${BASH_COMMAND:-}" =~ ".flowforge/tasks.json (milestones)" ]]; then
+        echo "💡 Schedule file error - ensure .flowforge/tasks.json (milestones) exists"
+    elif [[ "${BASH_COMMAND:-}" =~ "update-schedule" ]]; then
+        echo "💡 Update script not found - continuing without it"
+    fi
+    
+    exit $exit_code
+}
+
+# Set error trap
+trap 'handle_error $LINENO' ERR
+
+# Enable debug mode if DEBUG=1
+[[ "${DEBUG:-0}" == "1" ]] && set -x
+```
+
+## 📚 Show Help
+```bash
+# Check if help is requested
+if [[ "${ARGUMENTS:-}" == "?" || "${ARGUMENTS:-}" == "help" ]]; then
+    cat << 'EOF'
+📋 FlowForge Planning Wizard
+
+AI-powered task breakdown and issue creation for your features.
+
+Usage: /flowforge:project:plan [feature-description]
+
+Arguments:
+  feature-description   What you want to build
+  help, ?              Show this help message
+
+Examples:
+  /flowforge:project:plan "user authentication system"
+  /flowforge:project:plan "API rate limiting"
+  /flowforge:project:plan "dark mode support"
+
+This command will:
+  1. Ask for planning type (sprint/milestone)
+  2. Analyze your requirement with AI
+  3. Create GitHub issues for each task
+  4. Update schedule and task files
+  5. Prepare your next work session
+
+Requires:
+  - GitHub CLI (gh) installed and authenticated
+  - .flowforge/tasks.json (milestones) file in project root
+  - Git repository initialized
+EOF
+    exit 0
+fi
+
+# Validate arguments
+if [ -z "${ARGUMENTS:-}" ]; then
+    echo "❌ Error: Feature description required"
+    echo "💡 Usage: /flowforge:project:plan \"feature description\""
+    echo "   Example: /flowforge:project:plan \"user authentication\""
+    exit 1
+fi
+```
+
+## 🔍 Validate Environment
+```bash
+# Check prerequisites
+echo "🔍 Checking prerequisites..."
+
+# Check for git repository
+if ! git rev-parse --git-dir &> /dev/null; then
+    echo "❌ Error: Not in a git repository"
+    echo "💡 Initialize with: git init"
+    exit 1
+fi
+
+# Check for GitHub CLI
+if ! command -v gh &> /dev/null; then
+    echo "❌ Error: GitHub CLI not found"
+    echo "💡 Install from: https://cli.github.com/"
+    echo "   Or continue without automatic issue creation"
+    GH_AVAILABLE=false
+else
+    # Check GitHub authentication
+    if ! gh auth status &> /dev/null; then
+        echo "⚠️  Warning: GitHub CLI not authenticated"
+        echo "💡 Run: gh auth login"
+        GH_AVAILABLE=false
+    else
+        GH_AVAILABLE=true
+    fi
+fi
+
+# Check for .flowforge/tasks.json (milestones)
+if [ ! -f ".flowforge/tasks.json (milestones)" ]; then
+    echo "⚠️  Warning: .flowforge/tasks.json (milestones) not found"
+    echo "💡 Creating basic .flowforge/tasks.json (milestones)..."
+    cat > .flowforge/tasks.json (milestones) << 'EOF'
+# 📅 Project Schedule
+
+## Overview
+- **Planning**: Not yet configured
+- **Start Date**: $(date +%Y-%m-%d)
+
+## Active Work
+[Tasks will be added here]
+EOF
+    echo "✅ Created .flowforge/tasks.json (milestones)"
+fi
+
+# Ensure directories exist
+mkdir -p documentation/development
+```
+
+## 🎯 Planning Type Selection
+```bash
+# Skip interactive mode in test environment
+if [[ "${FLOWFORGE_TEST:-}" == "true" ]]; then
+    echo "Skipping interactive mode in test environment"
+    PLAN_MODE="sprint"
+    echo "✅ Using Sprint-based planning (test default)"
+else
+    echo ""
+    echo "📊 Select planning approach:"
+    echo "1) Sprint-based (2-week iterations)"
+    echo "2) Milestone-based (feature-focused)"
+
+    # Read with timeout and validation
+    if read -t 30 -p "Choose [1/2]: " PLANNING_TYPE; then
+        if [ "$PLANNING_TYPE" = "1" ]; then
+            PLAN_MODE="sprint"
+            echo "✅ Using Sprint-based planning"
+        elif [ "$PLANNING_TYPE" = "2" ]; then
+            PLAN_MODE="milestone"
+            echo "✅ Using Milestone-based planning"
+        else
+            echo "⚠️  Invalid choice. Defaulting to Sprint-based."
+            PLAN_MODE="sprint"
+        fi
+    else
+        echo ""
+        echo "⚠️  No response. Defaulting to Sprint-based."
+        PLAN_MODE="sprint"
+    fi
+fi
+```
+
+## 🤖 Step 2: AI Task Analysis with Agent Support
+
+```bash
+echo ""
+echo "🤖 Analyzing requirement: $ARGUMENTS"
+
+# Source the agent invocation script if available
+INVOKE_SCRIPT=""
+if [ -f "./scripts/invoke-fft-agent.sh" ]; then
+    INVOKE_SCRIPT="./scripts/invoke-fft-agent.sh"
+elif [ -f "./.flowforge/scripts/invoke-fft-agent.sh" ]; then
+    INVOKE_SCRIPT="./.flowforge/scripts/invoke-fft-agent.sh"
+fi
+
+# Initialize variables for agent response
+AGENT_RESPONSE=""
+AGENT_SUCCESS=false
+
+# Try to use fft-project-manager agent if available
+if [ -n "$INVOKE_SCRIPT" ]; then
+    echo "🤖 Attempting to invoke fft-project-manager agent..."
+    source "$INVOKE_SCRIPT"
+    
+    # Create temp file for agent response
+    AGENT_RESPONSE_FILE="/tmp/fft-agent-response-$$.json"
+    
+    # Invoke the agent
+    if invoke_fft_project_manager "$ARGUMENTS" "$PLAN_MODE" "$AGENT_RESPONSE_FILE" > /dev/null 2>&1; then
+        if [ -f "$AGENT_RESPONSE_FILE" ]; then
+            AGENT_SUCCESS=true
+            AGENT_RESPONSE=$(cat "$AGENT_RESPONSE_FILE")
+            echo "✅ Agent response received"
+            
+            # Parse the response
+            parse_agent_response "$AGENT_RESPONSE_FILE"
+        fi
+    fi
+fi
+
+# If agent invocation failed or not available, fall back to manual mode
+if [ "$AGENT_SUCCESS" = "false" ]; then
+    echo "📝 Falling back to manual mode - Claude will analyze directly"
+    echo "Please wait while AI breaks down your feature into tasks..."
+    echo ""
+```
+
+**Claude, please analyze this requirement and break it down:**
+
+### Requirement: $ARGUMENTS
+
+Please provide:
+1. **Task Breakdown** - 5-8 specific, actionable tasks
+2. **Time Estimates** - Hours for each task
+3. **Dependencies** - Which tasks block others
+4. **Risks** - Technical challenges to consider
+5. **Testing Strategy** - How to verify completion
+
+Use this format for tasks:
+```
+TASK-001: [Clear task title]
+Description: [What needs to be done]
+Estimate: [X]h
+Dependencies: [TASK-123 or None]
+Acceptance: [How we know it's done]
+```
+
+```bash
+fi  # End of agent/manual mode check
+```
+
+## 📝 Step 3: Create GitHub Issues
+```bash
+echo ""
+echo "🐙 Creating GitHub issues..."
+
+# Initialize arrays for tracking
+ISSUE_NUMBERS=()
+FAILED_ISSUES=()
+TASK_TITLES=()
+TASK_ESTIMATES=()
+TOTAL_HOURS=0
+
+# Process agent response if available
+if [ "$AGENT_SUCCESS" = "true" ] && [ -f "$AGENT_RESPONSE_FILE" ]; then
+    echo "📋 Processing agent-generated tasks..."
+    
+    # Extract milestone info
+    MILESTONE_VERSION=$(jq -r '.milestone.version' "$AGENT_RESPONSE_FILE")
+    MILESTONE_NAME=$(jq -r '.milestone.name' "$AGENT_RESPONSE_FILE")
+    TOTAL_HOURS=$(jq -r '.milestone.total_hours' "$AGENT_RESPONSE_FILE")
+    
+    # Process each task from agent response
+    TASK_COUNT=$(jq '.tasks | length' "$AGENT_RESPONSE_FILE")
+    
+    # Validate task count and sizes (Issue #84)
+    echo ""
+    echo "🔍 Validating task breakdown..."
+    
+    # Check if micro-task validator is available
+    VALIDATOR_SCRIPT=""
+    if [ -f "./scripts/micro-task-validator.sh" ]; then
+        VALIDATOR_SCRIPT="./scripts/micro-task-validator.sh"
+    elif [ -f "./.flowforge/scripts/micro-task-validator.sh" ]; then
+        VALIDATOR_SCRIPT="./.flowforge/scripts/micro-task-validator.sh"
+    fi
+    
+    if [ -n "$VALIDATOR_SCRIPT" ]; then
+        # Run validation on agent response
+        VALIDATION_OUTPUT=$("$VALIDATOR_SCRIPT" validate-json "$AGENT_RESPONSE_FILE" 2>&1 || true)
+        
+        if echo "$VALIDATION_OUTPUT" | grep -q "All validations passed"; then
+            echo "✅ Task validation passed"
+        else
+            echo "⚠️  Task validation warnings:"
+            echo "$VALIDATION_OUTPUT" | grep -E "(❌|minimum|maximum|TOO FEW|TOO MANY)" || true
+            echo ""
+            echo "💡 Consider adjusting task breakdown for better granularity"
+            echo "   Recommended: 15-30 tasks with 0.1h-0.3h each"
+        fi
+    else
+        # Fallback: basic count check if validator not available
+        if [ "$TASK_COUNT" -lt 15 ]; then
+            echo "⚠️  Only $TASK_COUNT tasks generated (minimum 15 recommended)"
+            echo "💡 Consider breaking down tasks further for better granularity"
+        elif [ "$TASK_COUNT" -gt 30 ]; then
+            echo "⚠️  $TASK_COUNT tasks generated (maximum 30 recommended)"
+            echo "💡 Consider combining related tasks to reduce complexity"
+        else
+            echo "✅ Task count: $TASK_COUNT (within 15-30 range)"
+        fi
+    fi
+    echo ""
+    
+    for ((i=0; i<$TASK_COUNT; i++)); do
+        TASK_TITLE=$(jq -r ".tasks[$i].title" "$AGENT_RESPONSE_FILE")
+        TASK_DESC=$(jq -r ".tasks[$i].description" "$AGENT_RESPONSE_FILE")
+        TASK_ESTIMATE=$(jq -r ".tasks[$i].estimate_hours" "$AGENT_RESPONSE_FILE")
+        TASK_STATUS=$(jq -r ".tasks[$i].labels.status" "$AGENT_RESPONSE_FILE")
+        TASK_PRIORITY=$(jq -r ".tasks[$i].labels.priority" "$AGENT_RESPONSE_FILE")
+        TASK_TYPE=$(jq -r ".tasks[$i].labels.type" "$AGENT_RESPONSE_FILE")
+        TASK_SIZE=$(jq -r ".tasks[$i].labels.size" "$AGENT_RESPONSE_FILE")
+        
+        # Build acceptance criteria
+        ACCEPTANCE_CRITERIA=$(jq -r ".tasks[$i].acceptance_criteria[]" "$AGENT_RESPONSE_FILE" | sed 's/^/- [ ] /')
+        
+        TASK_TITLES+=("$TASK_TITLE")
+        TASK_ESTIMATES+=("$TASK_ESTIMATE")
+    done
+else
+    echo "📝 Using manually generated tasks..."
+    # Example structure (Claude will generate actual tasks)
+    # TASKS=(
+    #   "Setup database schema:Create tables and migrations:8h"
+    #   "Implement API endpoints:REST endpoints with validation:12h"
+    #   "Add authentication:JWT token management:6h"
+    #   "Write integration tests:Full coverage of happy paths:8h"
+    #   "Update documentation:API docs and examples:4h"
+    # )
+fi
+
+# Source time formatting utility if available
+FORMAT_SCRIPT=""
+if [ -f "./scripts/utils/format-time.sh" ]; then
+    source "./scripts/utils/format-time.sh"
+elif [ -f "scripts/utils/format-time.sh" ]; then
+    source "scripts/utils/format-time.sh"
+fi
+
+# Check if GitHub CLI is available
+if [ "$GH_AVAILABLE" = "true" ]; then
+    # Process tasks based on source (agent or manual)
+    if [ "$AGENT_SUCCESS" = "true" ] && [ -f "$AGENT_RESPONSE_FILE" ]; then
+        # Create issues from agent-generated tasks
+        for ((i=0; i<$TASK_COUNT; i++)); do
+            TASK_TITLE=$(jq -r ".tasks[$i].title" "$AGENT_RESPONSE_FILE")
+            TASK_DESC=$(jq -r ".tasks[$i].description" "$AGENT_RESPONSE_FILE")
+            TASK_ESTIMATE=$(jq -r ".tasks[$i].estimate_hours" "$AGENT_RESPONSE_FILE")
+            TASK_STATUS=$(jq -r ".tasks[$i].labels.status" "$AGENT_RESPONSE_FILE")
+            TASK_PRIORITY=$(jq -r ".tasks[$i].labels.priority" "$AGENT_RESPONSE_FILE")
+            TASK_TYPE=$(jq -r ".tasks[$i].labels.type" "$AGENT_RESPONSE_FILE")
+            TASK_SIZE=$(jq -r ".tasks[$i].labels.size" "$AGENT_RESPONSE_FILE")
+            
+            # Build acceptance criteria
+            ACCEPTANCE_CRITERIA=$(jq -r ".tasks[$i].acceptance_criteria[]" "$AGENT_RESPONSE_FILE" 2>/dev/null | sed 's/^/- [ ] /' || echo "- [ ] Implementation complete")
+            
+            # Build labels string
+            LABELS="status:${TASK_STATUS},priority:${TASK_PRIORITY},type:${TASK_TYPE},size:${TASK_SIZE}"
+            
+            # Create issue with agent-generated data
+            if ISSUE_NUM=$(gh issue create \
+                --title "$TASK_TITLE" \
+                --body "## Description
+$TASK_DESC
+
+## Acceptance Criteria
+$ACCEPTANCE_CRITERIA
+
+## Time Estimate
+$(if declare -f format_time >/dev/null 2>&1; then format_time "$TASK_ESTIMATE"; else echo "${TASK_ESTIMATE}h"; fi)
+
+## Labels Applied
+- Status: $TASK_STATUS
+- Priority: $TASK_PRIORITY
+- Type: $TASK_TYPE
+- Size: $TASK_SIZE
+
+Created by /plan command with fft-project-manager agent
+Feature: $ARGUMENTS" \
+                --label "$LABELS" \
+                --assignee @me 2>&1 | grep -oE '[0-9]+$'); then
+                
+                ISSUE_NUMBERS+=($ISSUE_NUM)
+                echo "✅ Created issue #$ISSUE_NUM: $TASK_TITLE"
+            else
+                FAILED_ISSUES+=("$TASK_TITLE")
+                echo "⚠️  Failed to create issue: $TASK_TITLE"
+                # Use placeholder issue number
+                ISSUE_NUMBERS+=("TBD-$((i+1))")
+            fi
+        done
+    else
+        # Manual mode - process TASKS array from Claude
+        for i in "${!TASKS[@]}"; do
+            task="${TASKS[$i]}"
+            IFS=':' read -r title desc estimate <<< "$task"
+            
+            # Create issue with manual data
+            if ISSUE_NUM=$(gh issue create \
+                --title "$title" \
+                --body "## Description
+$desc
+
+## Acceptance Criteria
+- [ ] Implementation complete
+- [ ] Unit tests written
+- [ ] Integration tests passing
+- [ ] Documentation updated
+
+## Time Estimate
+$(if declare -f format_time >/dev/null 2>&1; then format_time "$(echo "$estimate" | sed 's/h$//')"; else echo "$estimate"; fi)
+
+Created by /plan command for: $ARGUMENTS" \
+                --label "status: ready" \
+                --assignee @me 2>&1 | grep -oE '[0-9]+$'); then
+                
+                ISSUE_NUMBERS+=($ISSUE_NUM)
+                echo "✅ Created issue #$ISSUE_NUM: $title"
+            else
+                FAILED_ISSUES+=("$title")
+                echo "⚠️  Failed to create issue: $title"
+                # Use placeholder issue number
+                ISSUE_NUMBERS+=("TBD-$((i+1))")
+            fi
+        done
+    fi
+    
+    # Report failures if any
+    if [ ${#FAILED_ISSUES[@]} -gt 0 ]; then
+        echo ""
+        echo "⚠️  Some issues could not be created automatically"
+        echo "💡 Create them manually on GitHub"
+    fi
+else
+    echo "⚠️  GitHub CLI not available - skipping issue creation"
+    echo "💡 Create these issues manually:"
+    for i in "${!TASKS[@]}"; do
+        task="${TASKS[$i]}"
+        IFS=':' read -r title desc estimate <<< "$task"
+        echo "   $(($i+1)). $title ($estimate)"
+        ISSUE_NUMBERS+=("TBD-$((i+1))")
+    done
+fi
+```
+
+## 📅 Step 4: Update Schedule
+```bash
+# Update .flowforge/tasks.json (milestones) based on planning type
+if [ "$PLAN_MODE" = "sprint" ]; then
+    echo "📅 Creating sprint in .flowforge/tasks.json (milestones)..."
+    
+    # Get next sprint number
+    SPRINT_NUM=$(grep -c "## Sprint" .flowforge/tasks.json (milestones) 2>/dev/null || echo "1")
+    SPRINT_NUM=$((SPRINT_NUM + 1))
+    
+    # Add sprint section
+    cat >> .flowforge/tasks.json (milestones) << EOF
+
+## Sprint $SPRINT_NUM - $ARGUMENTS
+**Duration**: $(date +%Y-%m-%d) to $(date -d "+14 days" +%Y-%m-%d)
+**Goal**: $ARGUMENTS
+**Total Estimate**: ${TOTAL_HOURS}h
+
+### Tasks:
+$(for i in "${!ISSUE_NUMBERS[@]}"; do
+    if declare -f format_time >/dev/null 2>&1; then
+        FORMATTED_TIME=$(format_time "${TASK_ESTIMATES[$i]}")
+        echo "- [ ] #${ISSUE_NUMBERS[$i]} - ${TASK_TITLES[$i]} ($FORMATTED_TIME)"
+    else
+        echo "- [ ] #${ISSUE_NUMBERS[$i]} - ${TASK_TITLES[$i]} (${TASK_ESTIMATES[$i]}h)"
+    fi
+done)
+
+### Success Metrics:
+- All tasks completed
+- Test coverage > 80%
+- Documentation updated
+- Code reviewed and merged
+EOF
+
+else
+    echo "🎯 Creating milestone in .flowforge/tasks.json (milestones)..."
+    
+    # Add milestone section
+    cat >> .flowforge/tasks.json (milestones) << EOF
+
+## Milestone: $ARGUMENTS
+**Target Date**: $(date -d "+30 days" +%Y-%m-%d)
+**Status**: Planning
+**Total Estimate**: ${TOTAL_HOURS}h
+
+### Deliverables:
+$(for i in "${!ISSUE_NUMBERS[@]}"; do
+    if declare -f format_time >/dev/null 2>&1; then
+        FORMATTED_TIME=$(format_time "${TASK_ESTIMATES[$i]}")
+        echo "- [ ] #${ISSUE_NUMBERS[$i]} - ${TASK_TITLES[$i]} ($FORMATTED_TIME)"
+    else
+        echo "- [ ] #${ISSUE_NUMBERS[$i]} - ${TASK_TITLES[$i]} (${TASK_ESTIMATES[$i]}h)"
+    fi
+done)
+
+### Risks & Mitigations:
+- [Add identified risks here]
+EOF
+fi
+
+# Update schedule with new tasks (if script exists)
+if [ -f ".flowforge/scripts/update-schedule.sh" ] && [ -x ".flowforge/scripts/update-schedule.sh" ]; then
+    .flowforge/scripts/update-schedule.sh || echo "⚠️  Schedule update script failed"
+else
+    echo "ℹ️  Schedule update script not found - skipping automatic update"
+fi
+```
+
+## 📄 Step 5: Prepare .flowforge/tasks.json (via provider)
+```bash
+# Set up next session with first task
+FIRST_ISSUE=${ISSUE_NUMBERS[0]}
+FIRST_TITLE=${TASK_TITLES[0]}
+
+cat > .flowforge/tasks.json << EOF
+# 🚀 Next Session Quick Start Guide
+
+## 🎯 IMMEDIATE CONTEXT - READ THIS FIRST!
+
+### Current Work: Issue #$FIRST_ISSUE - $FIRST_TITLE
+**Planning**: $PLAN_MODE  
+**Feature**: $ARGUMENTS  
+**Created**: $(date +%Y-%m-%d)  
+
+### What's Ready:
+1. ✅ GitHub issues created (#${ISSUE_NUMBERS[@]})
+2. ✅ Schedule updated with $PLAN_MODE
+3. ✅ First task ready to start
+
+### Start Next Session:
+\`\`\`bash
+# Run this command to begin:
+/StartWorkOnNextProgrammedTask
+\`\`\`
+
+## 📋 Full Task List for $ARGUMENTS
+
+$(for i in "${!ISSUE_NUMBERS[@]}"; do
+    echo "$((i+1)). Issue #${ISSUE_NUMBERS[$i]} - ${TASK_TITLES[$i]} (${TASK_ESTIMATES[$i]}h)"
+    echo "   Status: Ready to start"
+    echo ""
+done)
+
+## 🏗️ Technical Approach
+
+[Claude will add technical details here based on the analysis]
+
+## ⚠️ Key Considerations
+
+[Claude will add important notes here]
+
+---
+**Generated**: $(date +"%Y-%m-%d %H:%M")  
+**By**: /plan command
+EOF
+
+echo "✅ .flowforge/tasks.json (via provider) updated with first task"
+```
+
+## 📊 Step 6: Update .flowforge/tasks.json
+```bash
+# Add to .flowforge/tasks.json backlog
+echo "📋 Updating .flowforge/tasks.json..."
+
+# Find backlog section and add tasks
+# This will add all created issues to the backlog
+```
+
+## ✅ Planning Complete!
+```bash
+echo ""
+echo "✨ Planning completed successfully!"
+echo "📊 Summary:"
+echo "   • Created ${#ISSUE_NUMBERS[@]} tasks"
+echo "   • Total estimate: ${TOTAL_HOURS:-0}h"
+echo "   • Planning type: $PLAN_MODE"
+if [ -n "${FIRST_ISSUE:-}" ]; then
+    echo "   • First task: #$FIRST_ISSUE"
+fi
+
+# Show warnings if any
+if [ "$GH_AVAILABLE" != "true" ]; then
+    echo ""
+    echo "⚠️  Note: GitHub issues were not created automatically"
+    echo "   Create them manually using the task list above"
+fi
+
+echo ""
+echo "🚀 Ready to start work with:"
+echo "   /flowforge:session:start"
+echo "   or"
+echo "   /StartWorkOnNextProgrammedTask"
+
+# Cleanup temporary files
+if [ -n "$AGENT_RESPONSE_FILE" ] && [ -f "$AGENT_RESPONSE_FILE" ]; then
+    rm -f "$AGENT_RESPONSE_FILE"
+fi
+
+# Debug info
+if [[ "${DEBUG:-0}" == "1" ]]; then
+    echo ""
+    echo "🔍 Debug Info:"
+    echo "  Arguments: $ARGUMENTS"
+    echo "  Plan mode: $PLAN_MODE"
+    echo "  Issues created: ${#ISSUE_NUMBERS[@]}"
+    echo "  GitHub available: $GH_AVAILABLE"
+    echo "  Agent success: $AGENT_SUCCESS"
+fi
+```
+
+## 🤖 Claude's Role
+
+When this command runs, Claude should:
+1. **Analyze the requirement** deeply using multi-agent thinking
+2. **Generate 5-8 concrete tasks** with clear titles and descriptions
+3. **Provide realistic time estimates** based on complexity
+4. **Identify dependencies** between tasks
+5. **Suggest testing approaches** for each component
+6. **Add technical implementation notes** to .flowforge/tasks.json (via provider)
+
+The command handles all the automation - Claude provides the intelligence!

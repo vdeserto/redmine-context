@@ -1,0 +1,339 @@
+#!/bin/bash
+# FlowForge v2.0 Pre-Push Hook
+# Validates billing accuracy and time tracking before push
+
+set -e
+
+# Source common functions
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/common-functions.sh"
+
+echo -e "${BLUE}💰 FlowForge v2.0 Pre-Push Billing Validation${NC}"
+
+# Function to validate billing data
+validate_billing_data() {
+    local session_file="$FLOWFORGE_DIR/sessions/current.json"
+    
+    if [ ! -f "$session_file" ]; then
+        echo -e "${YELLOW}⚠️  No active session found${NC}"
+        return 0
+    fi
+    
+    # Get session billing info
+    local total_seconds=$(read_json_value "$session_file" ".timer.totalSeconds" "0")
+    local current_task=$(get_current_task)
+    local hourly_rate=$(read_json_value "$FLOWFORGE_DIR/config.json" ".billing.hourlyRate" "0")
+    
+    if [ "$total_seconds" -eq 0 ]; then
+        echo -e "${RED}❌ No time tracked for this session!${NC}"
+        echo -e "${RED}   TIME = MONEY: Cannot push work without time tracking${NC}"
+        return 1
+    fi
+    
+    # Calculate billing amount
+    local hours=$(echo "scale=2; $total_seconds / 3600" | bc)
+    local amount=$(echo "scale=2; $hours * $hourly_rate" | bc)
+    
+    echo -e "${GREEN}✓ Time tracked: $(format_duration $total_seconds)${NC}"
+    echo -e "${BLUE}  Billable hours: $hours @ \$$hourly_rate/hour = \$$amount${NC}"
+    
+    # Validate minimum time (at least 1 minute of work)
+    if [ "$total_seconds" -lt 60 ]; then
+        echo -e "${YELLOW}⚠️  Less than 1 minute tracked - verify this is correct${NC}"
+        read -p "Continue with push? (y/n): " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            return 1
+        fi
+    fi
+    
+    return 0
+}
+
+# Function to check for uncommitted time
+check_uncommitted_time() {
+    local session_file="$FLOWFORGE_DIR/sessions/current.json"
+    
+    if [ ! -f "$session_file" ]; then
+        return 0
+    fi
+    
+    # Check if timer is still running
+    if is_timer_running; then
+        echo -e "${YELLOW}⚠️  Timer is still running!${NC}"
+        echo -e "${YELLOW}   Consider pausing or ending session before push${NC}"
+        echo -e "${YELLOW}   Run: ./run_ff_command.sh flowforge:session:pause${NC}"
+    fi
+    
+    # Check for recent activity without commits
+    local last_activity=$(read_json_value "$session_file" ".lastActivity" "")
+    local last_commit=$(jq -r '.commits[-1].timestamp // ""' "$session_file" 2>/dev/null)
+    
+    if [ -n "$last_activity" ] && [ -n "$last_commit" ]; then
+        local uncommitted_duration=$(calculate_duration "$last_commit" "$last_activity")
+        
+        if [ $uncommitted_duration -gt 300 ]; then  # More than 5 minutes
+            echo -e "${YELLOW}⚠️  $(format_duration $uncommitted_duration) of activity since last commit${NC}"
+            echo -e "${YELLOW}   Consider committing recent changes${NC}"
+        fi
+    fi
+    
+    return 0
+}
+
+# Function to generate billing report
+generate_billing_report() {
+    local session_file="$FLOWFORGE_DIR/sessions/current.json"
+    local current_task=$(get_current_task)
+    
+    if [ -z "$current_task" ]; then
+        return 0
+    fi
+    
+    echo -e "${BLUE}▶ Generating billing report for task #$current_task...${NC}"
+    
+    # Create billing report
+    local report_dir="$FLOWFORGE_DIR/billing/reports"
+    mkdir -p "$report_dir"
+    
+    local report_file="$report_dir/task-${current_task}-$(date +%Y%m%d-%H%M%S).json"
+    
+    # Get all session data
+    local total_seconds=$(read_json_value "$session_file" ".timer.totalSeconds" "0")
+    local commit_count=$(read_json_value "$session_file" ".stats.commits" "0")
+    local lines_added=$(read_json_value "$session_file" ".stats.linesAdded" "0")
+    local lines_removed=$(read_json_value "$session_file" ".stats.linesRemoved" "0")
+    local files_modified=$(read_json_value "$session_file" ".stats.filesModified" "0")
+    local hourly_rate=$(read_json_value "$FLOWFORGE_DIR/config.json" ".billing.hourlyRate" "100")
+    
+    # Calculate billing
+    local hours=$(echo "scale=2; $total_seconds / 3600" | bc)
+    local amount=$(echo "scale=2; $hours * $hourly_rate" | bc)
+    
+    # Get task details from provider
+    local task_details=$(get_task_details "$current_task")
+    
+    # Create report JSON
+    jq -n \
+        --arg task "$current_task" \
+        --arg title "$(echo "$task_details" | jq -r '.title // "Unknown"')" \
+        --arg user "$(get_user_id)" \
+        --arg date "$(format_timestamp)" \
+        --argjson seconds "$total_seconds" \
+        --argjson hours "$hours" \
+        --argjson rate "$hourly_rate" \
+        --argjson amount "$amount" \
+        --argjson commits "$commit_count" \
+        --argjson added "$lines_added" \
+        --argjson removed "$lines_removed" \
+        --argjson modified "$files_modified" \
+        '{
+            task: $task,
+            title: $title,
+            user: $user,
+            generatedAt: $date,
+            timeTracking: {
+                totalSeconds: $seconds,
+                totalHours: $hours,
+                formattedTime: ($seconds | tostring | tonumber | . as $s | 
+                    (($s / 3600) | floor) as $h | 
+                    ((($s % 3600) / 60) | floor) as $m | 
+                    ($s % 60) as $sec |
+                    "\($h)h \($m)m \($sec)s")
+            },
+            billing: {
+                hourlyRate: $rate,
+                totalAmount: $amount,
+                currency: "USD"
+            },
+            productivity: {
+                commits: $commits,
+                linesAdded: $added,
+                linesRemoved: $removed,
+                filesModified: $modified,
+                linesPerHour: (if $hours > 0 then (($added + $removed) / $hours) else 0 end)
+            },
+            status: "pending_review"
+        }' > "$report_file"
+    
+    echo -e "${GREEN}✓ Billing report saved: $report_file${NC}"
+    
+    # Display summary
+    echo -e "${CYAN}┌─────────────────────────────────────────┐${NC}"
+    echo -e "${CYAN}│         BILLING SUMMARY                 │${NC}"
+    echo -e "${CYAN}├─────────────────────────────────────────┤${NC}"
+    echo -e "${CYAN}│ Task:     #$current_task                ${NC}"
+    echo -e "${CYAN}│ Time:     $(format_duration $total_seconds)${NC}"
+    echo -e "${CYAN}│ Rate:     \$$hourly_rate/hour           ${NC}"
+    echo -e "${CYAN}│ Amount:   \$$amount                     ${NC}"
+    echo -e "${CYAN}│ Commits:  $commit_count                 ${NC}"
+    echo -e "${CYAN}│ Changes:  +$lines_added/-$lines_removed lines${NC}"
+    echo -e "${CYAN}└─────────────────────────────────────────┘${NC}"
+    
+    return 0
+}
+
+# Function to validate task status
+validate_task_status() {
+    local current_task=$(get_current_task)
+    
+    if [ -z "$current_task" ]; then
+        return 0
+    fi
+    
+    # Get task details
+    local task_details=$(get_task_details "$current_task")
+    if [ -z "$task_details" ] || [ "$task_details" == "null" ]; then
+        echo -e "${YELLOW}⚠️  Could not retrieve task #$current_task details${NC}"
+        return 0
+    fi
+    
+    local task_status=$(echo "$task_details" | jq -r '.status // "unknown"')
+    
+    # Warn if task is already closed
+    if [[ "$task_status" == "closed" ]] || [[ "$task_status" == "done" ]]; then
+        echo -e "${RED}❌ Task #$current_task is already closed!${NC}"
+        echo -e "${YELLOW}   Cannot push work to a closed task${NC}"
+        return 1
+    fi
+    
+    # Warn if task is not in progress
+    if [[ "$task_status" != "in_progress" ]] && [[ "$task_status" != "active" ]]; then
+        echo -e "${YELLOW}⚠️  Task #$current_task status is '$task_status'${NC}"
+        echo -e "${YELLOW}   Consider updating task status to 'in_progress'${NC}"
+    fi
+    
+    return 0
+}
+
+# Function to sync billing data
+sync_billing_data() {
+    echo -e "${BLUE}▶ Syncing billing data...${NC}"
+    
+    # Update task with final time
+    local current_task=$(get_current_task)
+    local total_seconds=$(read_json_value "$FLOWFORGE_DIR/sessions/current.json" ".timer.totalSeconds" "0")
+    
+    if [ -n "$current_task" ] && [ "$total_seconds" -gt 0 ]; then
+        # Update task via provider bridge
+        call_provider_bridge update-task \
+            --id="$current_task" \
+            --time="$total_seconds" \
+            --format=simple
+        
+        echo -e "${GREEN}✓ Task time updated in tracking system${NC}"
+    fi
+    
+    # Mark session as pushed
+    update_json_value "$FLOWFORGE_DIR/sessions/current.json" ".lastPush" "\"$(format_timestamp)\""
+    
+    return 0
+}
+
+# Function to create push record
+create_push_record() {
+    local push_log="$FLOWFORGE_DIR/logs/pushes.json"
+    mkdir -p "$(dirname "$push_log")"
+    
+    if [ ! -f "$push_log" ]; then
+        echo "[]" > "$push_log"
+    fi
+    
+    local current_task=$(get_current_task)
+    local total_seconds=$(read_json_value "$FLOWFORGE_DIR/sessions/current.json" ".timer.totalSeconds" "0")
+    local commit_count=$(read_json_value "$FLOWFORGE_DIR/sessions/current.json" ".stats.commits" "0")
+    local branch=$(get_current_branch)
+    
+    # Create push record
+    local push_record=$(jq -n \
+        --arg task "$current_task" \
+        --arg branch "$branch" \
+        --arg user "$(get_user_id)" \
+        --arg timestamp "$(format_timestamp)" \
+        --argjson seconds "$total_seconds" \
+        --argjson commits "$commit_count" \
+        '{
+            task: $task,
+            branch: $branch,
+            user: $user,
+            timestamp: $timestamp,
+            timeTracked: $seconds,
+            commits: $commits
+        }')
+    
+    # Append to log
+    local temp_file=$(mktemp)
+    jq ". += [$push_record]" "$push_log" > "$temp_file" && mv "$temp_file" "$push_log"
+    
+    return 0
+}
+
+# Main execution
+main() {
+    local errors=0
+    
+    echo -e "${BLUE}═══════════════════════════════════════════${NC}"
+    
+    # Log the hook event
+    log_hook_event "pre-push" "start" "Validating billing and time tracking"
+    
+    # 1. Validate billing data
+    echo -e "${BLUE}▶ Validating billing data...${NC}"
+    if ! validate_billing_data; then
+        ((errors++))
+    fi
+    
+    # 2. Check for uncommitted time
+    echo -e "${BLUE}▶ Checking for uncommitted time...${NC}"
+    check_uncommitted_time
+    
+    # 3. Validate task status
+    echo -e "${BLUE}▶ Validating task status...${NC}"
+    if ! validate_task_status; then
+        ((errors++))
+    fi
+    
+    # 4. Generate billing report
+    if [ $errors -eq 0 ]; then
+        generate_billing_report
+    fi
+    
+    # 5. Sync billing data
+    if [ $errors -eq 0 ]; then
+        sync_billing_data
+    fi
+    
+    # 6. Create push record
+    if [ $errors -eq 0 ]; then
+        create_push_record
+    fi
+    
+    echo -e "${BLUE}═══════════════════════════════════════════${NC}"
+    
+    # Final decision
+    if [ $errors -gt 0 ]; then
+        echo -e "${RED}❌ Pre-push validation failed${NC}"
+        echo -e "${YELLOW}Fix the issues above before pushing${NC}"
+        
+        # Log failure
+        log_hook_event "pre-push" "failed" "Validation failed with $errors errors"
+        exit 1
+    else
+        echo -e "${GREEN}✅ Pre-push validation passed!${NC}"
+        echo -e "${GREEN}   TIME = MONEY: All billing data validated${NC}"
+        
+        # Send notification
+        send_notification \
+            "Push Successful" \
+            "Code pushed with proper time tracking and billing data" \
+            "success"
+        
+        # Log success
+        log_hook_event "pre-push" "complete" "Successfully validated billing"
+    fi
+    
+    exit 0
+}
+
+# Run main function
+main "$@"

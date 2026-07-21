@@ -1,0 +1,8 @@
+{
+  "timestamp": "2026-07-20T19:31:46Z",
+  "version": "2.0.7",
+  "mode": "complete",
+  "enforcement": "immediate",
+  "installer": "ff-init-global",
+  "success": true
+}

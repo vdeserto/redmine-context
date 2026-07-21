@@ -1,0 +1,260 @@
+#!/bin/bash
+# FlowForge v2.0 Post-Checkout Hook
+# Detects v1.x files and suggests migration
+
+set -e
+
+# Source common functions
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/common-functions.sh"
+
+echo -e "${BLUE}🔄 FlowForge v2.0 Migration Check${NC}"
+
+# Function to detect v1.x files
+detect_legacy_files() {
+    local legacy_count=0
+    local legacy_files=()
+    
+    # Check for v1.x markdown files
+    local md_files=(
+        "TASKS.md"
+        "NEXT_SESSION.md"
+        ".flowforge/TASKS.md"
+        ".flowforge/NEXT_SESSION.md"
+        "documentation/development/NEXT_SESSION.md"
+    )
+    
+    for file in "${md_files[@]}"; do
+        if [ -f "$FF_ROOT/$file" ]; then
+            legacy_files+=("$file")
+            ((legacy_count++))
+        fi
+    done
+    
+    # Check for old session format
+    if [ -f "$FLOWFORGE_DIR/.current-session" ]; then
+        if ! validate_json_file "$FLOWFORGE_DIR/.current-session"; then
+            legacy_files+=(".flowforge/.current-session (non-JSON format)")
+            ((legacy_count++))
+        fi
+    fi
+    
+    # Check for old config format
+    if [ -f "$FLOWFORGE_DIR/config" ] && [ ! -f "$FLOWFORGE_DIR/config.json" ]; then
+        legacy_files+=(".flowforge/config (non-JSON format)")
+        ((legacy_count++))
+    fi
+    
+    if [ $legacy_count -gt 0 ]; then
+        echo -e "${YELLOW}╔════════════════════════════════════════════╗${NC}"
+        echo -e "${YELLOW}║    ⚠️  V1.X LEGACY FILES DETECTED          ║${NC}"
+        echo -e "${YELLOW}╚════════════════════════════════════════════╝${NC}"
+        echo
+        echo -e "${YELLOW}The following v1.x files were detected:${NC}"
+        for file in "${legacy_files[@]}"; do
+            echo -e "${YELLOW}  • $file${NC}"
+        done
+        echo
+        echo -e "${CYAN}FlowForge v2.0 uses JSON-based storage for:${NC}"
+        echo -e "${CYAN}  • Better performance${NC}"
+        echo -e "${CYAN}  • Type safety${NC}"
+        echo -e "${CYAN}  • Multi-user support${NC}"
+        echo -e "${CYAN}  • Provider abstraction${NC}"
+        echo
+        echo -e "${GREEN}To migrate your data to v2.0 format:${NC}"
+        echo -e "${GREEN}  ./scripts/migration/migrate-to-v2.sh${NC}"
+        echo
+        echo -e "${BLUE}The migration will:${NC}"
+        echo -e "${BLUE}  1. Backup existing files${NC}"
+        echo -e "${BLUE}  2. Convert MD to JSON format${NC}"
+        echo -e "${BLUE}  3. Preserve all task data${NC}"
+        echo -e "${BLUE}  4. Update file references${NC}"
+        echo
+        
+        # Create migration marker
+        local migration_marker="$FLOWFORGE_DIR/.migration-suggested"
+        echo "$(format_timestamp)" > "$migration_marker"
+        
+        return $legacy_count
+    fi
+    
+    return 0
+}
+
+# Function to check version compatibility
+check_version_compatibility() {
+    local version_file="$FF_ROOT/VERSION"
+    
+    if [ ! -f "$version_file" ]; then
+        echo -e "${YELLOW}⚠️  VERSION file not found${NC}"
+        return 1
+    fi
+    
+    local current_version=$(cat "$version_file")
+    
+    # Check if v2.0 or higher
+    if [[ "$current_version" =~ ^2\. ]]; then
+        echo -e "${GREEN}✓ Running FlowForge v$current_version (v2.0+ compatible)${NC}"
+    elif [[ "$current_version" =~ ^1\. ]]; then
+        echo -e "${YELLOW}⚠️  Running FlowForge v$current_version${NC}"
+        echo -e "${YELLOW}   Consider upgrading to v2.0 for JSON-based features${NC}"
+        echo -e "${YELLOW}   Run: ./run_ff_command.sh flowforge:version:update${NC}"
+    fi
+    
+    return 0
+}
+
+# Function to check provider configuration
+check_provider_config() {
+    local config_file="$FLOWFORGE_DIR/config.json"
+    
+    if [ ! -f "$config_file" ]; then
+        echo -e "${YELLOW}ℹ️  No config.json found - using defaults${NC}"
+        return 0
+    fi
+    
+    local provider=$(read_json_value "$config_file" ".trackingSystem.provider" "json")
+    
+    echo -e "${BLUE}  Current provider: $provider${NC}"
+    
+    # Check if provider is configured correctly
+    case "$provider" in
+        "json")
+            echo -e "${GREEN}✓ Using JSON provider (v2.0 default)${NC}"
+            ;;
+        "github")
+            echo -e "${GREEN}✓ Using GitHub provider${NC}"
+            # Check if GitHub token is configured
+            if [ -z "$GITHUB_TOKEN" ]; then
+                echo -e "${YELLOW}   ℹ️  Set GITHUB_TOKEN for full GitHub integration${NC}"
+            fi
+            ;;
+        "notion")
+            echo -e "${GREEN}✓ Using Notion provider${NC}"
+            # Check if Notion token is configured
+            if [ -z "$NOTION_TOKEN" ]; then
+                echo -e "${YELLOW}   ℹ️  Set NOTION_TOKEN for Notion integration${NC}"
+            fi
+            ;;
+        *)
+            echo -e "${YELLOW}⚠️  Unknown provider: $provider${NC}"
+            ;;
+    esac
+    
+    return 0
+}
+
+# Function to check user isolation
+check_user_isolation() {
+    local user_id=$(get_user_id)
+    local user_dir=$(get_user_storage_path)
+    
+    if [ ! -d "$user_dir" ]; then
+        echo -e "${BLUE}  Creating user-isolated storage for: $user_id${NC}"
+        mkdir -p "$user_dir"
+        
+        # Initialize user config
+        cat > "$user_dir/config.json" << EOF
+{
+  "userId": "$user_id",
+  "createdAt": "$(format_timestamp)",
+  "preferences": {
+    "notifications": true,
+    "autoSync": true,
+    "theme": "auto"
+  }
+}
+EOF
+        echo -e "${GREEN}✓ User storage initialized${NC}"
+    else
+        echo -e "${GREEN}✓ User storage exists: $user_id${NC}"
+    fi
+    
+    return 0
+}
+
+# Function to suggest optimizations
+suggest_optimizations() {
+    echo -e "${CYAN}💡 V2.0 Optimization Tips:${NC}"
+    
+    # Check if using provider bridge
+    if [ ! -f "$PROVIDER_BRIDGE" ]; then
+        echo -e "${CYAN}  • Install provider bridge for unified task management${NC}"
+    fi
+    
+    # Check if hooks are installed
+    if [ ! -L "$FF_ROOT/.git/hooks/pre-commit" ]; then
+        echo -e "${CYAN}  • Install v2.0 hooks: ./scripts/install-v2-hooks.sh${NC}"
+    fi
+    
+    # Check if using JSON tasks
+    if [ ! -f "$FLOWFORGE_DIR/tasks.json" ]; then
+        echo -e "${CYAN}  • Initialize JSON task storage${NC}"
+    fi
+    
+    # Check for performance config
+    local cache_enabled=$(read_json_value "$FLOWFORGE_DIR/config.json" ".performance.cacheEnabled" "false")
+    if [ "$cache_enabled" != "true" ]; then
+        echo -e "${CYAN}  • Enable caching for better performance${NC}"
+    fi
+    
+    return 0
+}
+
+# Main execution
+main() {
+    echo -e "${BLUE}═══════════════════════════════════════════${NC}"
+    
+    # Log the hook event
+    log_hook_event "post-checkout" "start" "Checking for v1.x files"
+    
+    # Only run checks if not in CI environment
+    if [ -n "$CI" ]; then
+        echo -e "${BLUE}ℹ️  Running in CI - skipping migration check${NC}"
+        exit 0
+    fi
+    
+    # 1. Detect legacy files
+    echo -e "${BLUE}▶ Checking for v1.x legacy files...${NC}"
+    legacy_count=$(detect_legacy_files)
+    
+    # 2. Check version compatibility
+    echo -e "${BLUE}▶ Checking version compatibility...${NC}"
+    check_version_compatibility
+    
+    # 3. Check provider configuration
+    echo -e "${BLUE}▶ Checking provider configuration...${NC}"
+    check_provider_config
+    
+    # 4. Check user isolation
+    echo -e "${BLUE}▶ Setting up user isolation...${NC}"
+    check_user_isolation
+    
+    # 5. Suggest optimizations
+    if [ "$legacy_count" -eq 0 ]; then
+        suggest_optimizations
+    fi
+    
+    echo -e "${BLUE}═══════════════════════════════════════════${NC}"
+    
+    if [ "$legacy_count" -gt 0 ]; then
+        echo -e "${YELLOW}⚠️  $legacy_count legacy file(s) detected${NC}"
+        echo -e "${YELLOW}   Run migration when ready${NC}"
+        
+        # Send notification
+        send_notification \
+            "V1.x Files Detected" \
+            "$legacy_count legacy files found. Consider migrating to v2.0" \
+            "warning"
+    else
+        echo -e "${GREEN}✅ No legacy files detected - v2.0 ready${NC}"
+    fi
+    
+    # Log completion
+    log_hook_event "post-checkout" "complete" "Check complete, $legacy_count legacy files"
+    
+    exit 0
+}
+
+# Run main function
+main "$@"

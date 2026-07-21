@@ -1,0 +1,250 @@
+#!/bin/bash
+# FlowForge v2.0 Post-Commit Hook
+# Updates time tracking and session data in JSON format
+
+set -e
+
+# Source common functions
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/common-functions.sh"
+
+echo -e "${BLUE}📊 FlowForge v2.0 Post-Commit Processing${NC}"
+
+# Function to update commit tracking
+update_commit_tracking() {
+    local commit_hash=$(git rev-parse HEAD)
+    local commit_message=$(git log -1 --pretty=%B)
+    local commit_author=$(git log -1 --pretty=%ae)
+    local commit_timestamp=$(git log -1 --pretty=%aI)
+    local files_changed=$(git diff-tree --no-commit-id --name-only -r HEAD | wc -l)
+    
+    # Get current session
+    local session_file="$FLOWFORGE_DIR/sessions/current.json"
+    if [ ! -f "$session_file" ]; then
+        echo -e "${YELLOW}⚠️  No active session to update${NC}"
+        return 1
+    fi
+    
+    # Create commit record
+    local commit_record=$(jq -n \
+        --arg hash "$commit_hash" \
+        --arg message "$commit_message" \
+        --arg author "$commit_author" \
+        --arg timestamp "$commit_timestamp" \
+        --arg files "$files_changed" \
+        '{
+            hash: $hash,
+            message: $message,
+            author: $author,
+            timestamp: $timestamp,
+            filesChanged: ($files | tonumber)
+        }')
+    
+    # Update session with commit
+    local temp_file=$(mktemp)
+    jq ".commits += [$commit_record] | .stats.commits += 1 | .lastActivity = now | todate" \
+        "$session_file" > "$temp_file" && mv "$temp_file" "$session_file"
+    
+    echo -e "${GREEN}✓ Commit tracked: ${commit_hash:0:7}${NC}"
+}
+
+# Function to update task progress
+update_task_progress() {
+    local current_task=$(get_current_task)
+    
+    if [ -z "$current_task" ]; then
+        echo -e "${YELLOW}ℹ️  No task associated with this session${NC}"
+        return 0
+    fi
+    
+    # Check commit message for progress indicators
+    local commit_message=$(git log -1 --pretty=%B)
+    local progress_match=$(echo "$commit_message" | grep -oE '\[progress:([0-9]+)%\]' | grep -oE '[0-9]+' || echo "")
+    
+    if [ -n "$progress_match" ]; then
+        echo -e "${BLUE}  Updating task #$current_task progress to $progress_match%${NC}"
+        
+        # Update task progress via provider bridge
+        call_provider_bridge update-task \
+            --id="$current_task" \
+            --progress="$progress_match" \
+            --format=simple
+    fi
+    
+    # Check for task completion keywords
+    if echo "$commit_message" | grep -qiE '(complete[sd]?|finish(ed)?|done|close[sd]?)'; then
+        echo -e "${GREEN}ℹ️  Task may be complete - verify and close if done${NC}"
+        send_notification \
+            "Task Completion Check" \
+            "Task #$current_task may be complete. Review and close if finished." \
+            "info"
+    fi
+}
+
+# Function to calculate and update time spent
+update_time_tracking() {
+    local session_file="$FLOWFORGE_DIR/sessions/current.json"
+    
+    if [ ! -f "$session_file" ]; then
+        return 1
+    fi
+    
+    # Get last commit timestamp from session
+    local last_commit_time=$(jq -r '.commits[-2].timestamp // .startTime' "$session_file" 2>/dev/null)
+    local current_time=$(format_timestamp)
+    
+    if [ -n "$last_commit_time" ] && [ "$last_commit_time" != "null" ]; then
+        # Calculate time since last commit
+        local duration=$(calculate_duration "$last_commit_time" "$current_time")
+        
+        # Only count time if less than 30 minutes (to avoid counting breaks)
+        if [ $duration -lt 1800 ]; then
+            # Update session total time
+            local current_total=$(read_json_value "$session_file" ".timer.totalSeconds" "0")
+            local new_total=$((current_total + duration))
+            
+            update_json_value "$session_file" ".timer.totalSeconds" "$new_total"
+            
+            echo -e "${GREEN}✓ Added $(format_duration $duration) to session time${NC}"
+            echo -e "${BLUE}  Total session time: $(format_duration $new_total)${NC}"
+            
+            # Update task time if applicable
+            local current_task=$(get_current_task)
+            if [ -n "$current_task" ]; then
+                update_task_time "$current_task" "$duration"
+            fi
+        else
+            echo -e "${YELLOW}ℹ️  Gap of $(format_duration $duration) detected - not counting as work time${NC}"
+        fi
+    fi
+}
+
+# Function to generate commit statistics
+generate_commit_stats() {
+    local session_file="$FLOWFORGE_DIR/sessions/current.json"
+    
+    if [ ! -f "$session_file" ]; then
+        return 1
+    fi
+    
+    # Update statistics
+    local lines_added=$(git diff HEAD~1 --numstat | awk '{sum+=$1} END {print sum}' 2>/dev/null || echo 0)
+    local lines_removed=$(git diff HEAD~1 --numstat | awk '{sum+=$2} END {print sum}' 2>/dev/null || echo 0)
+    local files_modified=$(git diff HEAD~1 --name-only | wc -l)
+    
+    # Update session stats
+    local temp_file=$(mktemp)
+    jq ".stats.linesAdded += $lines_added | 
+        .stats.linesRemoved += $lines_removed | 
+        .stats.filesModified += $files_modified" \
+        "$session_file" > "$temp_file" && mv "$temp_file" "$session_file"
+    
+    echo -e "${BLUE}  📈 Stats: +${lines_added}/-${lines_removed} lines in ${files_modified} files${NC}"
+}
+
+# Function to check and warn about billing
+check_billing_reminder() {
+    local session_file="$FLOWFORGE_DIR/sessions/current.json"
+    
+    if [ ! -f "$session_file" ]; then
+        return 0
+    fi
+    
+    # Get total session time
+    local total_seconds=$(read_json_value "$session_file" ".timer.totalSeconds" "0")
+    local hours=$((total_seconds / 3600))
+    
+    # Remind about billing at certain intervals
+    if [ $hours -gt 0 ] && [ $((hours % 4)) -eq 0 ]; then
+        echo -e "${YELLOW}💰 Billing Reminder: You've worked $(format_duration $total_seconds) on this task${NC}"
+        echo -e "${YELLOW}   Ensure time is properly tracked for invoicing${NC}"
+        
+        send_notification \
+            "Billing Reminder" \
+            "You've worked $(format_duration $total_seconds) on this task. Ensure proper tracking." \
+            "info"
+    fi
+}
+
+# Function to backup session data
+backup_session_data() {
+    local session_file="$FLOWFORGE_DIR/sessions/current.json"
+    local backup_dir="$FLOWFORGE_DIR/sessions/backups"
+    
+    if [ ! -f "$session_file" ]; then
+        return 0
+    fi
+    
+    mkdir -p "$backup_dir"
+    
+    # Create backup with timestamp
+    local backup_name="session-$(date +%Y%m%d-%H%M%S).json"
+    cp "$session_file" "$backup_dir/$backup_name"
+    
+    # Keep only last 50 backups
+    ls -t "$backup_dir"/session-*.json 2>/dev/null | tail -n +51 | xargs -r rm
+}
+
+# Function to sync with remote tracking
+sync_remote_tracking() {
+    local current_task=$(get_current_task)
+    
+    if [ -z "$current_task" ]; then
+        return 0
+    fi
+    
+    # Check if we should sync (every 5 commits)
+    local commit_count=$(read_json_value "$FLOWFORGE_DIR/sessions/current.json" ".stats.commits" "0")
+    
+    if [ $((commit_count % 5)) -eq 0 ] && [ $commit_count -gt 0 ]; then
+        echo -e "${BLUE}  🔄 Syncing with remote tracking system...${NC}"
+        
+        # Trigger sync via provider bridge
+        call_provider_bridge sync-task --id="$current_task" --format=simple
+        
+        echo -e "${GREEN}✓ Remote sync complete${NC}"
+    fi
+}
+
+# Main execution
+main() {
+    echo -e "${BLUE}═══════════════════════════════════════════${NC}"
+    
+    # Log the hook event
+    log_hook_event "post-commit" "start" "Processing commit"
+    
+    # 1. Update commit tracking
+    echo -e "${BLUE}▶ Tracking commit...${NC}"
+    update_commit_tracking
+    
+    # 2. Update task progress
+    echo -e "${BLUE}▶ Updating task progress...${NC}"
+    update_task_progress
+    
+    # 3. Update time tracking
+    echo -e "${BLUE}▶ Updating time tracking...${NC}"
+    update_time_tracking
+    
+    # 4. Generate statistics
+    echo -e "${BLUE}▶ Generating statistics...${NC}"
+    generate_commit_stats
+    
+    # 5. Check billing reminder
+    check_billing_reminder
+    
+    # 6. Backup session data
+    echo -e "${BLUE}▶ Backing up session data...${NC}"
+    backup_session_data
+    
+    # 7. Sync with remote
+    sync_remote_tracking
+    
+    echo -e "${BLUE}═══════════════════════════════════════════${NC}"
+    echo -e "${GREEN}✅ Post-commit processing complete${NC}"
+    
+    # Log completion
+    log_hook_event "post-commit" "complete" "Successfully processed commit"
+}
+
+# Run main function
+main "$@"

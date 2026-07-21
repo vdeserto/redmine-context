@@ -1,0 +1,46 @@
+{
+  "version": "2.0.0",
+  "project": {
+    "name": "redmine-context",
+    "type": "node",
+    "created": "2026-07-20T19:31:46Z",
+    "integrationMode": "complete"
+  },
+  "enforcement": {
+    "level": "immediate",
+    "startDate": "2026-07-20T19:31:46Z",
+    "transitionDate": "",
+    "currentPhase": "initial"
+  },
+  "rules": {
+    "enforceTests": true,
+    "requireIssues": true,
+    "documentationRequired": true,
+    "gitFlow": true,
+    "noAIReferences": true
+  },
+  "automation": {
+    "preCommitChecks": true,
+    "autoFormat": true,
+    "updateDocs": true,
+    "timeTracking": true,
+    "completionDetection": true,
+    "smartAggregation": true
+  },
+  "standards": {
+    "testCoverage": 80,
+    "maxFileLength": 500,
+    "commitFormat": "conventional"
+  },
+  "providers": {
+    "active": "json",
+    "available": ["json", "github", "notion"]
+  },
+  "v2Features": {
+    "userIsolation": true,
+    "taskMigration": true,
+    "completionDetection": true,
+    "smartAggregation": true,
+    "providerBridge": true
+  }
+}
