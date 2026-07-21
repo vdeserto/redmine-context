@@ -22,7 +22,9 @@ import type {
 } from '../contract.js';
 
 /** Ref placeholder para campos obrigatórios do contrato ausentes no payload. */
-const NULL_REF: RedmineRef = { id: 0, name: '' };
+// Congelado: instância compartilhada entre todas as issues degradadas — mutação
+// acidental corromperia o placeholder globalmente (modo strict lança).
+const NULL_REF: RedmineRef = Object.freeze({ id: 0, name: '' });
 
 /**
  * Converte um valor desconhecido em `Record<string, unknown>` para acesso seguro.
