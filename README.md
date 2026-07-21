@@ -16,6 +16,7 @@ Consumidor de Redmine que entrega contexto completo de issues — texto e mídia
 | `npm run lint` | ESLint (typescript-eslint) |
 | `npm test` | Vitest com cobertura (threshold 80%) |
 | `npm run build` | Compila para `dist/` |
+| `npm run seed` | Popula fixtures base no Redmine via REST (ver [Seed](#seed-de-fixtures)) |
 
 ## Estrutura
 
@@ -55,6 +56,35 @@ curl -s http://localhost:3080/issues.json          # {"issues":[],...} (200)
 # Endpoint protegido rejeita sem chave => API de pé e autenticando:
 curl -s -o /dev/null -w '%{http_code}\n' http://localhost:3080/users.json   # 401
 ```
+
+### Seed de fixtures
+
+Com o ambiente de pé (healthy + REST habilitada), popule fixtures base:
+
+```bash
+npm run seed
+```
+
+O script (`scripts/seed.mjs`, Node puro, `fetch` nativo, sem dependências) cria
+um projeto de identifier fixo **`rc-fixtures`** e **3 issues** com descrição, via
+REST API. É **idempotente**: cada recurso é verificado por `GET` antes do `POST`
+(projeto por identifier, issues por subject), então re-executar não duplica nada.
+Ao final, asserções via `GET` validam as contagens e o processo sai com código
+`!= 0` se algo estiver errado.
+
+Config via ambiente (defaults combinam com o compose de teste):
+
+| Variável                 | Padrão                   | Descrição                    |
+| ------------------------ | ------------------------ | ---------------------------- |
+| `REDMINE_URL`            | `http://localhost:3080`  | Base da REST API             |
+| `REDMINE_ADMIN_USER`     | `admin`                  | Usuário admin (Basic auth)   |
+| `REDMINE_ADMIN_PASSWORD` | `admin`                  | Senha do admin (Basic auth)  |
+
+> Senha do admin: a imagem oficial do Redmine 6 marca o admin default para
+> trocar a senha no primeiro login **web** (`must_change_passwd`). Esse flag é
+> por sessão e **não bloqueia a REST API via Basic auth**; ainda assim o seed o
+> zera de forma proativa e idempotente (`PUT /users/{id}.json`, mantendo a mesma
+> senha) para manter o admin utilizável em web + API.
 
 ### Reproduzir instância limpa / derrubar
 
