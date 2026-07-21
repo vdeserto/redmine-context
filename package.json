@@ -1,0 +1,33 @@
+{
+  "name": "redmine-context",
+  "version": "0.1.0",
+  "description": "Consumidor de Redmine que entrega contexto completo de issues (texto + mídia extraída localmente) para qualquer LLM",
+  "type": "module",
+  "license": "MIT",
+  "bin": {
+    "redmine-context": "dist/surfaces/cli/main.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run --coverage",
+    "seed": "node scripts/seed.mjs",
+    "e2e": "node scripts/e2e.mjs"
+  },
+  "devDependencies": {
+    "@vitest/coverage-v8": "^3.2.4",
+    "eslint": "^9.31.0",
+    "typescript": "^5.8.3",
+    "typescript-eslint": "^8.36.0",
+    "vitest": "^3.2.4"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "env-paths": "^4.0.0",
+    "zod": "^4.4.3"
+  }
+}

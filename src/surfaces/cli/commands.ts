@@ -1,0 +1,205 @@
+/**
+ * Handlers dos comandos do CLI (M1-11): `issue` e `login`.
+ *
+ * Consomem EXCLUSIVAMENTE a superfície pública do core (`../../index.js`,
+ * fronteira do ADR-005) — a orquestração `fetchIssueBundle`, o `loginWithPassword`
+ * e a cascata de credenciais. Cada handler devolve o exit code do processo; o
+ * mapeamento status→código vive em {@link exitCodeForError} e é documentado no
+ * `--help`.
+ */
+
+import { mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+
+import * as core from '../../index.js';
+import type { BundleFormat } from '../../index.js';
+import type { ParsedArgs, RunDeps } from './types.js';
+
+/** Exit codes do CLI (documentados no `--help`). */
+export const EXIT = {
+  /** Erro genérico ou uso inválido. */
+  GENERIC: 1,
+  /** Falha de autenticação ou credencial ausente. */
+  AUTH: 2,
+  /** Erro de rede ou HTTP. */
+  NETWORK: 3,
+  /** Issue inexistente. */
+  NOT_FOUND: 4,
+} as const;
+
+/** Extrai uma mensagem legível de um erro desconhecido. */
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Mapeia um erro para o exit code do CLI.
+ *
+ * Ordem importa: os erros específicos (404, 401) estendem `RedmineHttpError` e
+ * precisam ser testados antes do genérico HTTP. Erros de rede (sem status) são
+ * detectados pela mensagem do client e também caem em {@link EXIT.NETWORK}.
+ *
+ * @param error - Erro capturado durante a operação.
+ * @returns O exit code correspondente.
+ */
+export function exitCodeForError(error: unknown): number {
+  if (error instanceof core.RedmineNotFoundError) return EXIT.NOT_FOUND;
+  if (error instanceof core.RedmineAuthError) return EXIT.AUTH;
+  if (error instanceof core.RedmineLoginError) return EXIT.AUTH;
+  if (error instanceof core.RedmineHttpError) return EXIT.NETWORK;
+  if (error instanceof Error && /falha de rede|network|fetch failed|econn|enotfound|etimedout/i.test(error.message)) {
+    return EXIT.NETWORK;
+  }
+  return EXIT.GENERIC;
+}
+
+/** Lê uma flag com valor string, ou `undefined` se ausente/booleana. */
+function stringFlag(parsed: ParsedArgs, name: string): string | undefined {
+  const value = parsed.flags.get(name);
+  return typeof value === 'string' ? value : undefined;
+}
+
+/**
+ * Comando `issue <id>`: resolve credencial pela cascata, empacota e emite o
+ * bundle (stdout ou `--out <dir>`), com progresso em stderr.
+ *
+ * @param parsed - Argumentos parseados (posicional `<id>` + flags).
+ * @param deps - Dependências injetáveis (I/O, env).
+ * @returns Exit code do processo.
+ */
+export async function runIssue(parsed: ParsedArgs, deps: RunDeps): Promise<number> {
+  const idRaw = parsed.positionals[1];
+  const issueId = Number(idRaw);
+  if (idRaw === undefined || !Number.isInteger(issueId) || issueId <= 0) {
+    deps.stderr(`Id de issue inválido: ${idRaw ?? '(ausente)'}. Uso: redmine-context issue <id>\n`);
+    return EXIT.GENERIC;
+  }
+
+  const baseUrl = stringFlag(parsed, 'url') ?? deps.env.REDMINE_URL;
+  if (baseUrl === undefined || baseUrl.length === 0) {
+    deps.stderr('Informe a URL do Redmine com --url <url> ou defina REDMINE_URL.\n');
+    return EXIT.GENERIC;
+  }
+  const insecure = parsed.flags.get('insecure') === true;
+
+  let apiKey: string | undefined;
+  try {
+    apiKey = await core.resolveApiKey(baseUrl, { env: deps.env });
+  } catch (error) {
+    deps.stderr(`${messageOf(error)}\n`);
+    return exitCodeForError(error);
+  }
+  if (apiKey === undefined) {
+    deps.stderr(`Nenhuma credencial encontrada para ${baseUrl}.\nRode: redmine-context login\n`);
+    return EXIT.AUTH;
+  }
+
+  const format: BundleFormat = parsed.flags.get('json') === true ? 'json' : 'md';
+  const outDir = stringFlag(parsed, 'out');
+
+  try {
+    let content: string | undefined;
+    for await (const event of core.fetchIssueBundle({
+      baseUrl,
+      apiKey,
+      issueId,
+      format,
+      toolVersion: core.TOOL_VERSION,
+      insecure,
+    })) {
+      if (event.kind === 'progress') {
+        deps.stderr(`... ${event.message}\n`);
+      } else {
+        content = event.value.content;
+      }
+    }
+    if (content === undefined) {
+      deps.stderr('Operação não produziu um bundle.\n');
+      return EXIT.GENERIC;
+    }
+
+    if (outDir !== undefined) {
+      const ext = format === 'json' ? 'json' : 'md';
+      const filePath = join(outDir, `${issueId}.${ext}`);
+      await mkdir(outDir, { recursive: true });
+      await writeFile(filePath, content, 'utf8');
+      deps.stderr(`Bundle gravado em ${filePath}\n`);
+    } else {
+      deps.stdout(content);
+    }
+    return 0;
+  } catch (error) {
+    deps.stderr(`${messageOf(error)}\n`);
+    return exitCodeForError(error);
+  }
+}
+
+/**
+ * Descobre a api_key interativamente: login por senha e, no fallback de 2FA
+ * (ou senha inválida), orienta colar a api_key.
+ *
+ * @param baseUrl - URL da instância Redmine.
+ * @param insecure - Permite `http://` sem TLS.
+ * @param deps - Dependências injetáveis (prompts, I/O).
+ * @returns A api_key resolvida.
+ * @throws {RedmineLoginError | RedmineAuthError | Error} Se o login falhar sem
+ *   fallback utilizável.
+ */
+async function resolveKeyInteractively(baseUrl: string, insecure: boolean, deps: RunDeps): Promise<string> {
+  const username = (await deps.prompt('Usuário: ')).trim();
+  const password = await deps.promptPassword('Senha: ');
+  try {
+    const result = await core.loginWithPassword({ baseUrl, username, password, insecure });
+    return result.apiKey;
+  } catch (error) {
+    if (error instanceof core.RedmineAuthError) {
+      deps.stderr(`${messageOf(error)}\n`);
+      deps.stderr('Cole sua api_key para concluir o login (conta com 2FA ou senha inválida):\n');
+      const pasted = (await deps.promptPassword('api_key: ')).trim();
+      if (pasted.length === 0) {
+        throw error;
+      }
+      return pasted;
+    }
+    throw error;
+  }
+}
+
+/**
+ * Comando `login`: autentica (senha ou `--api-key`) e salva a api_key na
+ * cascata para a instância informada.
+ *
+ * @param parsed - Argumentos parseados (flags `--url`, `--api-key`, `--insecure`).
+ * @param deps - Dependências injetáveis (prompts, I/O, env).
+ * @returns Exit code do processo.
+ */
+export async function runLogin(parsed: ParsedArgs, deps: RunDeps): Promise<number> {
+  const insecure = parsed.flags.get('insecure') === true;
+
+  let baseUrl = stringFlag(parsed, 'url') ?? deps.env.REDMINE_URL;
+  if (baseUrl === undefined || baseUrl.length === 0) {
+    baseUrl = (await deps.prompt('URL do Redmine: ')).trim();
+  }
+  if (baseUrl.length === 0) {
+    deps.stderr('URL do Redmine é obrigatória.\n');
+    return EXIT.GENERIC;
+  }
+
+  const directKey = stringFlag(parsed, 'api-key');
+  try {
+    const apiKey =
+      directKey !== undefined && directKey.length > 0
+        ? directKey
+        : await resolveKeyInteractively(baseUrl, insecure, deps);
+    if (apiKey.length === 0) {
+      deps.stderr('api_key vazia; login abortado.\n');
+      return EXIT.AUTH;
+    }
+    await core.createCredentialCascade({ env: deps.env }).set(baseUrl, apiKey);
+    deps.stderr(`Credencial salva para ${baseUrl}.\n`);
+    return 0;
+  } catch (error) {
+    deps.stderr(`${messageOf(error)}\n`);
+    return exitCodeForError(error);
+  }
+}
