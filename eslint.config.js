@@ -11,7 +11,7 @@ export default tseslint.config(
   // Fronteira do core (ADR-005): superfícies (TUI/CLI/MCP, futuras em src/surfaces/)
   // só consomem o core via ./contract.js — nunca importam módulos internos direto.
   {
-    files: ['src/surfaces/**/*.ts'],
+    files: ['src/surfaces/**/*.{ts,tsx}'],
     rules: {
       'no-restricted-imports': [
         'error',

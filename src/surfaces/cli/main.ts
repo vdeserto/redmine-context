@@ -16,6 +16,7 @@ import { runIssue, runLogin } from './commands.js';
 import { createPromptSession } from './prompts.js';
 import type { ParsedArgs, RunDeps } from './types.js';
 import { runStdioServer } from '../mcp/server.js';
+import { runTui } from '../tui/index.js';
 
 /** Flags que consomem o próximo token como valor (as demais são booleanas). */
 const VALUE_FLAGS = new Set(['out', 'url', 'api-key']);
@@ -115,6 +116,7 @@ function defaultDeps(): RunDeps & { closePrompts(): void } {
     env: process.env,
     prompt: (q) => session.prompt(q),
     promptPassword: (q) => session.promptPassword(q),
+    isTTY: process.stdout.isTTY === true,
     closePrompts: () => session.close(),
   };
 }
@@ -149,6 +151,11 @@ async function dispatch(argv: string[], deps: RunDeps): Promise<number> {
     return 0;
   }
   if (command === undefined) {
+    // Sem positionals + stdout TTY: abre a TUI (M2-01). Sem TTY (pipe/CI),
+    // degrada para o comportamento atual — imprime o help e retorna 1.
+    if (deps.isTTY === true) {
+      return runTui();
+    }
     deps.stderr(HELP);
     return 1;
   }
