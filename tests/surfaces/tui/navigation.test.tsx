@@ -1,17 +1,54 @@
 /**
- * Teste do contexto de navegação isolado do roteador: garante que
- * `useNavigation()` falha alto (erro claro) se usado fora do `Provider` —
- * evita telas "soltas" renderizadas sem passar pelo roteador.
+ * Testes de navegação da TUI: a pilha de telas (M2-04, evolução do
+ * roteador simples do M2-01) e o hook `useNavigation()` isolado do
+ * roteador — garante que ele falha alto (erro claro) se usado fora do
+ * `Provider`, evitando telas "soltas" renderizadas sem passar pelo
+ * roteador.
  */
+import { Text, useInput } from 'ink';
 import { render } from 'ink-testing-library';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
-import { useNavigation } from '../../../src/surfaces/tui/navigation.js';
+import {
+  NavigationProvider,
+  useNavigation,
+  useNavigationStack,
+} from '../../../src/surfaces/tui/navigation.js';
 
 /** Componente de teste: chama o hook sem um `NavigationProvider` acima. */
 function ScreenWithoutRouter() {
   useNavigation();
   return null;
+}
+
+/**
+ * Harness de teste: expõe a pilha como texto ("welcome>about") e mapeia
+ * teclas para as operações da pilha, para exercitá-las sem depender do
+ * roteador real (`app.tsx`).
+ */
+function StackHarness() {
+  const value = useNavigationStack('welcome');
+
+  useInput((input) => {
+    if (input === 'a') {
+      value.push('about');
+    }
+    if (input === 'n') {
+      value.navigate('about');
+    }
+    if (input === 'p') {
+      value.pop();
+    }
+    if (input === 'r') {
+      value.replace('about');
+    }
+  });
+
+  return (
+    <NavigationProvider value={value}>
+      <Text>{value.stack.join('>')}</Text>
+    </NavigationProvider>
+  );
 }
 
 describe('TUI: useNavigation', () => {
@@ -20,5 +57,54 @@ describe('TUI: useNavigation', () => {
     // erro não escapa síncrono de render(), mas é exibido no frame.
     const { lastFrame } = render(<ScreenWithoutRouter />);
     expect(lastFrame()).toContain('useNavigation() usado fora de <NavigationProvider>.');
+  });
+});
+
+describe('TUI: useNavigationStack (pilha push/pop/replace)', () => {
+  it('inicia com apenas a tela inicial no topo da pilha', () => {
+    const { lastFrame } = render(<StackHarness />);
+    expect(lastFrame()).toBe('welcome');
+  });
+
+  it('push() empilha uma tela nova sem remover a anterior', async () => {
+    const { lastFrame, stdin } = render(<StackHarness />);
+    stdin.write('a');
+    await vi.waitFor(() => {
+      expect(lastFrame()).toBe('welcome>about');
+    });
+  });
+
+  it('navigate() é um alias de push() (compat com a API do M2-01)', async () => {
+    const { lastFrame, stdin } = render(<StackHarness />);
+    stdin.write('n');
+    await vi.waitFor(() => {
+      expect(lastFrame()).toBe('welcome>about');
+    });
+  });
+
+  it('pop() desempilha, voltando para a tela anterior', async () => {
+    const { lastFrame, stdin } = render(<StackHarness />);
+    stdin.write('a');
+    await vi.waitFor(() => {
+      expect(lastFrame()).toBe('welcome>about');
+    });
+    stdin.write('p');
+    await vi.waitFor(() => {
+      expect(lastFrame()).toBe('welcome');
+    });
+  });
+
+  it('pop() na raiz da pilha (1 item) não remove a última tela', () => {
+    const { lastFrame, stdin } = render(<StackHarness />);
+    stdin.write('p');
+    expect(lastFrame()).toBe('welcome');
+  });
+
+  it('replace() substitui o topo sem aumentar a profundidade da pilha', async () => {
+    const { lastFrame, stdin } = render(<StackHarness />);
+    stdin.write('r');
+    await vi.waitFor(() => {
+      expect(lastFrame()).toBe('about');
+    });
   });
 });

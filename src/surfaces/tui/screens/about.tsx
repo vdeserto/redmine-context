@@ -3,6 +3,8 @@
  *
  * Existe também para provar o roteador: `?` na tela de boas-vindas navega até
  * aqui, `b` volta — a troca de componente é o que o teste de render valida.
+ * `b` chama `pop()` (M2-04): mesmo efeito do atalho global `Esc`
+ * (`../app.tsx`), mantido aqui como atalho adicional específico desta tela.
  * Cores vêm do tema central (M2-02, `useTheme()`) — nenhum literal de cor
  * aqui, ver `theme.ts` para o guideline de uso de cada token.
  */
@@ -14,18 +16,18 @@ import { useTheme } from '../theme.js';
 /** Lista de atalhos conhecidos pela TUI (crescerá conforme novas telas chegam). */
 const SHORTCUTS: Array<{ key: string; description: string }> = [
   { key: '?', description: 'abre esta tela' },
-  { key: 'b', description: 'volta para a tela anterior' },
+  { key: 'b / Esc', description: 'volta para a tela anterior' },
   { key: 'q', description: 'sai da TUI' },
 ];
 
-/** Tela de atalhos: `b` volta para a tela de boas-vindas (ver `app.tsx`). */
+/** Tela de atalhos: `b` (ou `Esc`, atalho global) volta para a tela anterior (ver `app.tsx`). */
 export function AboutScreen() {
-  const { navigate } = useNavigation();
+  const { pop } = useNavigation();
   const theme = useTheme();
 
   useInput((input) => {
     if (input === 'b') {
-      navigate('welcome');
+      pop();
     }
   });
 

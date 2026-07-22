@@ -1,36 +1,81 @@
 /**
- * Roteador de telas da TUI (M2-01).
+ * Roteador de telas da TUI (M2-01, evoluído em M2-04 para pilha + casca
+ * visual global).
  *
- * State machine simples (`useState<ScreenName>`) que troca o componente
- * renderizado via {@link NavigationProvider} — sem framework de rotas, são
- * poucas telas. Trata também o atalho global de saída (`q`), disponível em
- * qualquer tela. Também é o único lugar que instancia o {@link ThemeProvider}
- * (M2-02) — todas as telas herdam o mesmo tema por estarem abaixo dele.
+ * `App` só instancia os providers (tema, pilha de navegação) — quem de fato
+ * consome o contexto e renderiza a casca visual (breadcrumb fixo, aviso de
+ * saída, tela atual) é `AppShell`, um componente à parte porque precisa
+ * estar DENTRO dos providers para poder chamar `useTheme()`/`useNavigation()`.
+ *
+ * Atalhos globais (qualquer tela): `q` sai, `Esc` volta (`pop()` da pilha,
+ * ver `navigation.tsx`), `Ctrl+C` segue o padrão de duas pressões (ver
+ * `hooks/use-exit-guard.ts`), `/` está reservado para a busca (M2-07) —
+ * registrado aqui como no-op para não ser usado por engano por outra tela
+ * antes da tela de busca existir.
  */
-import { useApp, useInput } from 'ink';
-import { useState } from 'react';
+import { Box, Text, useApp, useInput } from 'ink';
 
-import { NavigationProvider } from './navigation.js';
-import { INITIAL_SCREEN, SCREENS, type ScreenName } from './screen.js';
-import { ThemeProvider } from './theme.js';
+import { Breadcrumb } from './components/breadcrumb.js';
+import { useExitGuard } from './hooks/use-exit-guard.js';
+import { NavigationProvider, useNavigation, useNavigationStack } from './navigation.js';
+import { INITIAL_SCREEN, SCREENS } from './screen.js';
+import { symbols } from './symbols.js';
+import { ThemeProvider, useTheme } from './theme.js';
 
-/** App raiz da TUI: roteia entre telas e sai do processo com `q`. */
+/** App raiz da TUI: só monta os providers (tema, pilha de navegação). */
 export function App() {
-  const [current, setCurrent] = useState<ScreenName>(INITIAL_SCREEN);
-  const { exit } = useApp();
+  const navigation = useNavigationStack(INITIAL_SCREEN);
 
-  useInput((input) => {
+  return (
+    <ThemeProvider>
+      <NavigationProvider value={navigation}>
+        <AppShell />
+      </NavigationProvider>
+    </ThemeProvider>
+  );
+}
+
+/**
+ * Casca visual do app: breadcrumb fixo + aviso de saída (quando armado) +
+ * tela atual. Só existe dentro dos providers de `App` — depende de
+ * `useTheme()`/`useNavigation()`.
+ */
+function AppShell() {
+  const { exit } = useApp();
+  const { current, pop, stack } = useNavigation();
+  const theme = useTheme();
+  const { armed } = useExitGuard(exit);
+
+  useInput((input, key) => {
     if (input === 'q') {
       exit();
+      return;
+    }
+
+    if (key.escape) {
+      pop();
+      return;
+    }
+
+    if (input === '/') {
+      // Reason: reservado para a busca (M2-07, ainda sem tela) — no-op
+      // proposital para já travar a tecla e evitar que outra tela reaproveite
+      // "/" para algo diferente antes da tela de busca existir.
+      return;
     }
   });
 
-  const Screen = SCREENS[current];
+  const Screen = SCREENS[current].component;
+
   return (
-    <ThemeProvider>
-      <NavigationProvider value={{ current, navigate: setCurrent }}>
-        <Screen />
-      </NavigationProvider>
-    </ThemeProvider>
+    <Box flexDirection="column">
+      <Breadcrumb stack={stack} />
+      {armed ? (
+        <Box paddingX={1} marginBottom={1}>
+          <Text color={theme.warning}>{symbols.warning} Pressione Ctrl+C de novo para sair.</Text>
+        </Box>
+      ) : null}
+      <Screen />
+    </Box>
   );
 }
