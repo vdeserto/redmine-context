@@ -8,7 +8,7 @@
  * - `NO_COLOR` definida (qualquer valor, inclusive string vazia — convenção
  *   de https://no-color.org: a mera presença da variável já sinaliza a
  *   preferência do usuário/ambiente por saída sem formatação);
- * - `CI=true` (ambientes de integração contínua não têm um terminal real);
+ * - `CI=true` ou `CI=1` (ambientes de integração contínua não têm um terminal real);
  * - stdout não é um TTY (pipe, redirecionamento para arquivo, etc.).
  *
  * Pura e testável isoladamente: recebe `env` e `isTTY` em vez de ler
@@ -28,6 +28,6 @@
 export function shouldRenderTui(env: NodeJS.ProcessEnv, isTTY: boolean): boolean {
   if (!isTTY) return false;
   if (env.NO_COLOR !== undefined) return false;
-  if (env.CI === 'true') return false;
+  if (env.CI === 'true' || env.CI === '1') return false;
   return true;
 }

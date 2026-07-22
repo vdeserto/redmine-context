@@ -52,3 +52,7 @@ describe('CLI: shouldRenderTui', () => {
     expect(shouldRenderTui(env({ PATH: '/usr/bin', REDMINE_URL: 'https://x' }), true)).toBe(true);
   });
 });
+
+it('CI=1 (provedores que não usam "true") também degrada', () => {
+  expect(shouldRenderTui({ CI: '1' }, true)).toBe(false);
+});
