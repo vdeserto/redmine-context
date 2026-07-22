@@ -13,6 +13,7 @@ import {
   normalizeInstanceUrl,
   resolveApiKey,
 } from '../../src/config/credentials.js';
+import type { KeyringModuleLoader } from '../../src/config/keyring.js';
 
 const INSTANCE = 'https://redmine.example';
 const OTHER_INSTANCE = 'https://redmine.other.example';
@@ -155,13 +156,19 @@ describe('EnvCredentialStore', () => {
   });
 });
 
-describe('cascata (arquivo → env)', () => {
+describe('cascata (arquivo → env, keychain indisponível)', () => {
+  // Keychain indisponível (sem prebuild): a cascata M2 degrada para arquivo → env,
+  // reproduzindo o comportamento M1 sem tocar o keychain real do SO nos testes.
+  const unavailableKeyring: KeyringModuleLoader = () =>
+    Promise.reject(new Error('prebuild ausente'));
+
   it('usa o arquivo quando presente (arquivo vence env)', async () => {
     const fileStore = new FileCredentialStore({ filePath });
     await fileStore.set(INSTANCE, API_KEY);
 
     const value = await resolveApiKey(INSTANCE, {
       filePath,
+      keyringLoader: unavailableKeyring,
       env: { REDMINE_API_KEY: ENV_API_KEY },
     });
     expect(value).toBe(API_KEY);
@@ -170,18 +177,23 @@ describe('cascata (arquivo → env)', () => {
   it('cai para o env quando o arquivo não tem a instância (CI/headless)', async () => {
     const value = await resolveApiKey(INSTANCE, {
       filePath,
+      keyringLoader: unavailableKeyring,
       env: { REDMINE_API_KEY: ENV_API_KEY },
     });
     expect(value).toBe(ENV_API_KEY);
   });
 
   it('retorna undefined quando nem arquivo nem env têm a chave', async () => {
-    const value = await resolveApiKey(INSTANCE, { filePath, env: {} });
+    const value = await resolveApiKey(INSTANCE, {
+      filePath,
+      keyringLoader: unavailableKeyring,
+      env: {},
+    });
     expect(value).toBeUndefined();
   });
 
-  it('createCredentialCascade grava via o primeiro store (arquivo)', async () => {
-    const cascade = createCredentialCascade({ filePath, env: {} });
+  it('createCredentialCascade grava no arquivo quando o keychain está indisponível', async () => {
+    const cascade = createCredentialCascade({ filePath, keyringLoader: unavailableKeyring, env: {} });
     await cascade.set(INSTANCE, API_KEY);
     expect(await cascade.get(INSTANCE)).toBe(API_KEY);
     if (posix) expect(await perms(filePath)).toBe(0o600);

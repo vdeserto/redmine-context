@@ -12,6 +12,7 @@ export {
   CredentialStoreError,
   EnvCredentialStore,
   FileCredentialStore,
+  MigratingCredentialCascade,
   createCredentialCascade,
   defaultCredentialsPath,
   normalizeInstanceUrl,

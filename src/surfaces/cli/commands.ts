@@ -84,7 +84,10 @@ export async function runIssue(parsed: ParsedArgs, deps: RunDeps): Promise<numbe
 
   let apiKey: string | undefined;
   try {
-    apiKey = await core.resolveApiKey(baseUrl, { env: deps.env });
+    apiKey = await core.resolveApiKey(baseUrl, {
+      env: deps.env,
+      logger: { warn: (message) => deps.stderr(`${message}\n`) },
+    });
   } catch (error) {
     deps.stderr(`${messageOf(error)}\n`);
     return exitCodeForError(error);
@@ -195,7 +198,13 @@ export async function runLogin(parsed: ParsedArgs, deps: RunDeps): Promise<numbe
       deps.stderr('api_key vazia; login abortado.\n');
       return EXIT.AUTH;
     }
-    await core.createCredentialCascade({ env: deps.env }).set(baseUrl, apiKey);
+    // Persiste preferindo o keychain do SO (fallback arquivo se indisponível).
+    await core
+      .createCredentialCascade({
+        env: deps.env,
+        logger: { warn: (message) => deps.stderr(`${message}\n`) },
+      })
+      .set(baseUrl, apiKey);
     deps.stderr(`Credencial salva para ${baseUrl}.\n`);
     return 0;
   } catch (error) {
