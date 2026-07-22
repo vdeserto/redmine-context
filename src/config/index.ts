@@ -21,3 +21,11 @@ export {
   type EnvCredentialStoreOptions,
   type FileCredentialStoreOptions,
 } from './credentials.js';
+
+export {
+  KeyringCredentialStore,
+  type KeyringCredentialStoreOptions,
+  type KeyringEntry,
+  type KeyringModule,
+  type KeyringModuleLoader,
+} from './keyring.js';
