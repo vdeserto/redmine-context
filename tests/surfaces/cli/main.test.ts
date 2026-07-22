@@ -101,6 +101,46 @@ describe('CLI: roteamento e help', () => {
   });
 });
 
+describe('CLI: degradação NO_COLOR / não-TTY / CI (M2-03)', () => {
+  it('NO_COLOR definida degrada mesmo com stdout TTY — não abre a TUI', async () => {
+    const h = harness({ isTTY: true, env: { NO_COLOR: '1' } as NodeJS.ProcessEnv });
+    const code = await run([], h.deps);
+    expect(runTui).not.toHaveBeenCalled();
+    expect(code).toBe(1);
+    expect(h.stderr()).toContain('Uso:');
+  });
+
+  it('CI=true degrada mesmo com stdout TTY — não abre a TUI', async () => {
+    const h = harness({ isTTY: true, env: { CI: 'true' } as NodeJS.ProcessEnv });
+    const code = await run([], h.deps);
+    expect(runTui).not.toHaveBeenCalled();
+    expect(code).toBe(1);
+    expect(h.stderr()).toContain('Uso:');
+  });
+
+  it('stdout não-TTY degrada independente do ambiente (env limpo)', async () => {
+    const h = harness({ isTTY: false });
+    const code = await run([], h.deps);
+    expect(runTui).not.toHaveBeenCalled();
+    expect(code).toBe(1);
+  });
+
+  it('saída da degradação é texto puro, sem códigos ANSI', async () => {
+    const h = harness({ isTTY: true, env: { NO_COLOR: '1', CI: 'true' } as NodeJS.ProcessEnv });
+    const code = await run([], h.deps);
+    expect(code).toBe(1);
+    expect(h.stderr()).not.toMatch(/\x1b\[/);
+    expect(h.stdout()).toBe('');
+  });
+
+  it('--help nunca contém códigos ANSI, TTY ou não', async () => {
+    const h = harness({ isTTY: true, env: { NO_COLOR: '1' } as NodeJS.ProcessEnv });
+    const code = await run(['--help'], h.deps);
+    expect(code).toBe(0);
+    expect(h.stdout()).not.toMatch(/\x1b\[/);
+  });
+});
+
 describe('CLI: comando issue', () => {
   it('imprime bundle MD em stdout e progresso em stderr', async () => {
     vi.mocked(core.resolveApiKey).mockResolvedValue('key');
