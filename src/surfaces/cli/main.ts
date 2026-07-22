@@ -14,6 +14,7 @@ import { pathToFileURL } from 'node:url';
 
 import { runIssue, runLogin } from './commands.js';
 import { createPromptSession } from './prompts.js';
+import { shouldRenderTui } from './tty.js';
 import type { ParsedArgs, RunDeps } from './types.js';
 import { runStdioServer } from '../mcp/server.js';
 import { runTui } from '../tui/index.js';
@@ -151,9 +152,10 @@ async function dispatch(argv: string[], deps: RunDeps): Promise<number> {
     return 0;
   }
   if (command === undefined) {
-    // Sem positionals + stdout TTY: abre a TUI (M2-01). Sem TTY (pipe/CI),
-    // degrada para o comportamento atual — imprime o help e retorna 1.
-    if (deps.isTTY === true) {
+    // Sem positionals: abre a TUI (M2-01) somente quando shouldRenderTui()
+    // aprova (M2-03) — NO_COLOR, CI=true ou stdout não-TTY sempre degradam
+    // para o caminho de texto puro da CLI (help em stderr, exit 1).
+    if (shouldRenderTui(deps.env, deps.isTTY === true)) {
       return runTui();
     }
     deps.stderr(HELP);
