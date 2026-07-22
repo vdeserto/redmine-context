@@ -23,9 +23,9 @@ function ConsumerWithoutProvider() {
 }
 
 describe('TUI: tema (ThemeProvider/useTheme)', () => {
-  it('expõe os 6 tokens semânticos esperados com o tema padrão', () => {
+  it('expõe os 7 tokens semânticos esperados com o tema padrão', () => {
     expect(Object.keys(DEFAULT_THEME).sort()).toEqual(
-      ['accent', 'danger', 'muted', 'primary', 'success', 'warning'].sort(),
+      ['accent', 'border', 'danger', 'muted', 'primary', 'success', 'warning'].sort(),
     );
   });
 
