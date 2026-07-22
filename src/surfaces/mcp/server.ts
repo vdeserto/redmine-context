@@ -190,7 +190,11 @@ async function resolveInstance(deps: McpServerDeps): Promise<ResolvedInstance | 
 
   let apiKey: string | undefined;
   try {
-    apiKey = await deps.resolveApiKey(baseUrl, { env: deps.env });
+    apiKey = await deps.resolveApiKey(baseUrl, {
+      env: deps.env,
+      // Aviso de migração/keychain vai para o diagnóstico (stdout é do protocolo).
+      logger: { warn: (message) => deps.log?.(message) },
+    });
   } catch (error) {
     return errorResult(messageOf(error));
   }

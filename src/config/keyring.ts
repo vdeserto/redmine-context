@@ -104,6 +104,17 @@ export class KeyringCredentialStore implements CredentialStore {
     this.loader = options.loader ?? defaultLoader;
   }
 
+  /**
+   * Indica se o keychain nativo está disponível nesta plataforma (há prebuild e
+   * o módulo carrega). Usado pela cascata M2 para decidir a migração e o destino
+   * das escritas. O carregamento é memoizado, então o custo é pago uma só vez.
+   *
+   * @returns `true` se o módulo nativo carregou; `false` se indisponível.
+   */
+  async isAvailable(): Promise<boolean> {
+    return (await this.load()) !== undefined;
+  }
+
   /** @inheritdoc */
   async get(instance: string): Promise<string | undefined> {
     const entry = await this.entryFor(instance);

@@ -6,10 +6,11 @@
  * normalizada, suportando múltiplas instâncias Redmine. O caminho padrão vem de
  * `env-paths` (diretório de config do usuário).
  *
- * A resolução segue a cascata M1: arquivo → variável de ambiente
- * `REDMINE_API_KEY` (o env é sempre aceito, para CI/MCP headless). A interface
- * {@link CredentialStore} (get/set/delete) é a mesma que o keychain do M2 vai
- * implementar; a cascata consulta as implementações em ordem.
+ * A resolução segue a cascata do ADR-003: keychain → arquivo → variável de
+ * ambiente `REDMINE_API_KEY` (o env é sempre aceito, para CI/MCP headless). A
+ * interface {@link CredentialStore} (get/set/delete) é comum a todas as
+ * implementações; a {@link MigratingCredentialCascade} as consulta em ordem e,
+ * quando o keychain está disponível, migra a chave do arquivo para ele.
  *
  * A api_key nunca é logada e nunca aparece em mensagens de erro — os erros de
  * permissão carregam apenas caminhos e o comando `chmod` a ser executado. A
@@ -22,6 +23,13 @@ import { chmod, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
 import envPaths from 'env-paths';
+
+import type { Logger } from '../client/index.js';
+
+import { KeyringCredentialStore, type KeyringModuleLoader } from './keyring.js';
+
+/** Logger no-op: usado quando nenhum logger é injetado. */
+const noopLogger: Logger = { warn: () => undefined };
 
 /** Permissão do diretório: `rwx` só para o dono. */
 const DIR_MODE = 0o700;
@@ -336,6 +344,104 @@ export class CascadingCredentialStore implements CredentialStore {
   }
 }
 
+/**
+ * Cascata de credenciais M2 com migração para o keychain (ADR-003).
+ *
+ * A resolução (`get`) segue a ordem keychain → arquivo `0600` → env; o primeiro
+ * valor encontrado vence. Quando a chave vem do ARQUIVO e o keychain está
+ * DISPONÍVEL, a chave é migrada — gravada no keychain e só então removida do
+ * arquivo (a remoção é condicionada à confirmação da gravação, evitando perda da
+ * credencial se o keychain degradar) — com um único aviso informativo por
+ * cascata. As escritas (`set`) preferem o keychain quando disponível, com
+ * fallback para o arquivo; o env é somente leitura. A api_key nunca é logada.
+ */
+export class MigratingCredentialCascade implements CredentialStore {
+  private readonly keyring: KeyringCredentialStore;
+  private readonly file: CredentialStore;
+  private readonly env: CredentialStore;
+  private readonly logger: Logger;
+  /** Garante que o aviso de migração seja emitido uma única vez por cascata. */
+  private migrationWarned = false;
+
+  /**
+   * @param keyring - Store do keychain nativo (fonte prioritária e destino da migração).
+   * @param file - Store de arquivo `0600` (fallback e origem da migração).
+   * @param env - Store de ambiente somente leitura (fallback headless).
+   * @param logger - Logger do aviso único de migração; default no-op.
+   */
+  constructor(
+    keyring: KeyringCredentialStore,
+    file: CredentialStore,
+    env: CredentialStore,
+    logger: Logger = noopLogger,
+  ) {
+    this.keyring = keyring;
+    this.file = file;
+    this.env = env;
+    this.logger = logger;
+  }
+
+  /** @inheritdoc */
+  async get(instance: string): Promise<string | undefined> {
+    const fromKeyring = await this.keyring.get(instance);
+    if (fromKeyring !== undefined) {
+      return fromKeyring;
+    }
+    const fromFile = await this.file.get(instance);
+    if (fromFile !== undefined) {
+      await this.migrateFromFile(instance, fromFile);
+      return fromFile;
+    }
+    return this.env.get(instance);
+  }
+
+  /** @inheritdoc */
+  async set(instance: string, apiKey: string): Promise<void> {
+    if (await this.keyring.isAvailable()) {
+      await this.keyring.set(instance, apiKey);
+      // Só considera o keychain o dono da credencial se a gravação se confirmou;
+      // caso contrário (degradação de runtime) persiste no arquivo.
+      if ((await this.keyring.get(instance)) === apiKey) {
+        return;
+      }
+    }
+    await this.file.set(instance, apiKey);
+  }
+
+  /** @inheritdoc */
+  async delete(instance: string): Promise<void> {
+    // Remove de ambas as fontes graváveis para não deixar credencial órfã.
+    await this.keyring.delete(instance);
+    await this.file.delete(instance);
+  }
+
+  /**
+   * Migra a chave do arquivo para o keychain quando este está disponível. A
+   * remoção do arquivo só ocorre após confirmar a gravação no keychain, evitando
+   * perda da credencial se a escrita degradar. Emite um único aviso, sem expor a
+   * api_key.
+   *
+   * @param instance - URL base da instância (será normalizada pelos stores).
+   * @param apiKey - Chave lida do arquivo a ser migrada.
+   */
+  private async migrateFromFile(instance: string, apiKey: string): Promise<void> {
+    if (!(await this.keyring.isAvailable())) {
+      return;
+    }
+    await this.keyring.set(instance, apiKey);
+    if ((await this.keyring.get(instance)) !== apiKey) {
+      return;
+    }
+    await this.file.delete(instance);
+    if (!this.migrationWarned) {
+      this.migrationWarned = true;
+      this.logger.warn(
+        `Credencial de ${instance} migrada do arquivo local para o keychain do SO.`,
+      );
+    }
+  }
+}
+
 /** Opções de {@link createCredentialCascade} / {@link resolveApiKey}. */
 export interface CredentialCascadeOptions {
   /** Caminho do arquivo de credenciais; default via `env-paths`. */
@@ -344,17 +450,42 @@ export interface CredentialCascadeOptions {
   envVarName?: string;
   /** Ambiente a consultar; default `process.env`. */
   env?: NodeJS.ProcessEnv;
+  /** Logger para o aviso único de migração; default no-op. */
+  logger?: Logger;
+  /** Service do keychain; default `redmine-context`. */
+  keyringService?: string;
+  /** Carregador do módulo nativo do keychain; injetável em testes. */
+  keyringLoader?: KeyringModuleLoader;
 }
 
 /**
- * Monta a cascata M1 (arquivo → env `REDMINE_API_KEY`).
+ * Monta a cascata M2 (keychain → arquivo → env `REDMINE_API_KEY`), com migração
+ * automática do arquivo para o keychain na resolução (ADR-003).
  *
  * @param options - Ver {@link CredentialCascadeOptions}.
- * @returns Uma {@link CascadingCredentialStore} pronta para uso.
+ * @returns Uma {@link MigratingCredentialCascade} pronta para uso.
  */
+/**
+ * Singleton do store default do keychain, memoizado por processo: servidores
+ * de longa duração (MCP) montam uma cascata por request, e recriar o store a
+ * cada chamada repetiria o aviso de "keychain indisponível" a cada tool call
+ * (o dedupe do aviso é por instância).
+ */
+let defaultKeyringStore: KeyringCredentialStore | undefined;
+
 export function createCredentialCascade(
   options: CredentialCascadeOptions = {},
-): CascadingCredentialStore {
+): MigratingCredentialCascade {
+  const logger = options.logger ?? noopLogger;
+  const customKeyring =
+    options.keyringService !== undefined || options.keyringLoader !== undefined;
+  const keyring = customKeyring
+    ? new KeyringCredentialStore({
+        logger,
+        ...(options.keyringService !== undefined ? { service: options.keyringService } : {}),
+        ...(options.keyringLoader !== undefined ? { loader: options.keyringLoader } : {}),
+      })
+    : (defaultKeyringStore ??= new KeyringCredentialStore({ logger }));
   const file = new FileCredentialStore(
     options.filePath !== undefined ? { filePath: options.filePath } : {},
   );
@@ -362,11 +493,12 @@ export function createCredentialCascade(
     ...(options.envVarName !== undefined ? { varName: options.envVarName } : {}),
     ...(options.env !== undefined ? { env: options.env } : {}),
   });
-  return new CascadingCredentialStore([file, env]);
+  return new MigratingCredentialCascade(keyring, file, env, logger);
 }
 
 /**
- * Resolve a api_key de uma instância pela cascata M1 (arquivo → env).
+ * Resolve a api_key de uma instância pela cascata M2 (keychain → arquivo → env),
+ * migrando do arquivo para o keychain quando este estiver disponível.
  *
  * @param instance - URL base da instância (será normalizada).
  * @param options - Ver {@link CredentialCascadeOptions}.
