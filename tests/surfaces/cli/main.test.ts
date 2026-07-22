@@ -17,9 +17,16 @@ vi.mock('../../../src/index.js', async (importOriginal) => {
   };
 });
 
+// TUI (M2-01): mockada aqui para testar só o wire de dispatch (TTY → abre a
+// TUI); o roteador em si é testado em tests/surfaces/tui/app.test.tsx.
+vi.mock('../../../src/surfaces/tui/index.js', () => ({
+  runTui: vi.fn().mockResolvedValue(0),
+}));
+
 import * as core from '../../../src/index.js';
 import type { CoreEvent, IssueBundleResult } from '../../../src/index.js';
 import { run } from '../../../src/surfaces/cli/main.js';
+import { runTui } from '../../../src/surfaces/tui/index.js';
 
 /** Captura stdout/stderr e injeta prompts controláveis. */
 function harness(overrides: Record<string, unknown> = {}) {
@@ -65,11 +72,25 @@ describe('CLI: roteamento e help', () => {
     expect(h.stdout()).not.toMatch(/claude|gpt|openai|copilot|\bAI\b/i);
   });
 
-  it('sem argumentos imprime help em stderr e retorna 1', async () => {
+  it('sem argumentos imprime help em stderr e retorna 1 (sem TTY)', async () => {
     const h = harness();
     const code = await run([], h.deps);
     expect(code).toBe(1);
     expect(h.stderr()).toContain('Uso:');
+    expect(runTui).not.toHaveBeenCalled();
+  });
+
+  it('sem argumentos e stdout TTY abre a TUI (M2-01)', async () => {
+    // `restoreAllMocks` (afterEach) reseta mocks vi.fn() para um no-op sem
+    // retorno — reconfigura o resolved value aqui em vez de depender do
+    // default definido na factory do vi.mock (mesmo padrão dos demais mocks
+    // do core neste arquivo).
+    vi.mocked(runTui).mockResolvedValue(0);
+    const h = harness({ isTTY: true });
+    const code = await run([], h.deps);
+    expect(runTui).toHaveBeenCalledTimes(1);
+    expect(code).toBe(0);
+    expect(h.stderr()).toBe('');
   });
 
   it('comando desconhecido retorna 1', async () => {

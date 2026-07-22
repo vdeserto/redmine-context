@@ -17,6 +17,12 @@ export interface RunDeps {
   prompt(question: string): Promise<string>;
   /** Lê um valor sensível sem echo (senha, api_key). */
   promptPassword(question: string): Promise<string>;
+  /**
+   * `true` quando o stdout real é um TTY — decide se `redmine-context` sem
+   * argumentos abre a TUI (M2-01) ou degrada para o help (padrão atual).
+   * Opcional: nos testes, ausência equivale a `false` (não-TTY).
+   */
+  isTTY?: boolean;
 }
 
 /** Resultado do parse manual de `argv`: posicionais + flags. */
