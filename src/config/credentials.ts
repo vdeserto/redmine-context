@@ -465,15 +465,27 @@ export interface CredentialCascadeOptions {
  * @param options - Ver {@link CredentialCascadeOptions}.
  * @returns Uma {@link MigratingCredentialCascade} pronta para uso.
  */
+/**
+ * Singleton do store default do keychain, memoizado por processo: servidores
+ * de longa duração (MCP) montam uma cascata por request, e recriar o store a
+ * cada chamada repetiria o aviso de "keychain indisponível" a cada tool call
+ * (o dedupe do aviso é por instância).
+ */
+let defaultKeyringStore: KeyringCredentialStore | undefined;
+
 export function createCredentialCascade(
   options: CredentialCascadeOptions = {},
 ): MigratingCredentialCascade {
   const logger = options.logger ?? noopLogger;
-  const keyring = new KeyringCredentialStore({
-    logger,
-    ...(options.keyringService !== undefined ? { service: options.keyringService } : {}),
-    ...(options.keyringLoader !== undefined ? { loader: options.keyringLoader } : {}),
-  });
+  const customKeyring =
+    options.keyringService !== undefined || options.keyringLoader !== undefined;
+  const keyring = customKeyring
+    ? new KeyringCredentialStore({
+        logger,
+        ...(options.keyringService !== undefined ? { service: options.keyringService } : {}),
+        ...(options.keyringLoader !== undefined ? { loader: options.keyringLoader } : {}),
+      })
+    : (defaultKeyringStore ??= new KeyringCredentialStore({ logger }));
   const file = new FileCredentialStore(
     options.filePath !== undefined ? { filePath: options.filePath } : {},
   );
