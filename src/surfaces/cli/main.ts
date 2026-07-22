@@ -13,7 +13,7 @@
 import { pathToFileURL } from 'node:url';
 
 import { runIssue, runLogin } from './commands.js';
-import { prompt, promptPassword } from './prompts.js';
+import { createPromptSession } from './prompts.js';
 import type { ParsedArgs, RunDeps } from './types.js';
 import { runStdioServer } from '../mcp/server.js';
 
@@ -99,14 +99,23 @@ export function parseArgs(argv: string[]): ParsedArgs {
   return { positionals, flags };
 }
 
-/** Constrói as dependências default apontando para o processo real. */
-function defaultDeps(): RunDeps {
+/**
+ * Constrói as dependências default apontando para o processo real.
+ *
+ * Os prompts compartilham UMA sessão readline (bug #106): interfaces
+ * sucessivas sobre o mesmo stdin perdem entrada e pausam o stream. A sessão é
+ * lazy (comandos não interativos nunca tocam o stdin) e é fechada pelo
+ * chamador via `closePrompts`.
+ */
+function defaultDeps(): RunDeps & { closePrompts(): void } {
+  const session = createPromptSession();
   return {
     stdout: (text) => void process.stdout.write(text),
     stderr: (text) => void process.stderr.write(text),
     env: process.env,
-    prompt,
-    promptPassword,
+    prompt: (q) => session.prompt(q),
+    promptPassword: (q) => session.promptPassword(q),
+    closePrompts: () => session.close(),
   };
 }
 
@@ -120,7 +129,18 @@ function defaultDeps(): RunDeps {
  * const code = await run(['issue', '42', '--url', 'https://redmine.example']);
  */
 export async function run(argv: string[], overrides: Partial<RunDeps> = {}): Promise<number> {
-  const deps: RunDeps = { ...defaultDeps(), ...overrides };
+  const defaults = defaultDeps();
+  const deps: RunDeps = { ...defaults, ...overrides };
+  try {
+    return await dispatch(argv, deps);
+  } finally {
+    // Sem isso, a interface readline mantém o processo vivo após o login.
+    defaults.closePrompts();
+  }
+}
+
+/** Despacha o comando parseado — extraído para o run() poder fechar a sessão. */
+async function dispatch(argv: string[], deps: RunDeps): Promise<number> {
   const parsed = parseArgs(argv);
   const command = parsed.positionals[0];
 
