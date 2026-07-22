@@ -37,11 +37,11 @@ const INK_COLOR_NAMES = [
   'whiteBright',
 ];
 
-// Literal entre aspas: um nome de cor conhecido, um hex (#abc / #aabbcc[aa]) ou
-// uma função rgb()/hsl() — cobre os formatos aceitos por `color`/`backgroundColor`
-// do Ink (chalk por baixo).
+// Escopada às props de cor do Ink (color/backgroundColor/borderColor): um nome
+// de cor conhecido, hex ou rgb()/hsl(). Escopo evita falso positivo em texto de
+// UI (ex.: "#123456" como número de issue).
 const COLOR_LITERAL_REGEX = new RegExp(
-  `['"\`](${INK_COLOR_NAMES.join('|')}|#[0-9a-fA-F]{3,8}|rgb\\([^'")]*\\)|hsl\\([^'")]*\\))['"\`]`,
+  `(?:color|backgroundColor|borderColor)\\s*=\\s*['"\`{]+\\s*['"\`]?(${INK_COLOR_NAMES.join('|')}|#[0-9a-fA-F]{3,8}|rgb\\([^'")]*\\)|hsl\\([^'")]*\\))['"\`]`,
 );
 
 /** Lista recursivamente todos os arquivos-fonte (não-teste) sob `dir`. */

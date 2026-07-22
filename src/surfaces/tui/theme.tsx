@@ -50,6 +50,8 @@ export interface Theme {
   warning: string;
   /** Erro ou operação que falhou. */
   danger: string;
+  /** Bordas de Box (painéis, cards, modais). Discreta por padrão. */
+  border: string;
 }
 
 /** Tema padrão da TUI — ver guideline de uso na documentação do arquivo. */
@@ -60,6 +62,7 @@ export const DEFAULT_THEME: Theme = {
   success: 'green',
   warning: 'yellow',
   danger: 'red',
+  border: 'gray',
 };
 
 const ThemeContext = createContext<Theme | undefined>(undefined);
