@@ -416,6 +416,29 @@ export class MigratingCredentialCascade implements CredentialStore {
   }
 
   /**
+   * Identifica QUAL fonte resolveria a credencial da instância (keychain →
+   * arquivo → env), sem expor a api_key e SEM disparar a migração
+   * arquivo→keychain feita por {@link get} — diagnóstico somente-leitura
+   * usado pela tela `doctor` da TUI (#35), que só precisa mostrar o método em
+   * uso, nunca o segredo.
+   *
+   * @param instance - URL base da instância (será normalizada pelos stores).
+   * @returns A fonte em uso, ou `'none'` se nenhuma tiver a credencial.
+   */
+  async describeSource(instance: string): Promise<CredentialSourceKind> {
+    if ((await this.keyring.get(instance)) !== undefined) {
+      return 'keyring';
+    }
+    if ((await this.file.get(instance)) !== undefined) {
+      return 'file';
+    }
+    if ((await this.env.get(instance)) !== undefined) {
+      return 'env';
+    }
+    return 'none';
+  }
+
+  /**
    * Migra a chave do arquivo para o keychain quando este está disponível. A
    * remoção do arquivo só ocorre após confirmar a gravação no keychain, evitando
    * perda da credencial se a escrita degradar. Emite um único aviso, sem expor a
@@ -441,6 +464,13 @@ export class MigratingCredentialCascade implements CredentialStore {
     }
   }
 }
+
+/**
+ * Fonte que resolveria a credencial de uma instância na cascata M2, sem
+ * expor a api_key em si (consumido pela tela `doctor` da TUI, #35).
+ * `'none'` quando nenhuma das três fontes tem a credencial.
+ */
+export type CredentialSourceKind = 'keyring' | 'file' | 'env' | 'none';
 
 /** Opções de {@link createCredentialCascade} / {@link resolveApiKey}. */
 export interface CredentialCascadeOptions {
@@ -511,4 +541,24 @@ export async function resolveApiKey(
   options: CredentialCascadeOptions = {},
 ): Promise<string | undefined> {
   return createCredentialCascade(options).get(instance);
+}
+
+/**
+ * Identifica a fonte que resolveria a credencial de uma instância na cascata
+ * M2 (keychain → arquivo → env), SEM expor a api_key e sem migrar do arquivo
+ * para o keychain — ver {@link MigratingCredentialCascade.describeSource}.
+ * Usada pela tela `doctor` da TUI (#35) para relatar o método de credencial
+ * em uso.
+ *
+ * @param instance - URL base da instância (será normalizada).
+ * @param options - Ver {@link CredentialCascadeOptions}.
+ * @returns A fonte em uso ('keyring' | 'file' | 'env'), ou 'none'.
+ * @example
+ * const source = await describeCredentialSource('https://redmine.example');
+ */
+export async function describeCredentialSource(
+  instance: string,
+  options: CredentialCascadeOptions = {},
+): Promise<CredentialSourceKind> {
+  return createCredentialCascade(options).describeSource(instance);
 }

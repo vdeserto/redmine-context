@@ -11,10 +11,12 @@
 import type { ComponentType } from 'react';
 
 import { AboutScreen } from './screens/about.js';
+import { ConfigScreen } from './screens/config.js';
+import { DoctorScreen } from './screens/doctor.js';
 import { WelcomeScreen } from './screens/welcome.js';
 
 /** Nomes de tela conhecidos pelo roteador (state machine simples). */
-export type ScreenName = 'welcome' | 'about';
+export type ScreenName = 'welcome' | 'about' | 'doctor' | 'config';
 
 /** Tela renderizada ao abrir a TUI (base da pilha de navegação). */
 export const INITIAL_SCREEN: ScreenName = 'welcome';
@@ -31,4 +33,6 @@ export interface ScreenEntry {
 export const SCREENS: Record<ScreenName, ScreenEntry> = {
   welcome: { component: WelcomeScreen, title: 'Início' },
   about: { component: AboutScreen, title: 'Atalhos' },
+  doctor: { component: DoctorScreen, title: 'Doctor' },
+  config: { component: ConfigScreen, title: 'Configuração' },
 };

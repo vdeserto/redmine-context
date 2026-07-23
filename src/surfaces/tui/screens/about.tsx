@@ -16,6 +16,8 @@ import { useTheme } from '../theme.js';
 /** Lista de atalhos conhecidos pela TUI (crescerá conforme novas telas chegam). */
 const SHORTCUTS: Array<{ key: string; description: string }> = [
   { key: '?', description: 'abre esta tela' },
+  { key: 'd', description: 'abre o doctor (diagnóstico: Node, instância, credencial, conectividade)' },
+  { key: 'c', description: 'abre a configuração (instância + logout)' },
   { key: 'b / Esc', description: 'volta para a tela anterior' },
   { key: 'q', description: 'sai da TUI' },
 ];
