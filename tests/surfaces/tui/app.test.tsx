@@ -55,8 +55,10 @@ describe('TUI: roteador de telas', () => {
     await vi.waitFor(() => {
       expect(lastFrame()).toContain('Atalhos');
     });
-    stdin.write('b');
+    // Reenvio no polling: 'b' pode cair na janela de resubscribe do useInput
+    // sob carga; na welcome 'b' é no-op, então reenviar é seguro.
     await vi.waitFor(() => {
+      stdin.write('b');
       expect(lastFrame()).toContain(TOOL_NAME);
     });
   });
