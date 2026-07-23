@@ -43,6 +43,7 @@ import {
   type GcHook,
 } from './contract.js';
 import { InMemoryCacheStore } from './memory.js';
+import { DiskCacheIndex, INDEX_FILE_NAME, type CacheEntryType } from './disk-index.js';
 
 /** Comprimento (chars hex) do digest usado no path do anexo (ADR-004). */
 const DIGEST_PATH_LENGTH = 8;
@@ -92,12 +93,15 @@ export class DiskCacheStore<V = unknown> implements CacheStore<V> {
    */
   private readonly locks: InMemoryCacheStore<never>;
   private readonly logger: { warn(message: string): void };
+  /** Índice por instância (M3-05.1) — alimenta o GC/LRU (#47). */
+  private readonly index: DiskCacheIndex;
 
   /** @param options - Ver {@link DiskCacheStoreOptions}. */
   constructor(options: DiskCacheStoreOptions = {}) {
     this.root = options.cacheDir ?? defaultCacheDir();
     this.onGc = options.onGc;
     this.logger = options.logger ?? { warn: () => undefined };
+    this.index = new DiskCacheIndex(this.root, this.logger);
     // Repassa apenas as opções de lock; o GC é responsabilidade deste store.
     this.locks = new InMemoryCacheStore<never>({
       ...(options.logger !== undefined ? { logger: options.logger } : {}),
@@ -116,6 +120,10 @@ export class DiskCacheStore<V = unknown> implements CacheStore<V> {
       }
       throw cause;
     }
+    if (key.kind === 'attachment') {
+      const parts = this.attachmentParts(key);
+      this.index.recordAccess(key.instanceHash, join(parts.dirName, parts.fileName));
+    }
     try {
       return JSON.parse(raw) as V;
     } catch {
@@ -127,21 +135,39 @@ export class DiskCacheStore<V = unknown> implements CacheStore<V> {
     }
   }
 
-  /** @inheritdoc */
-  async put(key: CacheKey, value: V): Promise<void> {
+  /**
+   * @inheritdoc
+   * @param options - `type` classifica a entrada no índice por instância
+   *   (`extraction` default; `original` para bytes baixados) — quotas do GC #47.
+   */
+  async put(key: CacheKey, value: V, options: { type?: CacheEntryType } = {}): Promise<void> {
     const filePath = this.pathFor(key);
     await mkdir(dirname(filePath), { recursive: true });
     // Escreve-e-renomeia: o destino só passa a existir de forma completa após o
     // rename atômico; leitores nunca observam um JSON pela metade.
+    const serialized = JSON.stringify(value);
     const tmpPath = `${filePath}.${randomBytes(6).toString('hex')}.tmp`;
-    await writeFile(tmpPath, JSON.stringify(value));
+    await writeFile(tmpPath, serialized);
     await rename(tmpPath, filePath);
+    if (key.kind === 'attachment') {
+      const parts = this.attachmentParts(key);
+      await this.index.recordPut(key.instanceHash, join(parts.dirName, parts.fileName), {
+        key: serializeCacheKey(key),
+        size: Buffer.byteLength(serialized),
+        type: options.type ?? 'extraction',
+        lastAccessedAt: new Date().toISOString(),
+      });
+    }
     await this.runGc('put');
   }
 
   /** @inheritdoc */
   async invalidate(key: CacheKey): Promise<void> {
     await rm(this.pathFor(key), { force: true });
+    if (key.kind === 'attachment') {
+      const parts = this.attachmentParts(key);
+      await this.index.remove(key.instanceHash, join(parts.dirName, parts.fileName));
+    }
   }
 
   /** @inheritdoc */
@@ -151,6 +177,8 @@ export class DiskCacheStore<V = unknown> implements CacheStore<V> {
 
   /** @inheritdoc */
   async gc(): Promise<void> {
+    // Flush do buffer de last_accessed_at (M3-05.1) antes de observar o estado.
+    await this.index.flushAll();
     await this.runGc('manual');
   }
 
@@ -159,6 +187,15 @@ export class DiskCacheStore<V = unknown> implements CacheStore<V> {
    * layout do ADR-004. O nome do arquivo é o SHA-256 hex da chave serializada,
    * distinguindo configurações de extrator sob o mesmo `<id>-<digest8>/`.
    */
+  /** Partes do caminho de uma chave attachment: dir `<id>-<digest8>` e arquivo. */
+  private attachmentParts(key: Extract<CacheKey, { kind: 'attachment' }>): { dirName: string; fileName: string } {
+    const fileName = createHash('sha256').update(serializeCacheKey(key)).digest('hex') + VALUE_EXTENSION;
+    const hexDigest = /^[0-9a-fA-F]{8,64}$/.test(key.digest)
+      ? key.digest.toLowerCase()
+      : createHash('sha256').update(key.digest).digest('hex');
+    return { dirName: `${key.attachmentId}-${hexDigest.slice(0, DIGEST_PATH_LENGTH)}`, fileName };
+  }
+
   private pathFor(key: CacheKey): string {
     const fileName = createHash('sha256').update(serializeCacheKey(key)).digest('hex') + VALUE_EXTENSION;
     if (key.kind === 'attachment') {
@@ -202,7 +239,7 @@ export class DiskCacheStore<V = unknown> implements CacheStore<V> {
     for (const entry of entries) {
       if (entry.isDirectory()) {
         count += await this.countEntries(join(dir, entry.name));
-      } else if (entry.isFile() && entry.name.endsWith(VALUE_EXTENSION)) {
+      } else if (entry.isFile() && entry.name.endsWith(VALUE_EXTENSION) && entry.name !== INDEX_FILE_NAME) {
         count += 1;
       }
     }

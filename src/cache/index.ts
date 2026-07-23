@@ -22,3 +22,6 @@ export {
   type BuildAttachmentKeyInput,
   type ExtractorConfig,
 } from './keys.js';
+
+export { DiskCacheIndex, INDEX_FILE_NAME } from './disk-index.js';
+export type { CacheIndexEntry, CacheEntryType } from './disk-index.js';
