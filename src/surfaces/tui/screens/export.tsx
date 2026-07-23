@@ -34,6 +34,14 @@
  * `exporting` — a pilha já preserva a navegação (a issue é buscada de novo
  * pelo detalhe ao remontar, mesmo comportamento já existente ao voltar da
  * home para o detalhe).
+ *
+ * M2-16 (#39): o campo de destino usa `maxWidth` do `TextInput`
+ * (`../components/text-input.js`) — o valor exibido é truncado a partir do
+ * INÍCIO (preserva o fim, onde o usuário está digitando) quando o caminho
+ * excede o espaço restante do terminal, o mesmo `Box` em linha que sofreria
+ * sobreposição sem isso (ver o JSDoc de `../truncate.ts`). Os caminhos
+ * gravados exibidos em `success`/`error` truncam do FIM (`../truncate.js`,
+ * `truncate`) — são texto estático, não um campo em edição.
  */
 import { Box, Text, useInput } from 'ink';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -43,10 +51,21 @@ import { TextInput } from '../components/text-input.js';
 import { useExportBundle, type ExportFormat } from '../hooks/use-export-bundle.js';
 import { useListNavigation } from '../hooks/use-list-navigation.js';
 import { useJobRegistry } from '../job-registry.js';
+import { useTerminalWidth } from '../hooks/use-terminal-width.js';
 import { useNavigation } from '../navigation.js';
 import { symbols } from '../symbols.js';
 import { useTheme } from '../theme.js';
+import { truncate } from '../truncate.js';
 import { useLoadedIssue } from './loaded-issue-context.js';
+
+/** `paddingX={1}` dos dois lados do `Box` raiz da tela. */
+const SCREEN_PADDING_X = 2;
+
+/** Recuo (`{'  '}`) na frente de cada caminho gravado, na tela de sucesso. */
+const SUCCESS_PATH_INDENT_WIDTH = 2;
+
+/** Largura mínima garantida a um caminho exibido, mesmo em terminais muito estreitos. */
+const MIN_PATH_WIDTH = 8;
 
 /** Campo com foco no formulário — só um controle reage ao teclado por vez (`Tab` alterna). */
 type Field = 'format' | 'destination';
@@ -82,6 +101,12 @@ function FormatRow({ label, selected, focused }: { label: string; selected: bool
   );
 }
 
+/** Rótulo fixo à esquerda do campo de destino: ponteiro/espaço (1) + `" Destino: "` (10). */
+const DESTINATION_LABEL_WIDTH = 11;
+
+/** Largura mínima garantida ao campo de destino/caminhos exibidos, mesmo em terminais muito estreitos. */
+const MIN_DESTINATION_WIDTH = 8;
+
 /** Tela de exportação: escolhe formato + destino, grava via o core, mostra progresso/sucesso/erro. */
 export function ExportScreen() {
   const theme = useTheme();
@@ -91,6 +116,12 @@ export function ExportScreen() {
   // #34 (M2-11): registro de jobs da sessão — exportação é o PRIMEIRO
   // produtor real (ver o JSDoc do módulo para o contrato completo).
   const { registerJob, updateJobStatus } = useJobRegistry();
+  const terminalWidth = useTerminalWidth();
+  const destinationMaxWidth = Math.max(
+    terminalWidth - SCREEN_PADDING_X - DESTINATION_LABEL_WIDTH,
+    MIN_DESTINATION_WIDTH,
+  );
+  const pathMaxWidth = Math.max(terminalWidth - SCREEN_PADDING_X - SUCCESS_PATH_INDENT_WIDTH, MIN_PATH_WIDTH);
 
   const [field, setField] = useState<Field>('format');
   const [destination, setDestination] = useState(() => process.cwd());
@@ -208,6 +239,7 @@ export function ExportScreen() {
               onChange={setDestination}
               onSubmit={() => handleSubmit(formatIndex)}
               isActive={field === 'destination'}
+              maxWidth={destinationMaxWidth}
             />
           </Box>
         </Box>
@@ -227,7 +259,7 @@ export function ExportScreen() {
           {state.files.map((file) => (
             <Text color={theme.muted} key={file.path}>
               {'  '}
-              {file.path}
+              {truncate(file.path, pathMaxWidth)}
             </Text>
           ))}
         </Box>

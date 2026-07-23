@@ -6,7 +6,7 @@
  * global (mesmo padrão de `tests/client/http.test.ts`) — nenhuma chamada
  * real de keychain/rede sai durante o teste.
  */
-import { render } from 'ink-testing-library';
+import { cleanup, render } from 'ink-testing-library';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../../../../src/index.js', async (importOriginal) => {
@@ -54,6 +54,12 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  // Reason (M2-16, #39): a tela agora usa `useTerminalWidth()`, que assina o
+  // `resize` do `process.stdout` real — sem desmontar cada instância do Ink,
+  // o listener sobrevive entre testes e acumula (`MaxListenersExceededWarning`
+  // no `process.stdout`, um `EventEmitter` global compartilhado por toda a
+  // suíte). Mesmo padrão já usado em `home.test.tsx`/`app.test.tsx`.
+  cleanup();
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
