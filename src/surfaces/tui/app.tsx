@@ -18,6 +18,7 @@ import { Box, Text, useApp, useInput } from 'ink';
 
 import { Breadcrumb } from './components/breadcrumb.js';
 import { useExitGuard } from './hooks/use-exit-guard.js';
+import { useOnboardingCallbacks } from './hooks/use-onboarding-callbacks.js';
 import { NavigationProvider, useNavigation, useNavigationStack } from './navigation.js';
 import { OnboardingProvider } from './screens/onboarding/onboarding-context.js';
 import { INITIAL_SCREEN, SCREENS } from './screen.js';
@@ -26,18 +27,19 @@ import { ThemeProvider, useTheme } from './theme.js';
 
 /**
  * App raiz da TUI: só monta os providers (tema, pilha de navegação,
- * onboarding — M2-05.1). `OnboardingProvider` sem `callbacks` usa o no-op
- * padrão (ver `screens/onboarding/onboarding-context.tsx`); o wiring real
- * com o core (validação de URL, `loginWithPassword`, credential cascade) é
- * a #28.
+ * onboarding — M2-05.1). `OnboardingProvider` recebe os callbacks REAIS de
+ * `useOnboardingCallbacks` (#28) — o wiring com o core (`loginWithPassword`,
+ * `validateApiKey`, credential cascade) vive só ali, nunca nas telas em si
+ * (ADR-005).
  */
 export function App() {
   const navigation = useNavigationStack(INITIAL_SCREEN);
+  const onboardingCallbacks = useOnboardingCallbacks();
 
   return (
     <ThemeProvider>
       <NavigationProvider value={navigation}>
-        <OnboardingProvider>
+        <OnboardingProvider callbacks={onboardingCallbacks}>
           <AppShell />
         </OnboardingProvider>
       </NavigationProvider>

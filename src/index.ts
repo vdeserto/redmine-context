@@ -37,9 +37,11 @@ export {
 // Login por senha (M1-07) e cascata de credenciais (M1-08) para as superfícies.
 export {
   loginWithPassword,
+  validateApiKey,
   RedmineLoginError,
   type LoginOptions,
   type LoginResult,
+  type ValidateApiKeyOptions,
 } from './config/index.js';
 export {
   createCredentialCascade,

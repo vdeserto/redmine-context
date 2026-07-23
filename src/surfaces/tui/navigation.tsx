@@ -36,6 +36,8 @@ export interface NavigationValue {
   pop(): void;
   /** Substitui o topo da pilha por outra tela, sem alterar a profundidade. */
   replace(next: ScreenName): void;
+  /** Zera a pilha para uma única tela (fim de fluxo multi-tela). */
+  resetTo(next: ScreenName): void;
 }
 
 const NavigationContext = createContext<NavigationValue | undefined>(undefined);
@@ -87,10 +89,17 @@ export function useNavigationStack(initial: ScreenName): NavigationValue {
     setStack((current) => [...current.slice(0, -1), next]);
   }, []);
 
+  // Zera a pilha para uma única tela — fim de fluxos multi-tela (ex.: splash
+  // do onboarding, logout): sem isso, Esc "voltaria" para telas do fluxo
+  // encerrado que continuam empilhadas por baixo.
+  const resetTo = useCallback((next: ScreenName) => {
+    setStack(() => [next]);
+  }, []);
+
   // Reason: a pilha sempre tem ao menos 1 item (inicializada com `initial`,
   // `pop()` nunca a esvazia) — o fallback só existe para satisfazer
   // `noUncheckedIndexedAccess` do TypeScript, nunca é de fato alcançado.
   const current = stack[stack.length - 1] ?? initial;
 
-  return { stack, current, push, navigate: push, pop, replace };
+  return { stack, current, push, navigate: push, pop, replace, resetTo };
 }

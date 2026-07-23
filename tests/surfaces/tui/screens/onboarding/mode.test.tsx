@@ -46,7 +46,8 @@ function ModeHarness({ onModeSelect }: { onModeSelect?: (mode: string) => void }
           callbacks={{
             onUrlSubmit: () => undefined,
             onModeSelect: onModeSelect ?? (() => undefined),
-            onLoginSubmit: () => undefined,
+            onLoginSubmit: () => Promise.resolve({ kind: 'network-error', message: 'unused' }),
+            onApiKeySubmit: () => Promise.resolve({ kind: 'network-error', message: 'unused' }),
           }}
         >
           <Text>stack:{navigation.stack.join('>')}</Text>
@@ -87,7 +88,7 @@ describe('TUI: OnboardingModeScreen', () => {
     expect(onModeSelect).toHaveBeenCalledWith('password');
   });
 
-  it('Enter em "colar api_key" grava o modo e chama o callback, mas não navega (tela ainda não existe)', async () => {
+  it('Enter em "colar api_key" grava o modo, chama o callback e avança para a tela de api_key (#28)', async () => {
     const onModeSelect = vi.fn();
     const { lastFrame, stdin } = render(<ModeHarness onModeSelect={onModeSelect} />);
     stdin.write(ARROW_DOWN);
@@ -99,7 +100,9 @@ describe('TUI: OnboardingModeScreen', () => {
     await vi.waitFor(() => {
       expect(onModeSelect).toHaveBeenCalledWith('api-key');
     });
-    expect(lastFrame()).toContain('stack:onboarding-mode');
+    await vi.waitFor(() => {
+      expect(lastFrame()).toContain('stack:onboarding-mode>onboarding-api-key');
+    });
     expect(lastFrame()).not.toContain('onboarding-login');
   });
 });

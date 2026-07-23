@@ -119,7 +119,12 @@ describe('TUI: useOnboarding', () => {
     const onUrlSubmit = vi.fn();
     const { stdin } = render(
       <OnboardingProvider
-        callbacks={{ onUrlSubmit, onModeSelect: () => undefined, onLoginSubmit: () => undefined }}
+        callbacks={{
+          onUrlSubmit,
+          onModeSelect: () => undefined,
+          onLoginSubmit: () => Promise.resolve({ kind: 'network-error', message: 'unused' }),
+          onApiKeySubmit: () => Promise.resolve({ kind: 'network-error', message: 'unused' }),
+        }}
       >
         <Harness />
       </OnboardingProvider>,
@@ -132,5 +137,44 @@ describe('TUI: useOnboarding', () => {
     await vi.waitFor(() => {
       expect(onUrlSubmit).toHaveBeenCalledWith('https://redmine.example');
     });
+  });
+});
+
+describe('TUI: useOnboarding — pendingLogin/user (#28)', () => {
+  /** Harness: expõe `pendingLogin`/`user` como texto e mapeia teclas para os setters. */
+  function LoginStateHarness() {
+    const { pendingLogin, setPendingLogin, user, setUser } = useOnboarding();
+    useInput((input) => {
+      if (input === 'p') {
+        setPendingLogin(Promise.resolve({ kind: 'success', user: { id: 1, login: 'alice', name: 'Alice' } }));
+      }
+      if (input === 'u') {
+        setUser({ id: 1, login: 'alice', name: 'Alice' });
+      }
+    });
+    return (
+      <Text>{`pending:${pendingLogin === undefined ? 'none' : 'set'}|user:${user?.login ?? 'none'}`}</Text>
+    );
+  }
+
+  it('começa com pendingLogin e user indefinidos', () => {
+    const { lastFrame } = render(
+      <OnboardingProvider>
+        <LoginStateHarness />
+      </OnboardingProvider>,
+    );
+    expect(lastFrame()).toBe('pending:none|user:none');
+  });
+
+  it('setPendingLogin/setUser atualizam o contexto', async () => {
+    const { lastFrame, stdin } = render(
+      <OnboardingProvider>
+        <LoginStateHarness />
+      </OnboardingProvider>,
+    );
+    stdin.write('p');
+    await vi.waitFor(() => expect(lastFrame()).toContain('pending:set'));
+    stdin.write('u');
+    await vi.waitFor(() => expect(lastFrame()).toContain('user:alice'));
   });
 });

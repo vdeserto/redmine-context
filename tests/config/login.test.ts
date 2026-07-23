@@ -5,8 +5,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RedmineAuthError } from '../../src/client/index.js';
 import {
   loginWithPassword,
+  validateApiKey,
   RedmineLoginError,
   type LoginOptions,
+  type ValidateApiKeyOptions,
 } from '../../src/config/login.js';
 
 const BASE_URL = 'https://redmine.example';
@@ -197,5 +199,75 @@ describe('loginWithPassword: validações de entrada e TLS', () => {
     fetchMock.mockResolvedValue(jsonResponse(currentUserBody()));
     await login({ baseUrl: 'http://redmine.example', insecure: true, logger: { warn } });
     expect(warn).toHaveBeenCalledTimes(1);
+  });
+});
+
+function validate(
+  overrides: Partial<ValidateApiKeyOptions> = {},
+): Promise<Awaited<ReturnType<typeof validateApiKey>>> {
+  return validateApiKey({ baseUrl: BASE_URL, apiKey: API_KEY, ...overrides });
+}
+
+describe('validateApiKey: sucesso (fallback de 2FA — colar api_key)', () => {
+  it('autentica via X-Redmine-API-Key em /users/current.json e retorna api_key + user', async () => {
+    fetchMock.mockResolvedValue(jsonResponse(currentUserBody()));
+
+    const result = await validate();
+
+    expect(result).toEqual({
+      apiKey: API_KEY,
+      user: { id: 42, login: USERNAME, name: 'Alice Liddell' },
+    });
+    expect(fetchedUrl(fetchMock)).toBe(`${BASE_URL}/users/current.json`);
+    expect(fetchedHeaders(fetchMock)['X-Redmine-API-Key']).toBe(API_KEY);
+  });
+
+  it('preserva subpath da baseUrl e remove barra final', async () => {
+    fetchMock.mockResolvedValue(jsonResponse(currentUserBody()));
+    await validate({ baseUrl: 'https://host.example/redmine/' });
+    expect(fetchedUrl(fetchMock)).toBe('https://host.example/redmine/users/current.json');
+  });
+});
+
+describe('validateApiKey: key inválida (401)', () => {
+  it('lança RedmineAuthError com instrução acionável para /my/account', async () => {
+    fetchMock.mockResolvedValue(jsonResponse(null, { status: 401, statusText: 'Unauthorized' }));
+
+    const err = await validate().catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(RedmineAuthError);
+    const message = (err as RedmineAuthError).message;
+    expect(message).toMatch(/inválida|expirada/i);
+    expect(message).toContain(`${BASE_URL}/my/account`);
+    expect((err as RedmineAuthError).status).toBe(401);
+  });
+});
+
+describe('validateApiKey: validações de entrada, TLS e vazamento de segredo', () => {
+  it('rejeita api_key vazia antes de qualquer fetch', async () => {
+    await expect(validate({ apiKey: '' })).rejects.toBeInstanceOf(RedmineLoginError);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('recusa http:// por default (política de TLS reutilizada)', async () => {
+    await expect(validate({ baseUrl: 'http://redmine.example' })).rejects.toThrow(
+      /TLS.*obrigatório/i,
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('lança RedmineLoginError quando o corpo não tem usuário válido', async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ nope: true }));
+    await expect(validate()).rejects.toBeInstanceOf(RedmineLoginError);
+  });
+
+  it('redige a api_key se ela aparecer numa falha de rede de baixo nível', async () => {
+    fetchMock.mockRejectedValue(new Error(`connect failed leaking ${API_KEY} oops`));
+
+    const err = await validate().catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(RedmineLoginError);
+    expect((err as Error).message).not.toContain(API_KEY);
+    expect((err as Error).message).toContain('[REDACTED]');
   });
 });

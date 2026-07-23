@@ -13,9 +13,12 @@ import type { ComponentType } from 'react';
 import { AboutScreen } from './screens/about.js';
 import { ConfigScreen } from './screens/config.js';
 import { DoctorScreen } from './screens/doctor.js';
+import { OnboardingApiKeyScreen } from './screens/onboarding/api-key.js';
 import { OnboardingLoginScreen } from './screens/onboarding/login.js';
 import { OnboardingModeScreen } from './screens/onboarding/mode.js';
+import { OnboardingSuccessScreen } from './screens/onboarding/success.js';
 import { OnboardingUrlScreen } from './screens/onboarding/url.js';
+import { OnboardingValidatingScreen } from './screens/onboarding/validating.js';
 import { WelcomeScreen } from './screens/welcome.js';
 import { symbols } from './symbols.js';
 
@@ -27,7 +30,10 @@ export type ScreenName =
   | 'config'
   | 'onboarding-url'
   | 'onboarding-mode'
-  | 'onboarding-login';
+  | 'onboarding-login'
+  | 'onboarding-validating'
+  | 'onboarding-api-key'
+  | 'onboarding-success';
 
 /** Tela renderizada ao abrir a TUI (base da pilha de navegação). */
 export const INITIAL_SCREEN: ScreenName = 'welcome';
@@ -55,4 +61,16 @@ export const SCREENS: Record<ScreenName, ScreenEntry> = {
   'onboarding-url': { component: OnboardingUrlScreen, title: `Onboarding ${symbols.pointerSmall} URL` },
   'onboarding-mode': { component: OnboardingModeScreen, title: `Onboarding ${symbols.pointerSmall} Modo` },
   'onboarding-login': { component: OnboardingLoginScreen, title: `Onboarding ${symbols.pointerSmall} Login` },
+  'onboarding-validating': {
+    component: OnboardingValidatingScreen,
+    title: `Onboarding ${symbols.pointerSmall} Validando`,
+  },
+  'onboarding-api-key': {
+    component: OnboardingApiKeyScreen,
+    title: `Onboarding ${symbols.pointerSmall} api_key`,
+  },
+  'onboarding-success': {
+    component: OnboardingSuccessScreen,
+    title: `Onboarding ${symbols.pointerSmall} Sucesso`,
+  },
 };

@@ -14,8 +14,10 @@ function render(tree: Parameters<typeof inkRender>[0]): ReturnType<typeof inkRen
   INSTANCES.push(instance);
   return instance;
 }
+import { Text } from 'ink';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { NavigationProvider, useNavigationStack } from '../../../../../src/surfaces/tui/navigation.js';
 import { OnboardingProvider } from '../../../../../src/surfaces/tui/screens/onboarding/onboarding-context.js';
 import { OnboardingLoginScreen } from '../../../../../src/surfaces/tui/screens/onboarding/login.js';
 import { ThemeProvider } from '../../../../../src/surfaces/tui/theme.js';
@@ -31,23 +33,32 @@ async function tick(): Promise<void> {
   });
 }
 
-/** Harness: contexto de onboarding com callback de login espionável. */
+/** Harness: monta a pilha real (para observar `push`) + contexto de onboarding com callback de login espionável. */
 function LoginHarness({
   onLoginSubmit,
 }: {
-  onLoginSubmit?: (credentials: { username: string; password: string }) => void;
+  onLoginSubmit?: (credentials: {
+    username: string;
+    password: string;
+  }) => Promise<{ kind: 'network-error'; message: string }>;
 }) {
+  const navigation = useNavigationStack('onboarding-login');
   return (
     <ThemeProvider>
-      <OnboardingProvider
-        callbacks={{
-          onUrlSubmit: () => undefined,
-          onModeSelect: () => undefined,
-          onLoginSubmit: onLoginSubmit ?? (() => undefined),
-        }}
-      >
-        <OnboardingLoginScreen />
-      </OnboardingProvider>
+      <NavigationProvider value={navigation}>
+        <OnboardingProvider
+          callbacks={{
+            onUrlSubmit: () => undefined,
+            onModeSelect: () => undefined,
+            onLoginSubmit:
+              onLoginSubmit ?? (() => Promise.resolve({ kind: 'network-error', message: 'unused' })),
+            onApiKeySubmit: () => Promise.resolve({ kind: 'network-error', message: 'unused' }),
+          }}
+        >
+          <Text>stack:{navigation.stack.join('>')}</Text>
+          <OnboardingLoginScreen />
+        </OnboardingProvider>
+      </NavigationProvider>
     </ThemeProvider>
   );
 }
@@ -90,8 +101,8 @@ describe('TUI: OnboardingLoginScreen', () => {
     expect(onLoginSubmit).not.toHaveBeenCalled();
   });
 
-  it('Enter no campo de senha confirma o formulário via onLoginSubmit', async () => {
-    const onLoginSubmit = vi.fn();
+  it('Enter no campo de senha chama onLoginSubmit e navega para a validação (#28)', async () => {
+    const onLoginSubmit = vi.fn(() => Promise.resolve({ kind: 'network-error' as const, message: 'unused' }));
     const { lastFrame, stdin } = render(<LoginHarness onLoginSubmit={onLoginSubmit} />);
     stdin.write('alice');
     await vi.waitFor(() => expect(lastFrame()).toContain('alice'));
@@ -104,6 +115,9 @@ describe('TUI: OnboardingLoginScreen', () => {
     stdin.write(ENTER);
     await vi.waitFor(() => {
       expect(onLoginSubmit).toHaveBeenCalledWith({ username: 'alice', password: 'hunter2' });
+    });
+    await vi.waitFor(() => {
+      expect(lastFrame()).toContain('stack:onboarding-login>onboarding-validating');
     });
   });
 });

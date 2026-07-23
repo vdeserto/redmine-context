@@ -170,3 +170,108 @@ export async function loginWithPassword(options: LoginOptions): Promise<LoginRes
 
   return { apiKey, user: { id, login, name } };
 }
+
+/** Opções da validação de uma api_key colada diretamente (fallback de 2FA). */
+export interface ValidateApiKeyOptions {
+  /** URL base da instância Redmine (ex.: `https://redmine.example`). */
+  baseUrl: string;
+  /** api_key colada pelo usuário — usada só para o header, nunca logada. */
+  apiKey: string;
+  /** Permite `http://` (sem TLS) com aviso ruidoso. Default: `false`. */
+  insecure?: boolean;
+  /** Logger para o aviso de conexão insegura; default no-op. */
+  logger?: Logger;
+}
+
+/**
+ * Valida uma api_key colada diretamente pelo usuário (fallback de 2FA do
+ * ADR-003, quando `loginWithPassword` falha com 401) contra `GET
+ * {baseUrl}/users/current.json`, autenticando com o header
+ * `X-Redmine-API-Key` em vez de Basic auth. A key nunca é logada; qualquer
+ * texto que possa vazar é redigido antes de compor um erro — mesma política
+ * de {@link loginWithPassword}.
+ *
+ * @param options - Ver {@link ValidateApiKeyOptions}.
+ * @returns {@link LoginResult} com a própria api_key (ecoada de volta, para
+ *   simetria com {@link loginWithPassword}) e a identidade do usuário.
+ * @throws {RedmineLoginError} Entrada inválida, corpo sem usuário, REST
+ *   desabilitada, falha de rede ou JSON inválido (key sempre redigida).
+ * @throws {RedmineAuthError} Em 401 — api_key inválida ou expirada.
+ * @throws {Error} Se a política de TLS for violada (via `validateBaseUrl`).
+ * @example
+ * const { apiKey, user } = await validateApiKey({
+ *   baseUrl: 'https://redmine.example',
+ *   apiKey: pastedKey,
+ * });
+ */
+export async function validateApiKey(options: ValidateApiKeyOptions): Promise<LoginResult> {
+  const { baseUrl, apiKey, insecure = false } = options;
+  const logger = options.logger ?? noopLogger;
+
+  if (apiKey.length === 0) {
+    throw new RedmineLoginError('api_key é obrigatória e não pode ser vazia.');
+  }
+
+  // Reusa a política de TLS do client (ADR-003) — pode lançar antes de qualquer fetch.
+  validateBaseUrl(baseUrl, insecure, logger);
+
+  // Redige a key de qualquer texto de baixo nível antes de compor uma mensagem.
+  const redact = (text: string): string => redactSecret(text, apiKey);
+
+  const origin = trimTrailingSlash(baseUrl);
+  const url = `${origin}/users/current.json`;
+  const headers: Record<string, string> = {
+    Accept: 'application/json',
+    'X-Redmine-API-Key': apiKey,
+  };
+
+  let response: Response;
+  try {
+    response = await fetch(url, { method: 'GET', headers });
+  } catch (cause) {
+    const reason = cause instanceof Error ? cause.message : String(cause);
+    throw new RedmineLoginError(redact(`Falha de rede ao acessar ${url}: ${reason}`));
+  }
+
+  if (response.status === 401) {
+    throw new RedmineAuthError(
+      `Autenticação falhou (401): api_key inválida ou expirada. Copie a api_key atual em ${accountUrlFor(origin)}.`,
+      401,
+      url,
+    );
+  }
+
+  if (!response.ok) {
+    throw new RedmineLoginError(
+      redact(`GET ${url} respondeu ${response.status} ${response.statusText}.`),
+    );
+  }
+
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch (cause) {
+    const reason = cause instanceof Error ? cause.message : String(cause);
+    throw new RedmineLoginError(redact(`Resposta de ${url} não é JSON válido: ${reason}`));
+  }
+
+  const rawUser = asRecord(asRecord(body)?.user);
+  const id = rawUser?.id;
+  const login = rawUser ? stringField(rawUser, 'login') : undefined;
+  if (rawUser === undefined || typeof id !== 'number' || login === undefined) {
+    throw new RedmineLoginError(
+      `Resposta de ${url} não contém um usuário válido (campos id/login ausentes).`,
+    );
+  }
+
+  const firstname = stringField(rawUser, 'firstname');
+  const lastname = stringField(rawUser, 'lastname');
+  const name = [firstname, lastname].filter((part) => part !== undefined).join(' ') || login;
+
+  return { apiKey, user: { id, login, name } };
+}
+
+/** Monta a URL de `/my/account` a partir da origem já sem barra final. */
+function accountUrlFor(origin: string): string {
+  return `${origin}/my/account`;
+}

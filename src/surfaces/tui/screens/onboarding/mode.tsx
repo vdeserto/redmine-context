@@ -2,12 +2,9 @@
  * Tela de onboarding 2/3: modo de autenticação (M2-05.1, issue #27).
  *
  * Seleção entre login por usuário/senha (avança para `onboarding-login`) e
- * colar uma api_key diretamente. `useListNavigation` (M2-04) dá o teclado
- * padrão de lista (setas/`j`/`k`/Enter) de graça — nenhuma reimplementação
- * aqui. A tela de "colar api_key" ainda não existe (fora do escopo da #27,
- * que só cobre a seleção do modo); escolher esse item por ora só grava
- * `mode` no `OnboardingContext` e dispara o callback injetável — sem
- * navegar, até a tela correspondente chegar em uma issue futura.
+ * colar uma api_key diretamente (avança para `onboarding-api-key`, #28).
+ * `useListNavigation` (M2-04) dá o teclado padrão de lista (setas/`j`/`k`/
+ * Enter) de graça — nenhuma reimplementação aqui.
  */
 import { Box, Text } from 'ink';
 
@@ -43,9 +40,7 @@ export function OnboardingModeScreen() {
       }
       setMode(option.mode);
       callbacks.onModeSelect(option.mode);
-      if (option.mode === 'password') {
-        push('onboarding-login');
-      }
+      push(option.mode === 'password' ? 'onboarding-login' : 'onboarding-api-key');
     },
   });
 
