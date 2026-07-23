@@ -181,6 +181,16 @@ export function HomeScreen() {
   }, []);
   useInput(handleSearchControlInput);
 
+  // #34 (M2-11): "t" abre o painel de jobs da sessão (`./jobs.js`) — só fora
+  // da busca (mesma guarda de "/"/"f" acima: dentro do campo, "t" é texto da
+  // query, não um atalho).
+  const handleJobsShortcut = useCallback((input: string) => {
+    if (input === 't' && !isSearchingRef.current) {
+      pushRef.current('jobs');
+    }
+  }, []);
+  useInput(handleJobsShortcut);
+
   const searchState = search.state;
 
   return (
@@ -192,7 +202,7 @@ export function HomeScreen() {
         <Text color={theme.muted}> [{STATUS_FILTER_LABELS[statusFilter]}]</Text>
         {!isSearching ? (
           <Text color={theme.muted}>
-            {'  '}/ busca · f filtro
+            {'  '}/ busca · f filtro · t jobs
           </Text>
         ) : null}
       </Box>
@@ -340,6 +350,10 @@ export function HomeScreen() {
                 /
               </Text>{' '}
               busca,{' '}
+              <Text bold color={theme.accent}>
+                t
+              </Text>{' '}
+              jobs,{' '}
               <Text bold color={theme.accent}>
                 Esc
               </Text>{' '}

@@ -334,3 +334,30 @@ describe('TUI: HomeScreen — busca inline (M2-07, #30)', () => {
     expect(consumeEscapeInterceptor()).toBe(false);
   });
 });
+
+describe('TUI: HomeScreen — painel de jobs (#34)', () => {
+  it('"t" empilha "jobs" com a busca fechada', async () => {
+    mockState({ status: 'loaded', issues: [] });
+    const nav = navMock();
+    const { stdin } = renderHome(nav);
+    stdin.write('t');
+    await vi.waitFor(() => {
+      expect(nav.push).toHaveBeenCalledWith('jobs');
+    });
+  });
+
+  it('"t" digitado dentro da busca aberta vira texto da query, não navega', async () => {
+    mockState({ status: 'loaded', issues: [] });
+    const spy = mockSearchState();
+    const nav = navMock();
+    const { lastFrame, stdin } = renderHome(nav);
+    stdin.write('/');
+    await vi.waitFor(() => expect(lastFrame()).toContain('digite para buscar'));
+
+    stdin.write('t');
+    await vi.waitFor(() => {
+      expect(spy).toHaveBeenLastCalledWith('t', 'all');
+    });
+    expect(nav.push).not.toHaveBeenCalledWith('jobs');
+  });
+});

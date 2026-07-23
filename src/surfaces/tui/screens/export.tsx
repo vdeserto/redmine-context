@@ -16,6 +16,16 @@
  * (`~` é expandido pelo hook antes de gravar). `Enter` em qualquer um dos
  * dois campos confirma a exportação.
  *
+ * #34 (M2-11): PRIMEIRO produtor real do registro de jobs da sessão
+ * (`../job-registry.js`, ver o JSDoc daquele módulo para o contrato) — ao
+ * confirmar (Enter), registra um job em `processing` (exportação não tem fase
+ * de fila: começa a gravar assim que confirmada) e o transiciona para
+ * `done`/`failed` conforme `useExportBundle` resolve. `useExportBundle` em si
+ * permanece intocado (fronteira do core, ADR-005) — a integração vive só
+ * aqui, na tela, mantendo o hook puro. Exportação NÃO é cancelável
+ * (`cancelable` fica `false`/omitido) — o painel (`../screens/jobs.js`)
+ * mostra "(não cancelável)" para ela.
+ *
  * 4 estados visuais: formulário (`idle`), progresso (`Spinner` existente,
  * igual a `./issue-detail.tsx`), sucesso (caminho(s) absoluto(s) gravado(s) +
  * `b` para voltar) e erro (`theme.danger` + ação corretiva — diretório
@@ -26,12 +36,13 @@
  * home para o detalhe).
  */
 import { Box, Text, useInput } from 'ink';
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { Spinner } from '../components/spinner.js';
 import { TextInput } from '../components/text-input.js';
 import { useExportBundle, type ExportFormat } from '../hooks/use-export-bundle.js';
 import { useListNavigation } from '../hooks/use-list-navigation.js';
+import { useJobRegistry } from '../job-registry.js';
 import { useNavigation } from '../navigation.js';
 import { symbols } from '../symbols.js';
 import { useTheme } from '../theme.js';
@@ -77,19 +88,57 @@ export function ExportScreen() {
   const { pop } = useNavigation();
   const { issue } = useLoadedIssue();
   const { state, runExport, reset } = useExportBundle(issue);
+  // #34 (M2-11): registro de jobs da sessão — exportação é o PRIMEIRO
+  // produtor real (ver o JSDoc do módulo para o contrato completo).
+  const { registerJob, updateJobStatus } = useJobRegistry();
 
   const [field, setField] = useState<Field>('format');
   const [destination, setDestination] = useState(() => process.cwd());
 
   const isFormActive = state.status === 'idle';
 
+  // Id do job da tentativa de exportação EM ANDAMENTO (ou da última, após
+  // terminar) — `undefined` antes da primeira confirmação. Um `ref` (não
+  // estado) porque só é lido pelo efeito abaixo, nunca pelo JSX.
+  const currentJobIdRef = useRef<string | undefined>(undefined);
+
   const handleSubmit = useCallback(
     (formatIndex: number) => {
       const format = FORMAT_OPTIONS[formatIndex]?.value ?? 'md';
+      if (issue !== undefined) {
+        // Novo `id` a cada confirmação (mesmo após um erro + "r" de retry) —
+        // cada tentativa vira uma entrada distinta no painel (histórico da
+        // sessão), nunca uma reescrita silenciosa da anterior.
+        const jobId = `export-${issue.id}-${Date.now()}`;
+        currentJobIdRef.current = jobId;
+        registerJob({
+          id: jobId,
+          label: `Exportar #${issue.id} (${format})`,
+          status: 'processing',
+          startedAt: Date.now(),
+          // Exportação não é cancelável — grava direto no disco, sem uma
+          // etapa segura para abortar no meio (ver o JSDoc do módulo).
+          cancelable: false,
+        });
+      }
       void runExport(format, destination);
     },
-    [runExport, destination],
+    [runExport, destination, issue, registerJob],
   );
+
+  // Espelha o resultado da exportação no job registrado acima — SEM tocar em
+  // `useExportBundle` (fronteira do core intocada, ver o JSDoc do módulo).
+  useEffect(() => {
+    const jobId = currentJobIdRef.current;
+    if (jobId === undefined) {
+      return;
+    }
+    if (state.status === 'success') {
+      updateJobStatus(jobId, 'done');
+    } else if (state.status === 'error') {
+      updateJobStatus(jobId, 'failed');
+    }
+  }, [state.status, updateJobStatus]);
 
   const { selectedIndex: formatIndex } = useListNavigation(FORMAT_OPTIONS.length, {
     isActive: isFormActive && field === 'format',
