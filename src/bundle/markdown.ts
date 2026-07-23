@@ -71,10 +71,14 @@ function neutralizeFence(text: string): string {
 /**
  * Isola conteúdo não confiável num bloco `<untrusted-content>` de várias linhas.
  *
+ * Exportada para reutilização por outras superfícies do core (ex.: a tool MCP
+ * `get_attachment_text`, M3-13) que devolvem texto multi-linha derivado do
+ * Redmine e precisam da MESMA marcação anti prompt-injection, sem duplicá-la.
+ *
  * @param text - Conteúdo derivado do Redmine.
  * @returns Bloco fence pronto para inserção como seção.
  */
-function fenceBlock(text: string): string {
+export function fenceBlock(text: string): string {
   return `<untrusted-content>\n${neutralizeFence(text)}\n</untrusted-content>`;
 }
 

@@ -17,7 +17,8 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 
 import * as core from '../../index.js';
-import type { BundleFormat, IssueSearchFilters, resolveApiKey } from '../../index.js';
+import { fenceBlock } from '../../index.js';
+import type { AttachmentTextResult, BundleFormat, IssueSearchFilters, resolveApiKey } from '../../index.js';
 
 /** Formato aceito pela tool MCP (nomes amigáveis expostos ao cliente). */
 export type McpFormat = 'markdown' | 'json';
@@ -28,6 +29,20 @@ export interface GetIssueContextArgs {
   issue_id: number;
   /** Formato de saída: `markdown` (padrão) ou `json`. */
   format?: McpFormat | undefined;
+  /**
+   * Extrai o texto dos anexos de imagem (OCR) e o embute no bundle. Default:
+   * `false` — a extração adiciona latência (download + OCR por anexo). O M4 trará
+   * o modo cache-first/processing assíncrono; no M3 a extração é síncrona.
+   */
+  extract_attachments?: boolean | undefined;
+}
+
+/** Argumentos da tool `get_attachment_text` já validados pelo schema zod. */
+export interface GetAttachmentTextArgs {
+  /** Identificador numérico da issue que contém o anexo. */
+  issue_id: number;
+  /** Identificador numérico do anexo cujo texto será extraído. */
+  attachment_id: number;
 }
 
 /** Argumentos da tool `search_issues` já validados pelo schema zod. */
@@ -56,6 +71,8 @@ export interface McpServerDeps {
   fetchIssueBundle: typeof core.fetchIssueBundle;
   /** Orquestração de busca (filtros + full-text best-effort) do core. */
   searchIssues: typeof core.fetchIssueSearch;
+  /** Orquestração get → normalize → extração de UM anexo (M3-13, cache-hit). */
+  fetchAttachmentText: typeof core.fetchAttachmentText;
   /** Resolução de credencial pela cascata (arquivo → env). */
   resolveApiKey: typeof resolveApiKey;
   /** Ambiente consultado para `REDMINE_URL` e pela cascata de credencial. */
@@ -84,6 +101,9 @@ export const TOOL_NAME = 'get_issue_context';
 /** Nome canônico da tool de busca de issues. */
 export const SEARCH_TOOL_NAME = 'search_issues';
 
+/** Nome canônico da tool de texto de anexo. */
+export const ATTACHMENT_TOOL_NAME = 'get_attachment_text';
+
 /** Limite default de resultados da tool `search_issues` (documentado no schema). */
 export const SEARCH_DEFAULT_LIMIT = 25;
 
@@ -97,6 +117,18 @@ const INPUT_SCHEMA = {
     .enum(['markdown', 'json'])
     .optional()
     .describe("Formato de saída: 'markdown' (padrão) ou 'json'"),
+  extract_attachments: z
+    .boolean()
+    .optional()
+    .describe(
+      'Extrai o texto (OCR) dos anexos de imagem e o embute no bundle. Default: false (adiciona latência de download+OCR). O M4 traz o modo cache-first/processing.',
+    ),
+} as const;
+
+/** Schema zod da tool `get_attachment_text` (read-only, sem URL/host). */
+const ATTACHMENT_INPUT_SCHEMA = {
+  issue_id: z.number().int().positive().describe('Identificador numérico da issue que contém o anexo'),
+  attachment_id: z.number().int().positive().describe('Identificador numérico do anexo a extrair'),
 } as const;
 
 /** Schema zod da tool `search_issues` (read-only, sem URL/host). */
@@ -242,6 +274,7 @@ export function createGetIssueContextHandler(
         format,
         toolVersion: deps.toolVersion,
         insecure: deps.insecure ?? false,
+        extractAttachments: args.extract_attachments ?? false,
       })) {
         if (event.kind === 'progress') {
           deps.log?.(event.message);
@@ -325,6 +358,88 @@ export function createSearchIssuesHandler(
 }
 
 /**
+ * Traduz erros da extração de anexo em mensagens claras e tipadas.
+ *
+ * 404/403/401 do Redmine e o {@link core.AttachmentNotFoundError} recebem texto
+ * orientado; os demais propagam a mensagem original. Nenhum resultado é cacheado
+ * aqui — o erro é sempre recomputado por chamada (sem cache indevido).
+ *
+ * @param error - Erro capturado durante o fetch/extração.
+ * @param issueId - Id da issue para compor a mensagem.
+ * @param attachmentId - Id do anexo para compor a mensagem.
+ * @returns A mensagem a ser exibida no `isError`.
+ */
+function typedAttachmentErrorMessage(error: unknown, issueId: number, attachmentId: number): string {
+  if (error instanceof core.AttachmentNotFoundError) {
+    return `Anexo #${attachmentId} não encontrado na issue #${issueId}. Verifique o id do anexo.`;
+  }
+  return typedErrorMessage(error, issueId);
+}
+
+/**
+ * Renderiza o {@link AttachmentTextResult} como conteúdo MCP de sucesso.
+ *
+ * Com texto (`done`/`text`): devolve-o dentro da fence `<untrusted-content>` — é
+ * conteúdo DERIVADO do anexo, logo não confiável (padrão do repo). Sem texto
+ * (`pending`/`processing`/`skipped`/`unsupported`/`failed`): devolve `status` +
+ * `reason`/`hint` legíveis — NUNCA um erro genérico; o `hint` é texto nosso
+ * (ex.: como instalar o tesseract), fora da fence por ser confiável.
+ *
+ * @param result - Resultado da extração do anexo.
+ * @returns CallToolResult de sucesso (não `isError`).
+ */
+function renderAttachmentText(result: AttachmentTextResult): CallToolResult {
+  const { extraction } = result;
+  if (typeof extraction.text === 'string' && extraction.text.trim() !== '') {
+    return textResult(fenceBlock(extraction.text));
+  }
+  const lines = [`Anexo #${result.attachmentId}: extração ${extraction.status} (sem texto disponível).`];
+  const reason = extraction.metadata?.['reason'];
+  const hint = extraction.metadata?.['hint'];
+  if (typeof reason === 'string') lines.push(`Motivo: ${reason}`);
+  if (typeof hint === 'string') lines.push(hint);
+  return textResult(lines.join('\n'));
+}
+
+/**
+ * Cria o handler da tool `get_attachment_text`, testável isoladamente.
+ *
+ * Resolve a instância/credencial da env (nunca de argumentos), delega à
+ * orquestração `fetchAttachmentText` (pipeline com cache; `getOrCompute` garante
+ * o cache-hit) e devolve o texto extraído dentro da fence untrusted. Anexo não
+ * processável vira status legível (não `isError`); 403/404 do Redmine e anexo
+ * inexistente viram `isError` tipado.
+ *
+ * @param deps - Ver {@link McpServerDeps}.
+ * @returns Função assíncrona que recebe os argumentos e devolve um CallToolResult.
+ * @example
+ * const handler = createGetAttachmentTextHandler(defaultMcpDeps());
+ * const result = await handler({ issue_id: 42, attachment_id: 77 });
+ */
+export function createGetAttachmentTextHandler(
+  deps: McpServerDeps,
+): (args: GetAttachmentTextArgs) => Promise<CallToolResult> {
+  return async (args: GetAttachmentTextArgs): Promise<CallToolResult> => {
+    const resolved = await resolveInstance(deps);
+    if (!isResolved(resolved)) return resolved;
+    const { baseUrl, apiKey } = resolved;
+
+    try {
+      const result = await deps.fetchAttachmentText({
+        baseUrl,
+        apiKey,
+        issueId: args.issue_id,
+        attachmentId: args.attachment_id,
+        insecure: deps.insecure ?? false,
+      });
+      return renderAttachmentText(result);
+    } catch (error) {
+      return errorResult(typedAttachmentErrorMessage(error, args.issue_id, args.attachment_id));
+    }
+  };
+}
+
+/**
  * Constrói um {@link McpServer} com a tool `get_issue_context` registrada.
  *
  * A tool é read-only e não expõe URL/host — a instância vem sempre da env.
@@ -336,6 +451,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   const server = new McpServer({ name: core.TOOL_NAME, version: deps.toolVersion });
   const handler = createGetIssueContextHandler(deps);
   const searchHandler = createSearchIssuesHandler(deps);
+  const attachmentHandler = createGetAttachmentTextHandler(deps);
 
   server.registerTool(
     TOOL_NAME,
@@ -361,6 +477,18 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     (args) => searchHandler(args),
   );
 
+  server.registerTool(
+    ATTACHMENT_TOOL_NAME,
+    {
+      title: 'Texto extraído de um anexo do Redmine',
+      description:
+        'Extrai (com cache) o texto de um anexo de uma issue na instância configurada (REDMINE_URL) e o retorna dentro de uma fence de conteúdo não confiável. Anexo não processável retorna o status/motivo legível (skipped/unsupported/failed), não um erro. Read-only.',
+      inputSchema: ATTACHMENT_INPUT_SCHEMA,
+      annotations: { readOnlyHint: true, openWorldHint: true },
+    },
+    (args) => attachmentHandler(args),
+  );
+
   return server;
 }
 
@@ -369,6 +497,7 @@ export function defaultMcpDeps(): McpServerDeps {
   return {
     fetchIssueBundle: core.fetchIssueBundle,
     searchIssues: core.fetchIssueSearch,
+    fetchAttachmentText: core.fetchAttachmentText,
     resolveApiKey: core.resolveApiKey,
     env: process.env,
     toolVersion: core.TOOL_VERSION,

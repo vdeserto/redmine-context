@@ -22,6 +22,16 @@ export {
   type ExtractIssueAttachmentsOptions,
 } from './extract-issue-attachments.js';
 
+// Orquestração get → normalize → extração de UM anexo (M3-13): reutiliza o
+// pipeline com cache de `extractIssueAttachments` para a tool MCP read-only
+// `get_attachment_text` (#55). Devolve o ExtractionResult do anexo pedido.
+export {
+  fetchAttachmentText,
+  AttachmentNotFoundError,
+  type FetchAttachmentTextOptions,
+  type AttachmentTextResult,
+} from './fetch-attachment-text.js';
+
 // Orquestração de busca (filtros + full-text best-effort) para a tool MCP (#19).
 export {
   fetchIssueSearch,
@@ -69,6 +79,7 @@ export { normalizeIssue } from './normalize/index.js';
 export {
   buildMarkdownBundle,
   buildJsonBundle,
+  fenceBlock,
   type MarkdownBundleMeta,
   type JsonBundle,
   type JsonBundleEnvelope,

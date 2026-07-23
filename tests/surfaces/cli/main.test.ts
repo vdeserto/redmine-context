@@ -169,6 +169,28 @@ describe('CLI: comando issue', () => {
     expect(core.fetchIssueBundle).toHaveBeenCalledWith(expect.objectContaining({ format: 'json' }));
   });
 
+  it('sem --extract não liga a extração de anexos (default false)', async () => {
+    vi.mocked(core.resolveApiKey).mockResolvedValue('key');
+    vi.mocked(core.fetchIssueBundle).mockReturnValue(bundleStream('MD'));
+    const h = harness();
+
+    const code = await run(['issue', '42', '--url', 'https://x'], h.deps);
+
+    expect(code).toBe(0);
+    expect(core.fetchIssueBundle).toHaveBeenCalledWith(expect.objectContaining({ extractAttachments: false }));
+  });
+
+  it('--extract liga o pipeline de extração no core (spy)', async () => {
+    vi.mocked(core.resolveApiKey).mockResolvedValue('key');
+    vi.mocked(core.fetchIssueBundle).mockReturnValue(bundleStream('MD'));
+    const h = harness();
+
+    const code = await run(['issue', '42', '--extract', '--url', 'https://x'], h.deps);
+
+    expect(code).toBe(0);
+    expect(core.fetchIssueBundle).toHaveBeenCalledWith(expect.objectContaining({ extractAttachments: true }));
+  });
+
   it('--out grava o bundle em arquivo e mantém stdout vazio', async () => {
     vi.mocked(core.resolveApiKey).mockResolvedValue('key');
     vi.mocked(core.fetchIssueBundle).mockReturnValue(bundleStream('MD-OUT'));
