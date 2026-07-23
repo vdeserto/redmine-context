@@ -23,3 +23,14 @@ export {
   type ExtractOptions,
   type Extractor,
 } from './dispatcher.js';
+
+export {
+  createDefaultRegistry,
+  createTesseractExtractor,
+  detectTesseractVersion,
+  findTesseract,
+  TesseractExtractor,
+  TESSERACT_MIMES,
+  type TesseractExtractorOptions,
+  type TesseractLocation,
+} from './tesseract.js';
