@@ -12,7 +12,7 @@
 
 import { pathToFileURL } from 'node:url';
 
-import { runIssue, runLogin } from './commands.js';
+import { runDoctor, runIssue, runLogin } from './commands.js';
 import { createPromptSession } from './prompts.js';
 import { shouldRenderTui } from './tty.js';
 import type { ParsedArgs, RunDeps } from './types.js';
@@ -28,6 +28,7 @@ const HELP = `redmine-context — contexto completo de issues do Redmine para LL
 Uso:
   redmine-context issue <id> [opções]
   redmine-context login [opções]
+  redmine-context doctor
   redmine-context mcp
 
 Comando issue:
@@ -46,6 +47,12 @@ Comando login:
   --url <url>       URL da instância Redmine.
   --api-key <key>   Salva a api_key diretamente, sem senha.
   --insecure        Permite http:// sem TLS (não recomendado).
+
+Comando doctor:
+  Diagnostica os binários de mídia (ex.: tesseract p/ OCR) e imprime um
+  relatório em texto puro. Mostra caminho e versão quando presentes, ou a
+  instrução de instalação do seu SO quando ausentes. Exit 0 se tudo ok, 1 se
+  faltar algum.
 
 Comando mcp:
   Sobe um servidor MCP (stdio) expondo a tool read-only get_issue_context.
@@ -168,6 +175,9 @@ async function dispatch(argv: string[], deps: RunDeps): Promise<number> {
   }
   if (command === 'login') {
     return runLogin(parsed, deps);
+  }
+  if (command === 'doctor') {
+    return runDoctor(parsed, deps);
   }
   if (command === 'mcp') {
     // Wire fino: o server bloqueia até o transporte stdio fechar (então exit 0).
