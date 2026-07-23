@@ -19,17 +19,19 @@ const ARROW_DOWN = `${ESC}[B`;
 /** Enter (retorno de carro). */
 const ENTER = '\r';
 
-/** Harness: renderiza o índice selecionado e repassa `onSelect`/`isActive` ao hook. */
+/** Harness: repassa `onSelect`/`isActive`/`initialIndex` ao hook. */
 function ListHarness({
   itemCount,
   onSelect,
   isActive,
+  initialIndex,
 }: {
   itemCount: number;
   onSelect?: (index: number) => void;
   isActive?: boolean;
+  initialIndex?: number;
 }) {
-  const { selectedIndex } = useListNavigation(itemCount, { onSelect, isActive });
+  const { selectedIndex } = useListNavigation(itemCount, { onSelect, isActive, initialIndex });
   return <Text>{selectedIndex}</Text>;
 }
 
@@ -124,5 +126,39 @@ describe('TUI: useListNavigation', () => {
     const { stdin } = render(<ListHarness itemCount={3} onSelect={onSelect} isActive={false} />);
     stdin.write(ENTER);
     expect(onSelect).not.toHaveBeenCalled();
+  });
+});
+
+describe('TUI: useListNavigation — initialIndex (#31, preservação de seleção entre remounts)', () => {
+  it('sem initialIndex, começa em 0 (comportamento original preservado)', () => {
+    const { lastFrame } = render(<ListHarness itemCount={3} />);
+    expect(lastFrame()).toBe('0');
+  });
+
+  it('com itemCount já preenchido no primeiro render, aplica initialIndex direto', () => {
+    const { lastFrame } = render(<ListHarness itemCount={3} initialIndex={2} />);
+    expect(lastFrame()).toBe('2');
+  });
+
+  it('clampa initialIndex fora do intervalo `[0, itemCount - 1]`', () => {
+    const { lastFrame } = render(<ListHarness itemCount={3} initialIndex={99} />);
+    expect(lastFrame()).toBe('2');
+  });
+
+  it('itemCount começando em 0 (lista carregando) e passando a ter itens: aplica initialIndex no primeiro preenchimento', async () => {
+    const { lastFrame, rerender } = render(<ListHarness itemCount={0} initialIndex={1} />);
+    expect(lastFrame()).toBe('0');
+
+    rerender(<ListHarness itemCount={3} initialIndex={1} />);
+    await vi.waitFor(() => {
+      expect(lastFrame()).toBe('1');
+    });
+  });
+
+  it('depois de aplicado, navegar normalmente segue funcionando a partir do initialIndex', async () => {
+    const { lastFrame, stdin } = render(<ListHarness itemCount={3} initialIndex={1} />);
+    await vi.waitFor(() => expect(lastFrame()).toBe('1'));
+    stdin.write('j');
+    await vi.waitFor(() => expect(lastFrame()).toBe('2'));
   });
 });

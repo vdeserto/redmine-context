@@ -39,6 +39,7 @@ import { consumeEscapeInterceptor } from './hooks/use-escape-interceptor.js';
 import { useExitGuard } from './hooks/use-exit-guard.js';
 import { useOnboardingCallbacks } from './hooks/use-onboarding-callbacks.js';
 import { NavigationProvider, useNavigation, useNavigationStack } from './navigation.js';
+import { HomeSelectionProvider } from './screens/home-selection.js';
 import {
   OnboardingProvider,
   useOnboarding,
@@ -88,7 +89,11 @@ export function App() {
     <ThemeProvider>
       <NavigationProvider value={navigation}>
         <OnboardingProvider callbacks={onboardingCallbacks}>
-          <AppShell />
+          {/* #31: sobrevive ao remount de `home.tsx`/`issue-detail.tsx` — ver o
+              JSDoc de `./screens/home-selection.tsx` para o contrato completo. */}
+          <HomeSelectionProvider>
+            <AppShell />
+          </HomeSelectionProvider>
         </OnboardingProvider>
       </NavigationProvider>
     </ThemeProvider>
