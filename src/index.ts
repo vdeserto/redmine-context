@@ -44,7 +44,9 @@ export {
 export {
   createCredentialCascade,
   resolveApiKey,
+  describeCredentialSource,
   normalizeInstanceUrl,
   CredentialStoreError,
   type CredentialCascadeOptions,
+  type CredentialSourceKind,
 } from './config/index.js';

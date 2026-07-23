@@ -8,6 +8,7 @@ import type { Logger } from '../../src/client/index.js';
 import {
   FileCredentialStore,
   createCredentialCascade,
+  describeCredentialSource,
   normalizeInstanceUrl,
   resolveApiKey,
 } from '../../src/config/credentials.js';
@@ -250,5 +251,70 @@ describe('cascata M2: escrita (login) prefere keychain', () => {
 
     expect(map.has(keychainKeyFor(INSTANCE))).toBe(false);
     expect(await file.get(INSTANCE)).toBeUndefined();
+  });
+});
+
+describe('cascata M2: describeCredentialSource (fonte em uso, sem expor a key)', () => {
+  it("devolve 'keyring' quando a chave está no keychain", async () => {
+    const { loader, map } = memKeyring();
+    map.set(keychainKeyFor(INSTANCE), KEYCHAIN_KEY);
+    await new FileCredentialStore({ filePath }).set(INSTANCE, FILE_KEY);
+
+    const source = await describeCredentialSource(INSTANCE, {
+      filePath,
+      keyringLoader: loader,
+      env: { REDMINE_API_KEY: ENV_KEY },
+    });
+    expect(source).toBe('keyring');
+  });
+
+  it("devolve 'file' quando o keychain não tem a chave, mas o arquivo tem", async () => {
+    const { loader } = memKeyring();
+    await new FileCredentialStore({ filePath }).set(INSTANCE, FILE_KEY);
+
+    const source = await describeCredentialSource(INSTANCE, {
+      filePath,
+      keyringLoader: loader,
+      env: { REDMINE_API_KEY: ENV_KEY },
+    });
+    expect(source).toBe('file');
+  });
+
+  it("devolve 'env' quando só a variável de ambiente tem a chave", async () => {
+    const { loader } = memKeyring();
+    const source = await describeCredentialSource(INSTANCE, {
+      filePath,
+      keyringLoader: loader,
+      env: { REDMINE_API_KEY: ENV_KEY },
+    });
+    expect(source).toBe('env');
+  });
+
+  it("devolve 'none' quando nenhuma fonte tem a chave", async () => {
+    const { loader } = memKeyring();
+    const source = await describeCredentialSource(INSTANCE, { filePath, keyringLoader: loader, env: {} });
+    expect(source).toBe('none');
+  });
+
+  it('é somente-leitura: NÃO migra a chave do arquivo para o keychain (ao contrário de get/resolveApiKey)', async () => {
+    const { loader, map } = memKeyring();
+    const file = new FileCredentialStore({ filePath });
+    await file.set(INSTANCE, FILE_KEY);
+
+    const source = await describeCredentialSource(INSTANCE, { filePath, keyringLoader: loader, env: {} });
+
+    expect(source).toBe('file');
+    expect(map.has(keychainKeyFor(INSTANCE))).toBe(false);
+    expect(await file.get(INSTANCE)).toBe(FILE_KEY);
+  });
+
+  it('nunca inclui a api_key no valor retornado (apenas o nome da fonte)', async () => {
+    const { loader, map } = memKeyring();
+    map.set(keychainKeyFor(INSTANCE), KEYCHAIN_KEY);
+
+    const source = await describeCredentialSource(INSTANCE, { filePath, keyringLoader: loader, env: {} });
+
+    expect(['keyring', 'file', 'env', 'none']).toContain(source);
+    expect(source).not.toContain(KEYCHAIN_KEY);
   });
 });

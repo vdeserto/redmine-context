@@ -11,13 +11,20 @@
  * assumir atualização síncrona (evita acoplar o teste ao número exato de
  * ticks internos do Ink).
  */
-import { render } from 'ink-testing-library';
-import { describe, expect, it, vi } from 'vitest';
+import { cleanup, render } from 'ink-testing-library';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { TOOL_NAME, TOOL_VERSION } from '../../../src/index.js';
 import { App } from '../../../src/surfaces/tui/app.js';
 import { SCREENS } from '../../../src/surfaces/tui/screen.js';
 import { symbols } from '../../../src/surfaces/tui/symbols.js';
+
+// Reason (M2-12, #35): telas novas (doctor/config) mantêm um `setInterval`
+// (checagem de conectividade) ou promises pendentes entre testes; sem
+// desmontar cada instância do Ink explicitamente, o roteador de um teste
+// pode ainda estar "vivo" quando o próximo `render(<App />)` roda,
+// contaminando o frame observado. `ink-testing-library` não desmonta sozinho.
+afterEach(cleanup);
 
 /** Caractere ESC (0x1B) sozinho — tecla Esc (distinto de uma sequência CSI de seta). */
 const ESC_KEY = String.fromCharCode(0x1b);
@@ -51,6 +58,22 @@ describe('TUI: roteador de telas', () => {
     stdin.write('b');
     await vi.waitFor(() => {
       expect(lastFrame()).toContain(TOOL_NAME);
+    });
+  });
+
+  it('navega para o doctor ao pressionar "d" na tela de boas-vindas (M2-12, #35)', async () => {
+    const { lastFrame, stdin } = render(<App />);
+    stdin.write('d');
+    await vi.waitFor(() => {
+      expect(lastFrame()).toContain(SCREENS.doctor.title);
+    });
+  });
+
+  it('navega para a configuração ao pressionar "c" na tela de boas-vindas (M2-12, #35)', async () => {
+    const { lastFrame, stdin } = render(<App />);
+    stdin.write('c');
+    await vi.waitFor(() => {
+      expect(lastFrame()).toContain(SCREENS.config.title);
     });
   });
 
