@@ -21,6 +21,13 @@ vi.mock('../../../../src/surfaces/tui/hooks/use-my-issues.js', async (importOrig
   return { ...actual, useMyIssues: vi.fn() };
 });
 
+vi.mock('../../../../src/surfaces/tui/hooks/use-issue-search.js', () => ({
+  useIssueSearch: () => ({
+    state: { status: 'idle' },
+    run: () => undefined,
+    clear: () => undefined,
+  }),
+}));
 vi.mock('../../../../src/surfaces/tui/hooks/use-issue-detail.js', async (importOriginal) => {
   const actual =
     await importOriginal<typeof import('../../../../src/surfaces/tui/hooks/use-issue-detail.js')>();
