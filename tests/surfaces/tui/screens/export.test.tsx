@@ -7,7 +7,7 @@
  * confirmação, e a formatação dos 4 estados visuais).
  */
 import { cleanup, render } from 'ink-testing-library';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../../../../src/surfaces/tui/hooks/use-export-bundle.js', async (importOriginal) => {
   const actual =
@@ -110,6 +110,18 @@ afterEach(() => {
   cleanup();
   vi.mocked(useExportBundleModule.useExportBundle).mockReset();
   vi.mocked(loadedIssueModule.useLoadedIssue).mockReset();
+});
+
+// O destino default renderizado é process.cwd(): em worktrees de nome longo,
+// o truncamento responsivo (#39) corta o path no frame de 100 colunas e as
+// asserções de caminho completo quebram. Um cwd curto e fixo torna o teste
+// determinístico em qualquer diretório.
+const SHORT_CWD = '/w';
+beforeEach(() => {
+  vi.spyOn(process, 'cwd').mockReturnValue(SHORT_CWD);
+});
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 describe('TUI: ExportScreen — sem issue em memória', () => {
