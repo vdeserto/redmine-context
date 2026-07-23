@@ -53,7 +53,9 @@ Comando mcp:
   nenhuma tool aceita URL/host arbitrário. Logs vão para stderr.
 
 Credenciais:
-  A api_key é resolvida na ordem: arquivo de credenciais -> REDMINE_API_KEY.
+  A api_key é resolvida na ordem: keychain do sistema -> arquivo de
+  credenciais -> REDMINE_API_KEY (env). O login salva no keychain quando
+  disponível e migra credenciais antigas do arquivo automaticamente.
   Sem credencial, rode: redmine-context login
 
 Exit codes:
