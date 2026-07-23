@@ -13,5 +13,6 @@ export {
   type GcHook,
   type IssueCacheKey,
 } from './contract.js';
+export { getOrCompute } from './get-or-compute.js';
 export { InMemoryCacheStore } from './memory.js';
 export { DiskCacheStore, defaultCacheDir, type DiskCacheStoreOptions } from './disk.js';
