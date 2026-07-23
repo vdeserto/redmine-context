@@ -16,3 +16,9 @@ export {
 export { getOrCompute } from './get-or-compute.js';
 export { InMemoryCacheStore } from './memory.js';
 export { DiskCacheStore, defaultCacheDir, type DiskCacheStoreOptions } from './disk.js';
+export {
+  buildAttachmentKey,
+  deriveAttachmentDigest,
+  type BuildAttachmentKeyInput,
+  type ExtractorConfig,
+} from './keys.js';
