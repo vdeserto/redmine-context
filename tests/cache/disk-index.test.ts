@@ -254,3 +254,32 @@ describe('DiskCacheStore índice: invalidate e contagem de GC', () => {
     expect(calls.at(-1)).toEqual({ reason: 'put', entryCount: 1 });
   });
 });
+
+describe('DiskCacheStore índice: reconciliação de órfãos (fix review #135)', () => {
+  it('arquivo órfão (crash entre rename e recordPut) entra no índice no gc()', async () => {
+    const cacheDir = freshCacheDir();
+    const warn = vi.fn();
+    const store = new DiskCacheStore<string>({ cacheDir, logger: { warn } });
+    const keyA = contractKeys.attachment({ instanceHash: INSTANCE, attachmentId: 1 });
+    const keyB = contractKeys.attachment({ instanceHash: INSTANCE, attachmentId: 2 });
+    await store.put(keyA, 'a');
+    await store.put(keyB, 'b');
+
+    // Simula o crash: remove SÓ a entrada de keyB do índice válido em disco.
+    const indexPath = join(cacheDir, INSTANCE, 'index.json');
+    const parsed = JSON.parse(readFileSync(indexPath, 'utf8')) as IndexFileShape;
+    const recordB = Object.entries(parsed.entries).find(
+      ([, e]) => e.key === serializeCacheKey(keyB),
+    )?.[0] as string;
+    delete parsed.entries[recordB];
+    writeFileSync(indexPath, JSON.stringify(parsed), 'utf8');
+
+    // Novo processo: índice VÁLIDO porém incompleto — só o gc reconcilia.
+    const reopened = new DiskCacheStore<string>({ cacheDir, logger: { warn } });
+    expect(await reopened.get(keyA)).toBe('a');
+    await reopened.gc();
+
+    expect(entriesOf(cacheDir, INSTANCE)).toHaveLength(2);
+    expect(warn).toHaveBeenCalled();
+  });
+});

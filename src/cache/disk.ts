@@ -177,9 +177,27 @@ export class DiskCacheStore<V = unknown> implements CacheStore<V> {
 
   /** @inheritdoc */
   async gc(): Promise<void> {
-    // Flush do buffer de last_accessed_at (M3-05.1) antes de observar o estado.
+    // Flush do buffer de last_accessed_at (M3-05.1) antes de observar o estado,
+    // e reconciliação de órfãos (crash entre rename e recordPut — review #135).
     await this.index.flushAll();
+    for (const instanceHash of await this.listInstanceDirs()) {
+      await this.index.reconcile(instanceHash);
+    }
     await this.runGc('manual');
+  }
+
+  /** Diretórios de instância existentes no disco (exclui `issues/`). */
+  private async listInstanceDirs(): Promise<string[]> {
+    let entries: Dirent[];
+    try {
+      entries = await readdir(this.root, { withFileTypes: true });
+    } catch (cause) {
+      if (isNotFound(cause)) {
+        return [];
+      }
+      throw cause;
+    }
+    return entries.filter((e) => e.isDirectory() && e.name !== ISSUES_DIR).map((e) => e.name);
   }
 
   /**

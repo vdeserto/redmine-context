@@ -124,6 +124,29 @@ export class DiskCacheIndex {
     }
   }
 
+  /**
+   * Reconcilia o índice de uma instância com o DISCO: adiciona entradas para
+   * arquivos órfãos (crash entre o rename do valor e o recordPut — review
+   * #135) sem tocar nas entradas já conhecidas. Chamado pelo gc().
+   */
+  async reconcile(instanceHash: string): Promise<void> {
+    const index = await this.load(instanceHash);
+    const before = index.entries.size;
+    const scanned: InstanceIndex = { entries: new Map(), pendingAccess: new Map(), loaded: true };
+    await this.rebuild(instanceHash, scanned);
+    for (const [recordKey, entry] of scanned.entries) {
+      if (!index.entries.has(recordKey)) {
+        index.entries.set(recordKey, entry);
+      }
+    }
+    if (index.entries.size !== before) {
+      this.logger.warn(
+        `cache: ${index.entries.size - before} entrada(s) órfã(s) reconciliada(s) em ${instanceHash}`,
+      );
+      await this.persist(instanceHash, index);
+    }
+  }
+
   /** Entradas atuais de uma instância (para o GC/LRU do #47). */
   async entriesOf(instanceHash: string): Promise<ReadonlyMap<string, CacheIndexEntry>> {
     const index = await this.load(instanceHash);
