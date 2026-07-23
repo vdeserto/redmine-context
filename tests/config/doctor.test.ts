@@ -12,7 +12,7 @@ import { diagnoseBinaries, tesseractInstallHint } from '../../src/config/doctor.
 
 describe('core: tesseractInstallHint — instrução por SO', () => {
   it('darwin: sugere brew', () => {
-    expect(tesseractInstallHint('darwin')).toContain('brew install tesseract');
+    expect(tesseractInstallHint('darwin')).toContain('brew install tesseract tesseract-lang');
   });
 
   it('linux: sugere apt e dnf', () => {

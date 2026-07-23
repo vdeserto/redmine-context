@@ -59,12 +59,13 @@ const WINDOWS_CONVENTIONAL_PATH = 'C:\\Program Files\\Tesseract-OCR';
  * @param platform - Plataforma alvo (`process.platform`).
  * @returns Comando/instrução de instalação adequado ao SO.
  * @example
- * tesseractInstallHint('darwin'); // 'brew install tesseract'
+ * tesseractInstallHint('darwin'); // 'brew install tesseract tesseract-lang'
  */
 export function tesseractInstallHint(platform: NodeJS.Platform): string {
   switch (platform) {
     case 'darwin':
-      return 'brew install tesseract';
+      // tesseract-lang traz o traineddata de 'por' (o default do projeto é por+eng).
+      return 'brew install tesseract tesseract-lang';
     case 'win32':
       return `winget install UB-Mannheim.TesseractOCR (ou instale em ${WINDOWS_CONVENTIONAL_PATH})`;
     default:
