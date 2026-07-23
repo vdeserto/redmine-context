@@ -7,6 +7,12 @@
  * injetáveis); esta tela só formata o "painel de status": uma linha por
  * item, `symbols.tick`/`symbols.cross` coloridos por `theme.success`/
  * `theme.danger`, rótulos em `theme.muted`.
+ *
+ * M2-16 (#39): `value` de cada `StatusRow` é truncado (`../truncate.js`) ao
+ * espaço restante do terminal — a instância (`REDMINE_URL`) é a candidata
+ * mais provável a estourar a largura, e a linha é um `<Box>` de 3 `<Text>`
+ * IRMÃS (ícone/rótulo/valor): sem truncar, um valor comprido sobrepõe as
+ * demais (o Ink não reflui `<Text>` irmãs; ver o JSDoc de `../truncate.ts`).
  */
 import { Box, Text, useInput } from 'ink';
 
@@ -15,9 +21,20 @@ import {
   type ConnectivityStatus,
   type DoctorStatus,
 } from '../hooks/use-doctor-status.js';
+import { useTerminalWidth } from '../hooks/use-terminal-width.js';
 import { useNavigation } from '../navigation.js';
 import { symbols } from '../symbols.js';
 import { useTheme, type Theme } from '../theme.js';
+import { truncate } from '../truncate.js';
+
+/** Largura mínima garantida ao valor de um `StatusRow`, mesmo em terminais muito estreitos. */
+const MIN_VALUE_WIDTH = 8;
+
+/** `paddingX={1}` dos dois lados do `Box` raiz da tela. */
+const SCREEN_PADDING_X = 2;
+
+/** Largura da coluna de ícone (`<Box width={2}>`, ver `StatusRow` abaixo). */
+const ICON_COLUMN_WIDTH = 2;
 
 /** Rótulo legível de cada fonte de credencial (nunca a api_key em si). */
 const CREDENTIAL_LABELS: Record<DoctorStatus['credentialMethod'], string> = {
@@ -31,12 +48,16 @@ const CREDENTIAL_LABELS: Record<DoctorStatus['credentialMethod'], string> = {
 /** Tom do símbolo/linha: `ok` (tick verde), `error` (cross vermelho) ou `neutral` (sem símbolo). */
 type RowTone = 'ok' | 'error' | 'neutral';
 
-/** Uma linha do painel: símbolo de status opcional + rótulo em muted + valor. */
+/** Uma linha do painel: símbolo de status opcional + rótulo em muted + valor truncado ao espaço disponível. */
 function StatusRow({ label, value, tone }: { label: string; value: string; tone: RowTone }) {
   const theme = useTheme();
+  const terminalWidth = useTerminalWidth();
+  // "label: " ocupa `label.length + 2` (": ") colunas antes do valor.
+  const overhead = ICON_COLUMN_WIDTH + label.length + 2 + SCREEN_PADDING_X;
+  const valueBudget = Math.max(terminalWidth - overhead, MIN_VALUE_WIDTH);
   return (
     <Box>
-      <Box width={2}>
+      <Box width={ICON_COLUMN_WIDTH}>
         {tone === 'ok' ? (
           <Text color={theme.success}>{symbols.tick}</Text>
         ) : tone === 'error' ? (
@@ -44,7 +65,7 @@ function StatusRow({ label, value, tone }: { label: string; value: string; tone:
         ) : null}
       </Box>
       <Text color={theme.muted}>{label}: </Text>
-      <Text>{value}</Text>
+      <Text>{truncate(value, valueBudget)}</Text>
     </Box>
   );
 }

@@ -28,6 +28,13 @@
  * empilhar `issue-detail`, então seleção (`selectedIndex` + issue escolhida)
  * vive num contexto acima da pilha (padrão do `OnboardingProvider`) — ver o
  * JSDoc de `./home-selection.js`.
+ *
+ * M2-16 (#39): o subject de cada linha é truncado (`../truncate.js`) com um
+ * orçamento de largura CALCULADO por linha (`../hooks/use-terminal-width.js`
+ * menos o espaço fixo de ponteiro/`#id`/badge de status, ver
+ * `fixedRowOverhead` abaixo) — sem isso, um subject comprido sobrepõe o badge
+ * de status da mesma linha em terminais estreitos (o Ink não reflui `<Text>`
+ * IRMÃS dentro de um `<Box>` em linha; ver o JSDoc de `../truncate.ts`).
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Box, Text, useInput } from 'ink';
@@ -38,14 +45,19 @@ import { useEscapeInterceptor } from '../hooks/use-escape-interceptor.js';
 import { useIssueSearch, type SearchStatusFilter } from '../hooks/use-issue-search.js';
 import { useListNavigation } from '../hooks/use-list-navigation.js';
 import { useMyIssues, type MyIssue } from '../hooks/use-my-issues.js';
+import { useTerminalWidth } from '../hooks/use-terminal-width.js';
 import { useNavigation } from '../navigation.js';
 import { statusColor } from '../status-color.js';
 import { symbols } from '../symbols.js';
 import { useTheme } from '../theme.js';
+import { truncate } from '../truncate.js';
 import { useHomeSelection } from './home-selection.js';
 
-/** Tamanho máximo do subject antes de truncar com reticências. */
-const SUBJECT_MAX_LENGTH = 60;
+/** Largura mínima garantida ao subject, mesmo em terminais muito estreitos. */
+const MIN_SUBJECT_WIDTH = 8;
+
+/** `paddingX={1}` dos dois lados do `Box` raiz da tela (ver o JSX abaixo). */
+const SCREEN_PADDING_X = 2;
 
 // Nit do review #120: referência ESTÁVEL para os estados sem lista — um
 // literal `[]` inline em cada render seria recriado a cada chamada,
@@ -66,19 +78,31 @@ function nextStatusFilter(current: SearchStatusFilter): SearchStatusFilter {
   return 'open';
 }
 
-/** Trunca `text` em `max` caracteres, com reticências (`…`) quando corta. */
-function truncate(text: string, max: number): string {
-  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+/**
+ * Espaço fixo ocupado pela linha FORA do subject (M2-16, #39): ponteiro (2),
+ * `#id ` (id + `#`/espaço), 1 espaço final após o subject, `[status]`
+ * (colchetes + nome) e o `paddingX` da tela. O que sobrar da largura do
+ * terminal é o orçamento do subject.
+ */
+function fixedRowOverhead(idLength: number, statusLength: number): number {
+  const POINTER_WIDTH = 2;
+  const ID_PREFIX_WIDTH = 1 + idLength + 1; // "#" + dígitos + espaço
+  const SUBJECT_TRAILING_SPACE = 1;
+  const STATUS_BRACKETS_WIDTH = 2 + statusLength; // "[" + nome + "]"
+  return POINTER_WIDTH + ID_PREFIX_WIDTH + SUBJECT_TRAILING_SPACE + STATUS_BRACKETS_WIDTH + SCREEN_PADDING_X;
 }
 
-/** Uma linha da lista: `#id` em `theme.muted`, subject truncado, badge de status. */
+/** Uma linha da lista: `#id` em `theme.muted`, subject truncado ao orçamento de largura, badge de status. */
 function IssueRow({ issue, selected }: { issue: MyIssue; selected: boolean }) {
   const theme = useTheme();
+  const terminalWidth = useTerminalWidth();
+  const overhead = fixedRowOverhead(String(issue.id).length, issue.statusName.length);
+  const subjectBudget = Math.max(terminalWidth - overhead, MIN_SUBJECT_WIDTH);
   return (
     <Box>
       <Text color={theme.primary}>{selected ? `${symbols.pointerSmall} ` : '  '}</Text>
       <Text color={theme.muted}>#{issue.id} </Text>
-      <Text bold={selected}>{truncate(issue.subject, SUBJECT_MAX_LENGTH)} </Text>
+      <Text bold={selected}>{truncate(issue.subject, subjectBudget)} </Text>
       <Text color={statusColor(theme, issue.statusName)}>[{issue.statusName}]</Text>
     </Box>
   );

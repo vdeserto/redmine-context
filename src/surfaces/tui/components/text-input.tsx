@@ -16,11 +16,22 @@
  * Ink não tem noção de foco, então cada `TextInput` "inativo" precisa
  * ignorar o teclado, senão a mesma tecla digitaria nos dois campos ao mesmo
  * tempo.
+ *
+ * `maxWidth` (M2-16, #39, opcional) trunca o TEXTO EXIBIDO (nunca o `value`
+ * de verdade, que segue completo para `onChange`/`onSubmit`) quando este
+ * campo divide uma linha com outro elemento (ex.: um rótulo, ver
+ * `../screens/export.tsx`) — sem isso, um valor comprido (ex.: um caminho de
+ * destino) sobrepõe o rótulo vizinho (o Ink não reflui `<Text>` IRMÃS dentro
+ * de um `<Box>` em linha; ver o JSDoc de `../truncate.ts`). O corte é a
+ * partir do INÍCIO (`truncateStart`) — o usuário digita/edita no FIM da
+ * string (ver o JSDoc do módulo acima), então é o fim que precisa continuar
+ * visível.
  */
 import { useCallback, useRef } from 'react';
 import { Text, useInput } from 'ink';
 
 import { useTheme } from '../theme.js';
+import { truncate, truncateStart } from '../truncate.js';
 
 /** Props do `TextInput` — ver guideline de uso na documentação do arquivo. */
 export interface TextInputProps {
@@ -51,6 +62,12 @@ export interface TextInputProps {
    * também vire texto digitado. Default: nenhum caractere reservado.
    */
   reservedChars?: readonly string[];
+  /**
+   * Largura máxima (colunas) do texto EXIBIDO — trunca `value`/`placeholder`
+   * quando excedida (ver o JSDoc do módulo). Omitido: sem truncamento (uso
+   * padrão, campo sozinho na própria linha).
+   */
+  maxWidth?: number;
 }
 
 /**
@@ -69,6 +86,7 @@ export function TextInput({
   placeholder,
   isActive = true,
   reservedChars = [],
+  maxWidth,
 }: TextInputProps) {
   const theme = useTheme();
 
@@ -134,21 +152,28 @@ export function TextInput({
   // conta como cor hardcoded) só quando o campo está ativo, reforçando
   // visualmente qual campo recebe o próximo caractere digitado.
   const cursor = isActive ? <Text inverse> </Text> : null;
+  // Reserva 1 coluna para o cursor quando ativo — sem isso, o texto truncado
+  // + cursor poderia exceder `maxWidth` por 1 caractere.
+  const budget = maxWidth !== undefined ? Math.max(maxWidth - (isActive ? 1 : 0), 1) : undefined;
 
   if (value.length === 0 && placeholder !== undefined) {
+    const shownPlaceholder = budget !== undefined ? truncate(placeholder, budget) : placeholder;
     return (
       <Text>
-        <Text color={theme.muted}>{placeholder}</Text>
+        <Text color={theme.muted}>{shownPlaceholder}</Text>
         {cursor}
       </Text>
     );
   }
 
   const displayValue = mask !== undefined ? mask.repeat(value.length) : value;
+  // truncateStart (não truncate): o usuário edita no FIM da string — é o
+  // fim que precisa continuar visível, ver o JSDoc do módulo.
+  const shownValue = budget !== undefined ? truncateStart(displayValue, budget) : displayValue;
 
   return (
     <Text>
-      {displayValue}
+      {shownValue}
       {cursor}
     </Text>
   );

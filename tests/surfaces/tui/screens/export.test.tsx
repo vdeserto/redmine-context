@@ -6,7 +6,7 @@
  * aqui — esta suíte cobre só a interação da tela (foco entre formato/destino,
  * confirmação, e a formatação dos 4 estados visuais).
  */
-import { render } from 'ink-testing-library';
+import { cleanup, render } from 'ink-testing-library';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../../../../src/surfaces/tui/hooks/use-export-bundle.js', async (importOriginal) => {
@@ -102,6 +102,12 @@ function renderExport(nav: NavigationValue = navMock()) {
 }
 
 afterEach(() => {
+  // Reason (M2-16, #39): a tela agora usa `useTerminalWidth()`, que assina o
+  // `resize` do `process.stdout` real — sem desmontar cada instância do Ink,
+  // o listener sobrevive entre testes e acumula (`MaxListenersExceededWarning`
+  // no `process.stdout`, um `EventEmitter` global compartilhado por toda a
+  // suíte). Mesmo padrão já usado em `home.test.tsx`/`app.test.tsx`.
+  cleanup();
   vi.mocked(useExportBundleModule.useExportBundle).mockReset();
   vi.mocked(loadedIssueModule.useLoadedIssue).mockReset();
 });
