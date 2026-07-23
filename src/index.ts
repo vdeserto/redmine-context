@@ -53,6 +53,21 @@ export { getIssue } from './client/index.js';
 // sem serializar para Markdown/JSON).
 export { normalizeIssue } from './normalize/index.js';
 
+// Empacotamento Markdown/JSON direto (M1-09/M1-10) — usado por
+// `fetchIssueBundle` internamente e, desde a #33, também diretamente pela
+// tela de exportação da TUI: a issue já está normalizada em memória (`./use-issue-detail.js`,
+// #31), então gravar o bundle não precisa refazer a busca+normalização via
+// `fetchIssueBundle` — só empacotar o que já foi carregado.
+export {
+  buildMarkdownBundle,
+  buildJsonBundle,
+  type MarkdownBundleMeta,
+  type JsonBundle,
+  type JsonBundleEnvelope,
+  type JsonBundleMeta,
+  type JsonBundleSource,
+} from './bundle/index.js';
+
 // Erros HTTP tipados — usados pelas superfícies para mapear exit codes (ADR-005).
 export {
   RedmineHttpError,

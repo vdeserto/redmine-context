@@ -13,6 +13,7 @@ import type { ComponentType } from 'react';
 import { AboutScreen } from './screens/about.js';
 import { ConfigScreen } from './screens/config.js';
 import { DoctorScreen } from './screens/doctor.js';
+import { ExportScreen } from './screens/export.js';
 import { HomeScreen } from './screens/home.js';
 import { IssueDetailScreen } from './screens/issue-detail.js';
 import { OnboardingApiKeyScreen } from './screens/onboarding/api-key.js';
@@ -32,6 +33,7 @@ export type ScreenName =
   | 'config'
   | 'home'
   | 'issue-detail'
+  | 'export'
   | 'onboarding-url'
   | 'onboarding-mode'
   | 'onboarding-login'
@@ -64,6 +66,7 @@ export const SCREENS: Record<ScreenName, ScreenEntry> = {
   config: { component: ConfigScreen, title: 'Configuração' },
   home: { component: HomeScreen, title: 'Minhas issues' },
   'issue-detail': { component: IssueDetailScreen, title: 'Detalhe da issue' },
+  export: { component: ExportScreen, title: 'Exportar' },
   'onboarding-url': { component: OnboardingUrlScreen, title: `Onboarding ${symbols.pointerSmall} URL` },
   'onboarding-mode': { component: OnboardingModeScreen, title: `Onboarding ${symbols.pointerSmall} Modo` },
   'onboarding-login': { component: OnboardingLoginScreen, title: `Onboarding ${symbols.pointerSmall} Login` },
