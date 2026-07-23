@@ -12,18 +12,57 @@
  * `hooks/use-exit-guard.ts`), `/` está reservado para a busca (M2-07) —
  * registrado aqui como no-op para não ser usado por engano por outra tela
  * antes da tela de busca existir.
+ *
+ * Fix do review do PR #119: `Esc` numa tela `onboarding-*` enquanto um
+ * re-auth (M2-13, #36) está em andamento (`OnboardingContext.reAuth`) passa
+ * a significar ABANDONO explícito do re-login, em vez do `pop()` simples de
+ * sempre — sem isso, a `Promise` do `guard()` original
+ * (`hooks/use-auth-guard.ts`) ficaria pendurada para sempre. Nesse caso:
+ * `abortReAuth()` rejeita as pendências com `ReAuthAbortedError` e a
+ * navegação volta direto para a tela de ORIGEM do 401 (`popTo`,
+ * `navigation.tsx`) em vez de só desempilhar uma tela por vez.
  */
 import { useCallback, useRef } from 'react';
 import { Box, Text, useApp, useInput } from 'ink';
 
 import { Breadcrumb } from './components/breadcrumb.js';
+import { ReAuthAbortedError } from './hooks/use-auth-guard.js';
 import { useExitGuard } from './hooks/use-exit-guard.js';
 import { useOnboardingCallbacks } from './hooks/use-onboarding-callbacks.js';
 import { NavigationProvider, useNavigation, useNavigationStack } from './navigation.js';
-import { OnboardingProvider } from './screens/onboarding/onboarding-context.js';
-import { INITIAL_SCREEN, SCREENS } from './screen.js';
+import {
+  OnboardingProvider,
+  useOnboarding,
+  type OnboardingReAuth,
+} from './screens/onboarding/onboarding-context.js';
+import { INITIAL_SCREEN, SCREENS, type ScreenName } from './screen.js';
 import { symbols } from './symbols.js';
 import { ThemeProvider, useTheme } from './theme.js';
+
+/**
+ * O que `Esc` deve fazer dado o estado atual — extraída como função pura
+ * (fix do review #119) para poder ser testada isoladamente
+ * (`tests/surfaces/tui/app.test.tsx`) sem precisar montar toda a árvore do
+ * Ink nem depender de uma tela de dados real (#29+) para chegar no estado de
+ * re-auth ativo.
+ */
+export type EscapeAction = { kind: 'abort-reauth'; origin: ScreenName } | { kind: 'pop' };
+
+/**
+ * Decide a ação de `Esc`: abandono do re-auth (fix do review #119) quando a
+ * tela atual é do fluxo de onboarding (`onboarding-*`) E há um `reAuth` em
+ * andamento; `pop()` simples em qualquer outro caso (comportamento original,
+ * M2-04).
+ */
+export function resolveEscapeAction(
+  current: ScreenName,
+  reAuth: OnboardingReAuth | undefined,
+): EscapeAction {
+  if (reAuth !== undefined && current.startsWith('onboarding-')) {
+    return { kind: 'abort-reauth', origin: reAuth.origin };
+  }
+  return { kind: 'pop' };
+}
 
 /**
  * App raiz da TUI: só monta os providers (tema, pilha de navegação,
@@ -54,7 +93,8 @@ export function App() {
  */
 function AppShell() {
   const { exit } = useApp();
-  const { current, pop, stack } = useNavigation();
+  const { current, pop, popTo, stack } = useNavigation();
+  const { reAuth, abortReAuth } = useOnboarding();
   const theme = useTheme();
   const { armed } = useExitGuard(exit);
 
@@ -66,6 +106,14 @@ function AppShell() {
   exitRef.current = exit;
   const popRef = useRef(pop);
   popRef.current = pop;
+  const popToRef = useRef(popTo);
+  popToRef.current = popTo;
+  const currentRef = useRef(current);
+  currentRef.current = current;
+  const reAuthRef = useRef(reAuth);
+  reAuthRef.current = reAuth;
+  const abortReAuthRef = useRef(abortReAuth);
+  abortReAuthRef.current = abortReAuth;
   const handleGlobalInput = useCallback((input: string, key: { escape: boolean }) => {
     if (input === 'q') {
       exitRef.current();
@@ -73,6 +121,16 @@ function AppShell() {
     }
 
     if (key.escape) {
+      // Fix do review #119: Esc numa tela de onboarding com um re-auth ativo
+      // é ABANDONO explícito — aborta as pendências (rejeita o(s) `guard()`
+      // original(is) com `ReAuthAbortedError`) e volta direto à tela de
+      // origem do 401, em vez do `pop()` simples de sempre.
+      const action = resolveEscapeAction(currentRef.current, reAuthRef.current);
+      if (action.kind === 'abort-reauth') {
+        abortReAuthRef.current(new ReAuthAbortedError());
+        popToRef.current(action.origin);
+        return;
+      }
       popRef.current();
       return;
     }

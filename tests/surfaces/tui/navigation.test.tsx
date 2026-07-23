@@ -130,13 +130,14 @@ describe('TUI: popTo — retomada de navegação após um fluxo empilhado (M2-13
     await vi.waitFor(() => expect(lastFrame()).toBe('welcome'));
   });
 
-  it('não faz nada se target não estiver na pilha', async () => {
+  it('cai no fallback de resetTo(target) se target não estiver na pilha (fix review #119)', async () => {
     const { lastFrame, stdin } = render(<StackHarness />);
     stdin.write('a');
     await vi.waitFor(() => expect(lastFrame()).toBe('welcome>about'));
     stdin.write('d'); // popTo('doctor') — não está na pilha
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(lastFrame()).toBe('welcome>about');
+    // Antes do fix: no-op silencioso (pilha inalterada, usuário preso).
+    // Depois do fix: equivalente a resetTo('doctor') — zera a pilha para o alvo.
+    await vi.waitFor(() => expect(lastFrame()).toBe('doctor'));
   });
 
   it('target já no topo é um no-op (nada é removido)', () => {

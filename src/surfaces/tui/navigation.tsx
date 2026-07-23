@@ -45,7 +45,12 @@ export interface NavigationValue {
    * empilhado sobre a tela de dados que recebeu um 401; ao logar de novo,
    * `popTo(origin)` desfaz esse empilhamento de uma vez, mesmo que o login
    * tenha passado por telas intermediárias como `onboarding-api-key`).
-   * Sem efeito se `target` não estiver na pilha (mantém a pilha como está).
+   *
+   * Fix do review #119: se `target` não estiver na pilha (ex.: abandono do
+   * re-auth via Esc, `../app.tsx`, numa sessão onde a origem já não é mais
+   * alcançável), cai em {@link resetTo} — zera a pilha para `target` — em
+   * vez de silenciosamente não fazer nada (o que deixaria o usuário preso
+   * numa tela de onboarding sem saída visível).
    */
   popTo(target: ScreenName): void;
 }
@@ -109,11 +114,16 @@ export function useNavigationStack(initial: ScreenName): NavigationValue {
   // Corta a pilha logo após a última ocorrência de `target` — equivalente a
   // chamar `pop()` repetidamente até `target` virar o topo, mas em uma única
   // atualização de estado (evita re-renders intermediários).
+  //
+  // Fix do review #119: quando `target` NÃO está na pilha, o comportamento
+  // passa a ser o mesmo de `resetTo(target)` (zera a pilha para uma única
+  // tela) em vez de um no-op silencioso — evita deixar o usuário preso numa
+  // tela sem rota de volta visível (ex.: abandono do re-auth, `../app.tsx`).
   const popTo = useCallback((target: ScreenName) => {
     setStack((current) => {
       const index = current.lastIndexOf(target);
       if (index === -1) {
-        return current;
+        return [target];
       }
       return current.slice(0, index + 1);
     });

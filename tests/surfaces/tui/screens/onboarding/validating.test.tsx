@@ -20,11 +20,11 @@ function render(tree: Parameters<typeof inkRender>[0]): ReturnType<typeof inkRen
 }
 
 import { NavigationProvider, useNavigationStack } from '../../../../../src/surfaces/tui/navigation.js';
+import type { ScreenName } from '../../../../../src/surfaces/tui/screen.js';
 import {
   OnboardingProvider,
   useOnboarding,
   type OnboardingLoginOutcome,
-  type OnboardingReAuth,
 } from '../../../../../src/surfaces/tui/screens/onboarding/onboarding-context.js';
 import { OnboardingValidatingScreen } from '../../../../../src/surfaces/tui/screens/onboarding/validating.js';
 import { ThemeProvider } from '../../../../../src/surfaces/tui/theme.js';
@@ -64,9 +64,11 @@ function ValidatingHarness({ outcome }: { outcome: Promise<OnboardingLoginOutcom
 }
 
 /** Dispara `beginReAuth` assim que monta — simula o que `use-auth-guard.ts` já fez antes desta tela existir. */
-function BeginReAuth({ reAuth }: { reAuth: OnboardingReAuth }) {
+function BeginReAuth({ origin, retry }: { origin: ScreenName; retry: () => void }) {
   const { beginReAuth } = useOnboarding();
-  useEffect(() => beginReAuth(reAuth), []);
+  useEffect(() => {
+    beginReAuth(origin, { retry, reject: () => undefined });
+  }, []);
   return null;
 }
 
@@ -100,7 +102,7 @@ function ReAuthValidatingHarness({
             onApiKeySubmit: () => Promise.resolve({ kind: 'network-error', message: 'unused' }),
           }}
         >
-          <BeginReAuth reAuth={{ origin: 'about', retry }} />
+          <BeginReAuth origin="about" retry={retry} />
           <SetPending outcome={outcome} />
           <Text>stack:{navigation.stack.join('>')}</Text>
           <OnboardingValidatingScreen />

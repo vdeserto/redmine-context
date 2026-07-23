@@ -15,15 +15,26 @@
  * o provider com os callbacks reais é `../../app.tsx`.
  *
  * M2-13 (issue #36) acrescenta o MODO RE-AUTH (`reAuth`/`beginReAuth`/
- * `resolveReAuth`): quando uma tela de dados (#29+) recebe um 401
- * (`RedmineAuthError`) numa chamada ao core, ela usa `../../hooks/use-auth-guard.ts`
- * para empilhar `onboarding-login` de novo, reaproveitando este mesmo fluxo
- * de login para o usuário reautenticar sem perder o que estava fazendo — ver
- * o JSDoc de `useAuthGuard` para o contrato completo consumido pelas telas de
- * dados, e `validating.tsx`/`api-key.tsx` para onde o sucesso do re-login é
- * detectado e a operação original retomada.
+ * `resolveReAuth`/`abortReAuth`): quando uma tela de dados (#29+) recebe um
+ * 401 (`RedmineAuthError`) numa chamada ao core, ela usa
+ * `../../hooks/use-auth-guard.ts` para empilhar `onboarding-login` de novo,
+ * reaproveitando este mesmo fluxo de login para o usuário reautenticar sem
+ * perder o que estava fazendo — ver o JSDoc de `useAuthGuard` para o
+ * contrato completo consumido pelas telas de dados, e `validating.tsx`/
+ * `api-key.tsx` para onde o sucesso do re-login é detectado e a operação
+ * original retomada.
+ *
+ * Fix do review do PR #119: dois 401 concorrentes (duas telas de dados, ou
+ * a mesma tela com duas chamadas em voo) podem cair em re-auth ao mesmo
+ * tempo — em vez de o segundo `beginReAuth` sobrescrever silenciosamente o
+ * primeiro (perdendo seu retry/reject para sempre), `reAuth` agora acumula
+ * uma LISTA de pendências (`pending`); uma única passagem de login bem
+ * sucedida atende todas elas (`resolveReAuth`). Esc durante o re-login
+ * (`../../app.tsx`) agora também tem uma saída explícita: `abortReAuth`
+ * rejeita todas as pendências em vez de deixar a(s) `Promise`(s) do
+ * `guard()` penduradas para sempre.
  */
-import { createContext, useCallback, useContext, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useRef, useState, type ReactNode } from 'react';
 
 import type { ScreenName } from '../../screen.js';
 
@@ -60,23 +71,49 @@ export type OnboardingLoginOutcome =
   | { kind: 'network-error'; message: string };
 
 /**
- * Estado de um fluxo de re-autenticação em andamento (M2-13, issue #36) —
- * criado por `useAuthGuard` (`../../hooks/use-auth-guard.ts`) ao capturar um
- * `RedmineAuthError` (401) numa operação de uma tela de dados (#29+).
+ * Uma pendência individual de re-auth (fix do review #119) — um par
+ * retry/reject correspondente a UMA chamada de `guard()`
+ * (`../../hooks/use-auth-guard.ts`) que recebeu 401. `OnboardingReAuth`
+ * acumula uma lista destas: com dois 401 concorrentes, ambas as pendências
+ * são atendidas por uma única passagem de login (`resolveReAuth`) ou
+ * canceladas juntas (`abortReAuth`).
  */
-export interface OnboardingReAuth {
-  /**
-   * Tela que estava ativa quando o 401 aconteceu — a navegação volta para
-   * ela (`popTo`, `../../navigation.tsx`) assim que o re-login for concluído
-   * com sucesso.
-   */
-  origin: ScreenName;
+export interface OnboardingReAuthPending {
   /**
    * Reexecuta a operação original que falhou com 401. Chamado automaticamente
    * por `resolveReAuth()` quando o login é refeito com sucesso — nenhuma tela
    * precisa chamá-lo diretamente.
    */
   retry: () => void;
+  /**
+   * Rejeita a `Promise` de `guard()` correspondente a esta pendência com o
+   * motivo do abandono (tipicamente `ReAuthAbortedError`,
+   * `../../hooks/use-auth-guard.ts`). Chamado automaticamente por
+   * `abortReAuth()` — nenhuma tela precisa chamá-lo diretamente.
+   */
+  reject: (reason: Error) => void;
+}
+
+/**
+ * Estado de um fluxo de re-autenticação em andamento (M2-13, issue #36) —
+ * criado por `useAuthGuard` (`../../hooks/use-auth-guard.ts`) ao capturar um
+ * `RedmineAuthError` (401) numa operação de uma tela de dados (#29+).
+ */
+export interface OnboardingReAuth {
+  /**
+   * Tela que estava ativa quando o PRIMEIRO 401 deste ciclo aconteceu — a
+   * navegação volta para ela (`popTo`, `../../navigation.tsx`) assim que o
+   * re-login for concluído (com sucesso) ou abandonado (Esc). Pendências
+   * subsequentes (401 concorrentes) reaproveitam esta mesma origem — a TUI
+   * só sustenta uma tela de dados ativa por vez, então não há origem
+   * divergente de fato.
+   */
+  origin: ScreenName;
+  /**
+   * Todas as pendências acumuladas desde que o modo re-auth foi ativado
+   * (fix do review #119) — ver {@link OnboardingReAuthPending}.
+   */
+  pending: readonly OnboardingReAuthPending[];
 }
 
 /** Callbacks de submissão injetáveis — todos no-op por padrão (wiring real na #28, ver topo do arquivo). */
@@ -131,20 +168,38 @@ export interface OnboardingValue {
    */
   reAuth: OnboardingReAuth | undefined;
   /**
-   * Inicia o modo re-auth — chamado por `useAuthGuard()`
+   * Inicia (ou ADICIONA a) o modo re-auth — chamado por `useAuthGuard()`
    * (`../../hooks/use-auth-guard.ts`), nunca diretamente pelas telas.
-   * Um novo `beginReAuth` sobrescreve um `reAuth` anterior ainda não resolvido
-   * (a TUI só sustenta uma tela de dados ativa por vez, então não há disputa
-   * real entre dois fluxos de re-auth simultâneos).
+   *
+   * Fix do review #119: se já houver um `reAuth` ativo (401 concorrente),
+   * `pending` é apenas ACRESCENTADO à lista existente — a `origin` recebida
+   * aqui é ignorada nesse caso (a origem do ciclo já foi fixada na primeira
+   * chamada) — uma única passagem de login atende todas as pendências.
+   * Senão, ativa o modo com `origin` e uma lista iniciada só com `pending`.
+   *
+   * @returns `true` se este chamado ATIVOU o modo re-auth (nenhum estava em
+   *   andamento antes) — o chamador (`useAuthGuard`) usa isso para decidir
+   *   se deve empilhar `onboarding-login` (só na primeira vez; pendências
+   *   subsequentes reaproveitam a tela já empilhada).
    */
-  beginReAuth: (reAuth: OnboardingReAuth) => void;
+  beginReAuth: (origin: ScreenName, pending: OnboardingReAuthPending) => boolean;
   /**
-   * Encerra o modo re-auth: dispara `reAuth.retry()` (retoma a operação
-   * original) e limpa o estado. Chamado por `validating.tsx`/`api-key.tsx`
+   * Encerra o modo re-auth com SUCESSO: dispara `retry()` de TODAS as
+   * pendências acumuladas (fix do review #119 — antes só a mais recente era
+   * atendida) e limpa o estado. Chamado por `validating.tsx`/`api-key.tsx`
    * quando o re-login resolve com `{ kind: 'success' }` enquanto `reAuth`
    * está definido. No-op se não houver `reAuth` em andamento.
    */
   resolveReAuth: () => void;
+  /**
+   * Encerra o modo re-auth com ABANDONO (fix do review #119 — Esc durante o
+   * re-login, ver `../../app.tsx`): rejeita TODAS as pendências acumuladas
+   * com `reason` (tipicamente `ReAuthAbortedError`,
+   * `../../hooks/use-auth-guard.ts`) e limpa o estado — sem isso, a(s)
+   * `Promise`(s) de `guard()` ficariam penduradas para sempre. No-op se não
+   * houver `reAuth` em andamento.
+   */
+  abortReAuth: (reason: Error) => void;
 }
 
 /** Callbacks padrão: no-op — usados quando `<OnboardingProvider>` não recebe `callbacks`. */
@@ -181,16 +236,47 @@ export function OnboardingProvider({ callbacks = NOOP_CALLBACKS, children }: Onb
   const [user, setUser] = useState<OnboardingUser | undefined>(undefined);
   const [reAuth, setReAuth] = useState<OnboardingReAuth | undefined>(undefined);
 
+  // Ref espelhando `reAuth` (fix do review #119): `beginReAuth` precisa
+  // decidir SINCRONAMENTE (para devolver o `boolean` de ativação ao
+  // chamador) se já existe um ciclo em andamento, mas o setter funcional do
+  // `useState` só executa o callback no próximo render — não dá pra
+  // confiar nele para essa decisão. A ref é a única fonte de verdade
+  // síncrona; `setReAuth` continua sendo chamado em paralelo só para
+  // provocar o re-render de quem lê `reAuth` do contexto.
+  const reAuthRef = useRef<OnboardingReAuth | undefined>(undefined);
+
   // Handlers estáveis (useCallback) — mesmo padrão dos demais hooks da TUI
   // (ver `../../hooks/use-exit-guard.ts`): identidade fixa evita
   // re-subscrições desnecessárias em quem os usa como dependência de efeito.
-  const beginReAuth = useCallback((next: OnboardingReAuth) => {
+  const beginReAuth = useCallback((origin: ScreenName, pending: OnboardingReAuthPending): boolean => {
+    const current = reAuthRef.current;
+    if (current !== undefined) {
+      // Já em andamento (401 concorrente) — apenas acrescenta à lista,
+      // mantendo a origem original.
+      const next: OnboardingReAuth = { origin: current.origin, pending: [...current.pending, pending] };
+      reAuthRef.current = next;
+      setReAuth(next);
+      return false;
+    }
+    const next: OnboardingReAuth = { origin, pending: [pending] };
+    reAuthRef.current = next;
     setReAuth(next);
+    return true;
   }, []);
   const resolveReAuth = useCallback(() => {
-    setReAuth((current) => {
-      current?.retry();
-      return undefined;
+    const current = reAuthRef.current;
+    reAuthRef.current = undefined;
+    setReAuth(undefined);
+    current?.pending.forEach((item) => {
+      item.retry();
+    });
+  }, []);
+  const abortReAuth = useCallback((reason: Error) => {
+    const current = reAuthRef.current;
+    reAuthRef.current = undefined;
+    setReAuth(undefined);
+    current?.pending.forEach((item) => {
+      item.reject(reason);
     });
   }, []);
 
@@ -207,6 +293,7 @@ export function OnboardingProvider({ callbacks = NOOP_CALLBACKS, children }: Onb
     reAuth,
     beginReAuth,
     resolveReAuth,
+    abortReAuth,
   };
 
   return <OnboardingContext.Provider value={value}>{children}</OnboardingContext.Provider>;

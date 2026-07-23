@@ -179,13 +179,31 @@ describe('TUI: useOnboarding — pendingLogin/user (#28)', () => {
   });
 });
 
+/**
+ * Guarda o resultado do último `beginReAuth()` chamado por
+ * `ActivationHarness` — módulo-level porque o valor é lido de fora do
+ * componente, depois do `stdin.write` (sem depender de re-render/frame).
+ */
+let lastActivation: boolean | undefined;
+
+/** Harness: chama `beginReAuth` e guarda o `boolean` de ativação devolvido. */
+function ActivationHarness() {
+  const { beginReAuth } = useOnboarding();
+  useInput((input) => {
+    if (input === 'b') {
+      lastActivation = beginReAuth('about', { retry: () => undefined, reject: () => undefined });
+    }
+  });
+  return null;
+}
+
 describe('TUI: useOnboarding — reAuth/beginReAuth/resolveReAuth (M2-13, #36)', () => {
   /** Harness: expõe `reAuth` como texto e mapeia teclas para begin/resolve. */
   function ReAuthHarness({ retry }: { retry: () => void }) {
     const { reAuth, beginReAuth, resolveReAuth } = useOnboarding();
     useInput((input) => {
       if (input === 'b') {
-        beginReAuth({ origin: 'about', retry });
+        beginReAuth('about', { retry, reject: () => undefined });
       }
       if (input === 'r') {
         resolveReAuth();
@@ -213,6 +231,17 @@ describe('TUI: useOnboarding — reAuth/beginReAuth/resolveReAuth (M2-13, #36)',
     await vi.waitFor(() => expect(lastFrame()).toBe('origin:about'));
   });
 
+  it('beginReAuth devolve true na primeira ativação', async () => {
+    lastActivation = undefined;
+    const { stdin } = render(
+      <OnboardingProvider>
+        <ActivationHarness />
+      </OnboardingProvider>,
+    );
+    stdin.write('b');
+    await vi.waitFor(() => expect(lastActivation).toBe(true));
+  });
+
   it('resolveReAuth dispara o retry guardado e limpa o reAuth', async () => {
     const retry = vi.fn();
     const { lastFrame, stdin } = render(
@@ -234,5 +263,80 @@ describe('TUI: useOnboarding — reAuth/beginReAuth/resolveReAuth (M2-13, #36)',
       </OnboardingProvider>,
     );
     expect(() => stdin.write('r')).not.toThrow();
+  });
+});
+
+describe('TUI: useOnboarding — pendências acumuladas em 401 concorrentes (fix review #119)', () => {
+  /** Harness: expõe quantas pendências foram atendidas/rejeitadas via begin/resolve/abort. */
+  function ConcurrentReAuthHarness() {
+    const { reAuth, beginReAuth, resolveReAuth, abortReAuth } = useOnboarding();
+    useInput((input) => {
+      if (input === '1') {
+        beginReAuth('about', { retry: () => resolvedCalls.push('retry-1'), reject: () => rejectedCalls.push('reject-1') });
+      }
+      if (input === '2') {
+        beginReAuth('config', { retry: () => resolvedCalls.push('retry-2'), reject: () => rejectedCalls.push('reject-2') });
+      }
+      if (input === 'r') {
+        resolveReAuth();
+      }
+      if (input === 'x') {
+        abortReAuth(new Error('abandonado'));
+      }
+    });
+    return <Text>{reAuth === undefined ? 'none' : `origin:${reAuth.origin}|pending:${reAuth.pending.length}`}</Text>;
+  }
+
+  let resolvedCalls: string[];
+  let rejectedCalls: string[];
+
+  it('duas pendências concorrentes: resolveReAuth atende AMBOS os retries com uma única passagem', async () => {
+    resolvedCalls = [];
+    rejectedCalls = [];
+    const { lastFrame, stdin } = render(
+      <OnboardingProvider>
+        <ConcurrentReAuthHarness />
+      </OnboardingProvider>,
+    );
+    stdin.write('1');
+    await vi.waitFor(() => expect(lastFrame()).toBe('origin:about|pending:1'));
+    // Segundo 401 concorrente — mantém a origem do primeiro, só acrescenta.
+    stdin.write('2');
+    await vi.waitFor(() => expect(lastFrame()).toBe('origin:about|pending:2'));
+
+    stdin.write('r');
+    await vi.waitFor(() => expect(lastFrame()).toBe('none'));
+    expect(resolvedCalls).toEqual(['retry-1', 'retry-2']);
+    expect(rejectedCalls).toEqual([]);
+  });
+
+  it('abortReAuth rejeita AMBAS as pendências e limpa o estado', async () => {
+    resolvedCalls = [];
+    rejectedCalls = [];
+    const { lastFrame, stdin } = render(
+      <OnboardingProvider>
+        <ConcurrentReAuthHarness />
+      </OnboardingProvider>,
+    );
+    stdin.write('1');
+    await vi.waitFor(() => expect(lastFrame()).toBe('origin:about|pending:1'));
+    stdin.write('2');
+    await vi.waitFor(() => expect(lastFrame()).toBe('origin:about|pending:2'));
+
+    stdin.write('x');
+    await vi.waitFor(() => expect(lastFrame()).toBe('none'));
+    expect(rejectedCalls).toEqual(['reject-1', 'reject-2']);
+    expect(resolvedCalls).toEqual([]);
+  });
+
+  it('abortReAuth sem um reAuth em andamento é um no-op seguro', () => {
+    resolvedCalls = [];
+    rejectedCalls = [];
+    const { stdin } = render(
+      <OnboardingProvider>
+        <ConcurrentReAuthHarness />
+      </OnboardingProvider>,
+    );
+    expect(() => stdin.write('x')).not.toThrow();
   });
 });

@@ -19,11 +19,11 @@ function render(tree: Parameters<typeof inkRender>[0]): ReturnType<typeof inkRen
 }
 
 import { NavigationProvider, useNavigationStack } from '../../../../../src/surfaces/tui/navigation.js';
+import type { ScreenName } from '../../../../../src/surfaces/tui/screen.js';
 import {
   OnboardingProvider,
   useOnboarding,
   type OnboardingLoginOutcome,
-  type OnboardingReAuth,
 } from '../../../../../src/surfaces/tui/screens/onboarding/onboarding-context.js';
 import { OnboardingApiKeyScreen } from '../../../../../src/surfaces/tui/screens/onboarding/api-key.js';
 import { ThemeProvider } from '../../../../../src/surfaces/tui/theme.js';
@@ -59,9 +59,11 @@ function ApiKeyHarness({
 }
 
 /** Dispara `beginReAuth` assim que monta — simula o que `use-auth-guard.ts` já fez antes desta tela existir. */
-function BeginReAuth({ reAuth }: { reAuth: OnboardingReAuth }) {
+function BeginReAuth({ origin, retry }: { origin: ScreenName; retry: () => void }) {
   const { beginReAuth } = useOnboarding();
-  useEffect(() => beginReAuth(reAuth), []);
+  useEffect(() => {
+    beginReAuth(origin, { retry, reject: () => undefined });
+  }, []);
   return null;
 }
 
@@ -94,7 +96,7 @@ function ReAuthApiKeyHarness({
             onApiKeySubmit,
           }}
         >
-          <BeginReAuth reAuth={{ origin: 'about', retry }} />
+          <BeginReAuth origin="about" retry={retry} />
           <Text>stack:{navigation.stack.join('>')}</Text>
           <OnboardingApiKeyScreen />
         </OnboardingProvider>

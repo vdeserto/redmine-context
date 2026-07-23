@@ -29,6 +29,24 @@
  * `./use-onboarding-callbacks.ts` em todo login bem-sucedido, re-auth ou não)
  * — nenhum tratamento especial é necessário aqui.
  *
+ * Fix do review do PR #119 — dois problemas cobertos aqui:
+ *
+ * 1. Abandono do re-login (Esc): antes, a `Promise` de `guard()` ficava
+ *    pendurada para sempre se o usuário apertasse Esc na tela de login em
+ *    vez de completar o re-auth. Agora o atalho global de Esc
+ *    (`../../app.tsx`), ao detectar que está numa tela `onboarding-*` com um
+ *    `reAuth` ativo, chama `OnboardingContext.abortReAuth()` — que rejeita
+ *    a `Promise` com {@link ReAuthAbortedError}. Chamadoras de `guard()`
+ *    (telas de dados) devem tratar essa rejeição como uma operação
+ *    CANCELADA (estado neutro — "usuário desistiu de logar de novo"), não
+ *    como uma falha a ser exibida como erro/crash.
+ * 2. 401 concorrentes: antes, um segundo `guard()` falhando com 401 enquanto
+ *    o primeiro já tinha iniciado o re-auth SOBRESCREVIA o `reAuth` no
+ *    contexto — o primeiro retry/reject ficava órfão. Agora
+ *    `OnboardingContext.beginReAuth()` acumula uma lista de pendências; uma
+ *    única passagem de login bem-sucedida (`resolveReAuth()`) resolve TODOS
+ *    os `guard()` pendentes.
+ *
  * @example
  * // Tela de dados futura (#29+, ex.: `screens/home.tsx`):
  * import { useAuthGuard } from '../hooks/use-auth-guard.js';
@@ -56,6 +74,24 @@ import { useNavigation } from '../navigation.js';
 import type { ScreenName } from '../screen.js';
 import { useOnboarding } from '../screens/onboarding/onboarding-context.js';
 
+/**
+ * Erro de rejeição de `guard()` quando o re-login em andamento é ABANDONADO
+ * (Esc na tela de onboarding, ver `../app.tsx`) em vez de concluído — fix do
+ * review do PR #119.
+ *
+ * @remarks Telas de dados que chamam `guard()` devem tratar esta rejeição
+ *   como uma operação CANCELADA pelo usuário (volte a um estado neutro —
+ *   ex.: `status: 'idle'` — igual a antes da chamada), e não como uma falha
+ *   inesperada (nada de mensagem de erro em vermelho ou crash): o usuário
+ *   escolheu conscientemente não reautenticar.
+ */
+export class ReAuthAbortedError extends Error {
+  constructor(message = 'Re-autenticação cancelada pelo usuário (Esc).') {
+    super(message);
+    this.name = 'ReAuthAbortedError';
+  }
+}
+
 /** Valor retornado por {@link useAuthGuard}. */
 export interface UseAuthGuardResult {
   /**
@@ -67,6 +103,10 @@ export interface UseAuthGuardResult {
    * reexecutada — chamadoras que precisam de um `AbortController`/cleanup
    * (ex.: `useEffect`) continuam funcionando normalmente: a promise
    * devolvida é só ignorada se o componente desmontar antes dela resolver.
+   *
+   * Se o re-login for abandonado (Esc, ver `../app.tsx`), a `Promise`
+   * rejeita com {@link ReAuthAbortedError} — trate como cancelamento, não
+   * como erro (ver o remark da classe).
    *
    * @param operation - A chamada ao core a proteger (ex.: `fetchIssueBundle`).
    */
@@ -103,13 +143,20 @@ export function useAuthGuard(): UseAuthGuardResult {
         throw cause;
       }
       return new Promise<T>((resolve, reject) => {
-        beginReAuthRef.current({
-          origin,
+        // Fix do review #119: `beginReAuth` devolve `true` só na PRIMEIRA
+        // vez que este ciclo de re-auth é ativado — 401 concorrentes
+        // (segunda chamada enquanto a primeira já empilhou o login) só
+        // adicionam a pendência à lista existente, sem empilhar
+        // `onboarding-login` de novo nem perder o retry/reject anterior.
+        const activated = beginReAuthRef.current(origin, {
           retry: () => {
             guardOperation(operation, origin).then(resolve, reject);
           },
+          reject,
         });
-        pushRef.current('onboarding-login');
+        if (activated) {
+          pushRef.current('onboarding-login');
+        }
       });
     });
   }, []);
