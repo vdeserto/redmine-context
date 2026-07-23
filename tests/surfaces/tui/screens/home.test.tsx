@@ -259,11 +259,10 @@ describe('TUI: HomeScreen — busca inline (M2-07, #30)', () => {
     });
   });
 
-  it('"f" cicla o filtro de status (aberta → fechada → todas), mostrado como badge', async () => {
+  it('"f" com a busca FECHADA cicla o filtro (badge no cabeçalho)', async () => {
     mockState({ status: 'loaded', issues: ISSUES });
     const spy = mockSearchState();
     const { lastFrame, stdin } = renderHome();
-    stdin.write('/');
     await vi.waitFor(() => expect(lastFrame()).toContain('todas'));
 
     stdin.write('f');
@@ -275,6 +274,20 @@ describe('TUI: HomeScreen — busca inline (M2-07, #30)', () => {
 
     stdin.write('f');
     await vi.waitFor(() => expect(lastFrame()).toContain('todas'));
+  });
+
+  it('"f" com a busca ABERTA digita na query (buscar "workflow" é possível) e NÃO cicla o filtro', async () => {
+    mockState({ status: 'loaded', issues: ISSUES });
+    mockSearchState();
+    const { lastFrame, stdin } = renderHome();
+    stdin.write('/');
+    await vi.waitFor(() => expect(lastFrame()).toContain('digite para buscar'));
+
+    stdin.write('f');
+    await vi.waitFor(() => expect(lastFrame()).toMatch(/Buscar: f/));
+    // Filtro permaneceu no default (não ciclou para "aberta"):
+    expect(lastFrame()).toContain('todas');
+    expect(lastFrame()).not.toContain('[aberta]');
   });
 
   it('Esc (via consumeEscapeInterceptor) fecha a busca e restaura a lista original SEM nova chamada', async () => {

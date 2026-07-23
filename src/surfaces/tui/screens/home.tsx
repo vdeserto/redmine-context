@@ -71,11 +71,6 @@ function nextStatusFilter(current: SearchStatusFilter): SearchStatusFilter {
   return 'open';
 }
 
-// Referência ESTÁVEL (fora do componente): evita recriar o array a cada
-// render, o que invalidaria a prop `reservedChars` do `TextInput` sem
-// necessidade (mesmo espírito de `EMPTY_ISSUES` acima).
-const SEARCH_RESERVED_CHARS = ['f'] as const;
-
 /** Trunca `text` em `max` caracteres, com reticências (`…`) quando corta. */
 function truncate(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
@@ -182,15 +177,14 @@ export function HomeScreen() {
   // "/" abre a busca; "f" cicla o filtro rápido de status (só com a busca já
   // aberta). Reason: dentro do campo de texto, "f" digitado NÃO vira
   // caractere da query — é a tecla de controle do filtro, trade-off
-  // deliberado da AC da #30 (o usuário não consegue digitar um "f" literal
-  // na busca; aceito pela mesma razão de outras teclas de controle de
-  // tela-única já existentes no repo, ex.: "r" para retry).
+  // Com a busca ABERTA, toda letra pertence à query (buscar "workflow" exige
+  // digitar "f") — o ciclo de filtro por "f" só vale com a busca fechada.
   const handleSearchControlInput = useCallback((input: string) => {
     if (input === '/' && !isSearchingRef.current) {
       setIsSearching(true);
       return;
     }
-    if (input === 'f' && isSearchingRef.current) {
+    if (input === 'f' && !isSearchingRef.current) {
       setStatusFilter((current) => nextStatusFilter(current));
     }
   }, []);
@@ -200,9 +194,17 @@ export function HomeScreen() {
 
   return (
     <Box flexDirection="column" paddingX={1} paddingY={1}>
-      <Text bold color={theme.primary}>
-        Minhas issues
-      </Text>
+      <Box>
+        <Text bold color={theme.primary}>
+          Minhas issues
+        </Text>
+        <Text color={theme.muted}> [{STATUS_FILTER_LABELS[statusFilter]}]</Text>
+        {!isSearching ? (
+          <Text color={theme.muted}>
+            {'  '}/ busca · f filtro
+          </Text>
+        ) : null}
+      </Box>
 
       {isSearching ? (
         <Box marginTop={1} flexDirection="column">
@@ -213,10 +215,6 @@ export function HomeScreen() {
               onChange={setQuery}
               placeholder="digite para buscar…"
               isActive={isSearching}
-              // "f" é a tecla de controle do filtro de status (ver
-              // `handleSearchControlInput` acima) — reservada para não virar
-              // texto digitado na query (ver `reservedChars` do TextInput).
-              reservedChars={SEARCH_RESERVED_CHARS}
             />
             <Text color={theme.muted}> [{STATUS_FILTER_LABELS[statusFilter]}]</Text>
           </Box>
