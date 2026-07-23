@@ -20,7 +20,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Attachment } from '../../src/contract.js';
 import { instanceHash } from '../../src/cache/index.js';
 import { RedmineNotFoundError, type HttpClient } from '../../src/client/index.js';
-import { downloadAttachment } from '../../src/extract/index.js';
+import { downloadAttachment, isSkipped } from '../../src/extract/index.js';
+
+/** 1 MB em bytes — atalho de leitura para os testes de limite. */
+const MB = 1024 * 1024;
 
 const INSTANCE_URL = 'https://redmine.example';
 
@@ -237,6 +240,88 @@ describe('downloadAttachment: erros e limpeza', () => {
   });
 });
 
+describe('downloadAttachment: limite de tamanho (M3-07, ADR-002)', () => {
+  it('pré-check: filesize declarado > limite pula SEM iniciar o download', async () => {
+    const attachment = makeAttachment({ filesize: 250 * MB });
+    const getBinary = vi.fn();
+    const result = await downloadAttachment(fakeHttp(getBinary), attachment, {
+      cacheDir,
+      instanceUrl: INSTANCE_URL,
+    });
+
+    expect(isSkipped(result)).toBe(true);
+    // Nunca chega a chamar a rede — degradação graciosa antes do download.
+    expect(getBinary).not.toHaveBeenCalled();
+  });
+
+  it('pré-check: o motivo é uma string legível com os dois tamanhos', async () => {
+    const attachment = makeAttachment({ filesize: 250 * MB });
+    const result = await downloadAttachment(fakeHttp(vi.fn()), attachment, {
+      cacheDir,
+      instanceUrl: INSTANCE_URL,
+    });
+
+    if (typeof result === 'string') throw new Error('esperava um resultado skipped');
+    expect(result.reason).toContain('250 MB');
+    expect(result.reason).toContain('100 MB');
+    expect(result.reason).toContain('excede o limite');
+  });
+
+  it('pré-check: honra um limite custom (maxBytes) menor que o default', async () => {
+    const attachment = makeAttachment({ filesize: 20 });
+    const getBinary = vi.fn();
+    const result = await downloadAttachment(fakeHttp(getBinary), attachment, {
+      cacheDir,
+      instanceUrl: INSTANCE_URL,
+      maxBytes: 10,
+    });
+
+    expect(isSkipped(result)).toBe(true);
+    expect(getBinary).not.toHaveBeenCalled();
+  });
+
+  it('pós-check: corpo MAIOR que o declarado aborta no meio, limpa o .part e pula', async () => {
+    // filesize declara 1 byte (passa o pré-check), mas o corpo emite 10 bytes.
+    const attachment = makeAttachment({ filesize: 1 });
+    const bigBody = streamOf(new Uint8Array([1, 2, 3, 4, 5]), new Uint8Array([6, 7, 8, 9, 10]));
+    const result = await downloadAttachment(fakeHttp(vi.fn().mockResolvedValue(bigBody)), attachment, {
+      cacheDir,
+      instanceUrl: INSTANCE_URL,
+      maxBytes: 4,
+    });
+
+    expect(isSkipped(result)).toBe(true);
+    const dir = attachmentDir(cacheDir, attachment);
+    const files = existsSync(dir) ? readdirSync(dir) : [];
+    expect(files.filter((n) => n.endsWith('.part'))).toHaveLength(0);
+    expect(existsSync(join(dir, 'original.png'))).toBe(false);
+  });
+
+  it('anexo dentro do limite baixa normalmente (retorna o path como string)', async () => {
+    const attachment = makeAttachment({ filesize: 3 });
+    const result = await downloadAttachment(
+      fakeHttp(vi.fn().mockResolvedValue(streamOf(new Uint8Array([1, 2, 3])))),
+      attachment,
+      { cacheDir, instanceUrl: INSTANCE_URL, maxBytes: 100 },
+    );
+
+    expect(isSkipped(result)).toBe(false);
+    if (typeof result !== 'string') throw new Error('esperava o path');
+    expect(readFileSync(result)).toEqual(Buffer.from([1, 2, 3]));
+  });
+
+  it('corpo exatamente no limite (== maxBytes) NÃO é pulado', async () => {
+    const attachment = makeAttachment({ filesize: 4 });
+    const result = await downloadAttachment(
+      fakeHttp(vi.fn().mockResolvedValue(streamOf(new Uint8Array([1, 2, 3, 4])))),
+      attachment,
+      { cacheDir, instanceUrl: INSTANCE_URL, maxBytes: 4 },
+    );
+
+    expect(isSkipped(result)).toBe(false);
+  });
+});
+
 describe('downloadAttachment: derivação do digest no path', () => {
   it('sem digest (Redmine < 4.x) deriva um digest8 hex determinístico', async () => {
     const attachment = makeAttachment({ digest: undefined });
@@ -261,5 +346,29 @@ describe('downloadAttachment: derivação do digest no path', () => {
     expect(path).not.toContain('..');
     const digest8 = createHash('sha256').update('../../../etc').digest('hex').slice(0, 8);
     expect(path).toContain(`${attachment.id}-${digest8}`);
+  });
+});
+
+
+describe('fix review #136: cancelamento real do stream no pós-check', () => {
+  it('exceder o limite chama cancel() do stream (corta a banda), não só para de gravar', async () => {
+    const cancel = vi.fn(() => Promise.resolve());
+    // Stream "infinito": só o cancel() interrompe a fonte.
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(new Uint8Array(64 * 1024));
+      },
+      cancel,
+    });
+    const attachment = makeAttachment({ filesize: 10 });
+    const cacheDir = mkdtempSync(join(tmpdir(), 'rc-dl-cancel-'));
+    const result = await downloadAttachment(
+      fakeHttp(vi.fn().mockResolvedValue(body)),
+      attachment,
+      { cacheDir, instanceUrl: INSTANCE_URL, maxBytes: 16 },
+    );
+    expect(typeof result).toBe('object');
+    expect((result as { skipped: boolean }).skipped).toBe(true);
+    expect(cancel).toHaveBeenCalled();
   });
 });
