@@ -38,6 +38,7 @@ import { ReAuthAbortedError } from './hooks/use-auth-guard.js';
 import { consumeEscapeInterceptor } from './hooks/use-escape-interceptor.js';
 import { useExitGuard } from './hooks/use-exit-guard.js';
 import { useOnboardingCallbacks } from './hooks/use-onboarding-callbacks.js';
+import { JobRegistryProvider } from './job-registry.js';
 import { NavigationProvider, useNavigation, useNavigationStack } from './navigation.js';
 import { HomeSelectionProvider } from './screens/home-selection.js';
 import { LoadedIssueProvider } from './screens/loaded-issue-context.js';
@@ -96,7 +97,12 @@ export function App() {
             {/* #33: sobrevive ao remount de `issue-detail.tsx`/`export.tsx` —
                 ver o JSDoc de `./screens/loaded-issue-context.tsx`. */}
             <LoadedIssueProvider>
-              <AppShell />
+              {/* #34: registro de jobs da sessão, consumido por `./screens/export.tsx`
+                  (primeiro produtor real) e `./screens/jobs.tsx` (painel) —
+                  ver o JSDoc de `./job-registry.tsx` para o contrato completo. */}
+              <JobRegistryProvider>
+                <AppShell />
+              </JobRegistryProvider>
             </LoadedIssueProvider>
           </HomeSelectionProvider>
         </OnboardingProvider>

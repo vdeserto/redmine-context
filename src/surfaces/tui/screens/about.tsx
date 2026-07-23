@@ -18,6 +18,7 @@ const SHORTCUTS: Array<{ key: string; description: string }> = [
   { key: '?', description: 'abre esta tela' },
   { key: 'd', description: 'abre o doctor (diagnóstico: Node, instância, credencial, conectividade)' },
   { key: 'c', description: 'abre a configuração (instância + logout)' },
+  { key: 't', description: 'abre o painel de jobs da sessão (na home/detalhe)' },
   { key: 'b / Esc', description: 'volta para a tela anterior' },
   { key: 'q', description: 'sai da TUI' },
 ];

@@ -24,6 +24,7 @@ vi.mock('../../../../src/surfaces/tui/screens/loaded-issue-context.js', async (i
 import type { Issue } from '../../../../src/index.js';
 import * as useExportBundleModule from '../../../../src/surfaces/tui/hooks/use-export-bundle.js';
 import type { ExportBundleState } from '../../../../src/surfaces/tui/hooks/use-export-bundle.js';
+import { JobRegistryProvider } from '../../../../src/surfaces/tui/job-registry.js';
 import { NavigationProvider, type NavigationValue } from '../../../../src/surfaces/tui/navigation.js';
 import { ExportScreen } from '../../../../src/surfaces/tui/screens/export.js';
 import * as loadedIssueModule from '../../../../src/surfaces/tui/screens/loaded-issue-context.js';
@@ -87,7 +88,13 @@ function renderExport(nav: NavigationValue = navMock()) {
   const utils = render(
     <ThemeProvider>
       <NavigationProvider value={nav}>
-        <ExportScreen />
+        {/* #34: `ExportScreen` agora é o primeiro produtor real do registro
+            de jobs (`../job-registry.js`) — a integração em si é coberta por
+            `jobs-export-integration.test.tsx`; aqui só precisa de um
+            provider real para a tela não quebrar. */}
+        <JobRegistryProvider>
+          <ExportScreen />
+        </JobRegistryProvider>
       </NavigationProvider>
     </ThemeProvider>,
   );

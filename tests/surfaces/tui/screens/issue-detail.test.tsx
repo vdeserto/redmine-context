@@ -249,6 +249,24 @@ describe('TUI: IssueDetailScreen — tela de exportação (#33)', () => {
   });
 });
 
+describe('TUI: IssueDetailScreen — painel de jobs (#34)', () => {
+  it('"t" empilha "jobs" com a issue carregada', () => {
+    const nav = navMock();
+    mockState({ status: 'loaded', issue: RICH_ISSUE });
+    const { stdin } = renderDetail(nav);
+    stdin.write('t');
+    expect(nav.push).toHaveBeenCalledWith('jobs');
+  });
+
+  it('"t" empilha "jobs" mesmo enquanto a issue ainda carrega (sem a restrição de "e")', () => {
+    const nav = navMock();
+    mockState({ status: 'loading' });
+    const { stdin } = renderDetail(nav);
+    stdin.write('t');
+    expect(nav.push).toHaveBeenCalledWith('jobs');
+  });
+});
+
 describe('TUI: IssueDetailScreen — viewport rolável (descrição + journals)', () => {
   it('o conteúdo inicial (topo) mostra as primeiras linhas, não as últimas', () => {
     mockState({ status: 'loaded', issue: RICH_ISSUE });

@@ -16,6 +16,7 @@ import { DoctorScreen } from './screens/doctor.js';
 import { ExportScreen } from './screens/export.js';
 import { HomeScreen } from './screens/home.js';
 import { IssueDetailScreen } from './screens/issue-detail.js';
+import { JobsScreen } from './screens/jobs.js';
 import { OnboardingApiKeyScreen } from './screens/onboarding/api-key.js';
 import { OnboardingLoginScreen } from './screens/onboarding/login.js';
 import { OnboardingModeScreen } from './screens/onboarding/mode.js';
@@ -34,6 +35,7 @@ export type ScreenName =
   | 'home'
   | 'issue-detail'
   | 'export'
+  | 'jobs'
   | 'onboarding-url'
   | 'onboarding-mode'
   | 'onboarding-login'
@@ -67,6 +69,7 @@ export const SCREENS: Record<ScreenName, ScreenEntry> = {
   home: { component: HomeScreen, title: 'Minhas issues' },
   'issue-detail': { component: IssueDetailScreen, title: 'Detalhe da issue' },
   export: { component: ExportScreen, title: 'Exportar' },
+  jobs: { component: JobsScreen, title: 'Jobs' },
   'onboarding-url': { component: OnboardingUrlScreen, title: `Onboarding ${symbols.pointerSmall} URL` },
   'onboarding-mode': { component: OnboardingModeScreen, title: `Onboarding ${symbols.pointerSmall} Modo` },
   'onboarding-login': { component: OnboardingLoginScreen, title: `Onboarding ${symbols.pointerSmall} Login` },

@@ -216,6 +216,10 @@ function Footer({ showRetry, showExport }: { showRetry: boolean; showExport: boo
         ) : null}
         Pressione{' '}
         <Text bold color={theme.accent}>
+          t
+        </Text>{' '}
+        para ver os jobs,{' '}
+        <Text bold color={theme.accent}>
           b
         </Text>{' '}
         para voltar.
@@ -254,6 +258,13 @@ export function IssueDetailScreen() {
     }
     if (input === 'e' && state.status === 'loaded') {
       push('export');
+      return;
+    }
+    // #34 (M2-11): "t" abre o painel de jobs da sessão (`./jobs.js`) — em
+    // qualquer estado (loading/erro/loaded), sem restrição, ao contrário de
+    // "e" (exportar), que só faz sentido com a issue já carregada.
+    if (input === 't') {
+      push('jobs');
       return;
     }
     if (
