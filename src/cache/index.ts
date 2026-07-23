@@ -14,3 +14,4 @@ export {
   type IssueCacheKey,
 } from './contract.js';
 export { InMemoryCacheStore } from './memory.js';
+export { DiskCacheStore, defaultCacheDir, type DiskCacheStoreOptions } from './disk.js';
