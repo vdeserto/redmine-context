@@ -1,8 +1,9 @@
 /**
  * Client HTTP base do Redmine — autenticação por api_key e TLS obrigatório (ADR-003).
  *
- * Escopo M1: apenas `GET`, agora com retry/backoff exponencial (issue #10)
- * para 429/5xx/erros de rede. Sem paginação ou timeout sofisticado (issue #9).
+ * `GET` (JSON) com retry/backoff exponencial (issue #10) para 429/5xx/erros de
+ * rede, mais `getBinary` (download bruto de anexos, issue #48) que herda a mesma
+ * auth/TLS/retry sem parse JSON. Sem paginação ou timeout sofisticado (issue #9).
  * Usa `fetch` nativo do Node ≥ 20, sem dependência nova.
  */
 
@@ -49,7 +50,7 @@ export interface HttpClientOptions {
   retry?: RetryOptions;
 }
 
-/** Client HTTP mínimo do M1 — expõe apenas `get`. */
+/** Client HTTP do core — expõe `get` (JSON) e `getBinary` (download bruto). */
 export interface HttpClient {
   /**
    * Executa `GET {baseUrl}{path}` com autenticação e retorna o JSON já parseado.
@@ -63,6 +64,25 @@ export interface HttpClient {
    * @throws {RedmineHttpError} Em qualquer outro status ≥ 400.
    */
   get(path: string, params?: QueryParams): Promise<unknown>;
+
+  /**
+   * Executa `GET {baseUrl}{path}` autenticado e retorna o corpo BRUTO como um
+   * stream de bytes, SEM parse JSON — usado para baixar anexos (M3-06, ADR-004).
+   *
+   * Reusa a mesma autenticação, política de TLS e retry/backoff transiente de
+   * {@link get}; os erros são os mesmos tipos ({@link RedmineHttpError} e
+   * subclasses). O chamador é responsável por consumir/encerrar o stream.
+   *
+   * @param path - Caminho absoluto na API (ex.: `/attachments/download/7/foo.png`).
+   * @param params - Parâmetros de query opcionais.
+   * @returns Stream de leitura dos bytes da resposta.
+   * @throws {RedmineAuthError} Em 401.
+   * @throws {RedmineForbiddenError} Em 403.
+   * @throws {RedmineNotFoundError} Em 404.
+   * @throws {RedmineHttpError} Em qualquer outro status ≥ 400.
+   * @throws {Error} Se a resposta vier sem corpo.
+   */
+  getBinary(path: string, params?: QueryParams): Promise<ReadableStream<Uint8Array>>;
 }
 
 /** Header do Redmine para autenticação por api_key (ADR-003). */
@@ -209,52 +229,82 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
     return url;
   };
 
+  /**
+   * Executa a requisição `GET` com autenticação e retry transiente, devolvendo a
+   * `Response` já validada (status < 400) mais a URL redigida para mensagens de
+   * erro. Compartilhado por {@link HttpClient.get} (JSON) e
+   * {@link HttpClient.getBinary} (bytes), para que ambos herdem a MESMA política
+   * de auth/TLS/retry e os mesmos erros tipados (issue #10, #48).
+   *
+   * @param path - Caminho absoluto na API.
+   * @param params - Parâmetros de query opcionais.
+   * @param accept - Valor do header Accept (JSON, ou coringa para binário).
+   * @returns A resposta bem-sucedida e a URL já redigida (sem a api_key).
+   */
+  const requestWithRetry = async (
+    path: string,
+    params: QueryParams | undefined,
+    accept: string,
+  ): Promise<{ response: Response; safeUrl: string }> => {
+    const url = buildUrl(path, params);
+    // URL segura para log/erro: a api_key nunca aparece em texto.
+    const safeUrl = redact(url.toString());
+
+    const headers: Record<string, string> = { Accept: accept };
+    if (!keyInQuery) {
+      headers[API_KEY_HEADER] = apiKey;
+    }
+
+    // Retry com backoff exponencial: só falhas transientes (429/5xx/rede) retentam.
+    // `attempt` é 0-based; a última tentativa (attempt === maxAttempts - 1) sempre
+    // propaga o erro tipado original, sem embrulhar (issue #10).
+    for (let attempt = 0; ; attempt++) {
+      const lastAttempt = attempt >= maxAttempts - 1;
+
+      let response: Response;
+      try {
+        response = await fetch(url, { method: 'GET', headers });
+      } catch (cause) {
+        if (!lastAttempt) {
+          await sleep(backoffDelay(attempt, baseDelayMs));
+          continue;
+        }
+        const reason = cause instanceof Error ? cause.message : String(cause);
+        throw new Error(`Falha de rede ao acessar ${safeUrl}: ${redact(reason)}`);
+      }
+
+      if (!response.ok) {
+        if (isRetryableStatus(response.status) && !lastAttempt) {
+          await sleep(backoffDelay(attempt, baseDelayMs));
+          continue;
+        }
+        const message = `GET ${safeUrl} respondeu ${response.status} ${redact(response.statusText)}`;
+        const error: RedmineHttpError = httpErrorFor(message, response.status, safeUrl);
+        throw error;
+      }
+
+      return { response, safeUrl };
+    }
+  };
+
   return {
     async get(path: string, params?: QueryParams): Promise<unknown> {
-      const url = buildUrl(path, params);
-      // URL segura para log/erro: a api_key nunca aparece em texto.
-      const safeUrl = redact(url.toString());
-
-      const headers: Record<string, string> = { Accept: 'application/json' };
-      if (!keyInQuery) {
-        headers[API_KEY_HEADER] = apiKey;
+      const { response, safeUrl } = await requestWithRetry(path, params, 'application/json');
+      try {
+        return (await response.json()) as unknown;
+      } catch (cause) {
+        const reason = cause instanceof Error ? cause.message : String(cause);
+        throw new Error(`Resposta de ${safeUrl} não é JSON válido: ${redact(reason)}`);
       }
+    },
 
-      // Retry com backoff exponencial: só falhas transientes (429/5xx/rede) retentam.
-      // `attempt` é 0-based; a última tentativa (attempt === maxAttempts - 1) sempre
-      // propaga o erro tipado original, sem embrulhar (issue #10).
-      for (let attempt = 0; ; attempt++) {
-        const lastAttempt = attempt >= maxAttempts - 1;
-
-        let response: Response;
-        try {
-          response = await fetch(url, { method: 'GET', headers });
-        } catch (cause) {
-          if (!lastAttempt) {
-            await sleep(backoffDelay(attempt, baseDelayMs));
-            continue;
-          }
-          const reason = cause instanceof Error ? cause.message : String(cause);
-          throw new Error(`Falha de rede ao acessar ${safeUrl}: ${redact(reason)}`);
-        }
-
-        if (!response.ok) {
-          if (isRetryableStatus(response.status) && !lastAttempt) {
-            await sleep(backoffDelay(attempt, baseDelayMs));
-            continue;
-          }
-          const message = `GET ${safeUrl} respondeu ${response.status} ${redact(response.statusText)}`;
-          const error: RedmineHttpError = httpErrorFor(message, response.status, safeUrl);
-          throw error;
-        }
-
-        try {
-          return (await response.json()) as unknown;
-        } catch (cause) {
-          const reason = cause instanceof Error ? cause.message : String(cause);
-          throw new Error(`Resposta de ${safeUrl} não é JSON válido: ${redact(reason)}`);
-        }
+    async getBinary(path: string, params?: QueryParams): Promise<ReadableStream<Uint8Array>> {
+      const { response, safeUrl } = await requestWithRetry(path, params, '*/*');
+      // Uma resposta 2xx sem corpo (ex.: 204) não tem o que baixar.
+      if (response.body === null) {
+        throw new Error(`Resposta binária de ${safeUrl} veio sem corpo.`);
       }
+      return response.body;
     },
   };
 }
