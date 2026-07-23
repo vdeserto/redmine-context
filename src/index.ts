@@ -40,6 +40,19 @@ export {
 // normalização — usada pela home da TUI (#29) com o filtro `assigned_to_id=me`.
 export { listIssues, type ListIssuesOptions, type RedmineIssuePayload } from './client/index.js';
 
+// Detalhe completo de uma issue (`GET /issues/{id}.json`), payload bruto sem
+// normalização — usado pela tela de detalhe da TUI (#31), que normaliza com
+// `normalizeIssue` abaixo para render o modelo estável `Issue` (sem passar
+// pelo bundle Markdown/JSON, que é o formato de saída da CLI/MCP, não do
+// modelo em memória que a TUI precisa para paginar/rolar o conteúdo).
+export { getIssue } from './client/index.js';
+
+// Normalização do payload bruto de issue no modelo estável `Issue` do
+// contrato — usada por `fetchIssueBundle` (CLI/MCP) e, desde a #31, também
+// diretamente pela tela de detalhe da TUI (`getIssue` + `normalizeIssue`,
+// sem serializar para Markdown/JSON).
+export { normalizeIssue } from './normalize/index.js';
+
 // Erros HTTP tipados — usados pelas superfícies para mapear exit codes (ADR-005).
 export {
   RedmineHttpError,

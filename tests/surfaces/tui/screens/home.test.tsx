@@ -34,8 +34,9 @@ import * as useIssueSearchModule from '../../../../src/surfaces/tui/hooks/use-is
 import type { IssueSearchState } from '../../../../src/surfaces/tui/hooks/use-issue-search.js';
 import * as useMyIssuesModule from '../../../../src/surfaces/tui/hooks/use-my-issues.js';
 import type { MyIssuesState } from '../../../../src/surfaces/tui/hooks/use-my-issues.js';
-import { HomeScreen } from '../../../../src/surfaces/tui/screens/home.js';
 import { NavigationProvider, type NavigationValue } from '../../../../src/surfaces/tui/navigation.js';
+import { HomeSelectionProvider } from '../../../../src/surfaces/tui/screens/home-selection.js';
+import { HomeScreen } from '../../../../src/surfaces/tui/screens/home.js';
 import { ThemeProvider } from '../../../../src/surfaces/tui/theme.js';
 
 /** Enter (retorno de carro). */
@@ -77,7 +78,12 @@ function renderHome(nav: NavigationValue = navMock()) {
   const utils = render(
     <ThemeProvider>
       <NavigationProvider value={nav}>
-        <HomeScreen />
+        {/* #31: `HomeScreen` agora depende de `useHomeSelection()` (índice
+            preservado + issue selecionada) — ver `home-selection.test.tsx`
+            para a cobertura dedicada desse contrato. */}
+        <HomeSelectionProvider>
+          <HomeScreen />
+        </HomeSelectionProvider>
       </NavigationProvider>
     </ThemeProvider>,
   );

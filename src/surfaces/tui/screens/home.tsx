@@ -9,9 +9,8 @@
  *
  * A busca em si vive em `../hooks/use-my-issues.js` (deps injetáveis,
  * fronteira do core via `../../../index.js`) — esta tela só formata os
- * estados. `Enter` sobre a issue selecionada empilha `issue-detail`, uma
- * tela placeholder mínima (`./issue-detail.js`) até a #31 implementar o
- * detalhe real.
+ * estados. `Enter` sobre a issue selecionada empilha `issue-detail`
+ * (`./issue-detail.js`, detalhe real desde a #31).
  *
  * Fix do review do PR #120: `useMyIssues` agora envolve a busca com
  * `useAuthGuard` (#36) — 401 relogina e retoma a busca sozinho (o estado
@@ -20,23 +19,17 @@
  * erro) — renderizado aqui igual aos banners de erro, com o mesmo `r` de
  * retry.
  *
- * M2-07 (#30) acrescenta a busca/filtros inline: `/` (reservado
- * globalmente como no-op em `../app.tsx`) abre um `TextInput` de busca
- * QUANDO a home está ativa — a lista de "minhas issues" (`useMyIssues`,
- * acima) permanece montada e intocada por baixo, só fica visualmente
- * substituída pela UI de busca enquanto `isSearching` é `true`. A busca em
- * si (`../hooks/use-issue-search.js`) é outro hook próprio (não uma extensão
- * de `useMyIssues`, o gatilho é bem diferente — retriggado a cada
- * `query`/`statusFilter`, com debounce de digitação) que reaproveita o MESMO
- * vocabulário de estados. `f` cicla o filtro rápido de status (badge ao lado
- * do campo); Esc fecha a busca e restaura a lista original SEM refetch — o
- * hook nunca é desmontado, só some do estado `isSearching`, e `search.clear()`
- * zera o estado da busca para `idle` sem chamar o core de novo (ver
- * `use-issue-search.ts`). O Esc em si é interceptado via
- * `../hooks/use-escape-interceptor.ts`: sem isso, o Esc global do roteador
- * (`../app.tsx`) desempilharia a home inteira em vez de só fechar a busca.
+ * M2-07 (#30) acrescenta a busca/filtros inline: `/` abre um `TextInput`
+ * QUANDO a home está ativa; `f` cicla o filtro com a busca FECHADA (badge no
+ * cabeçalho); Esc fecha a busca sem refetch, interceptado via
+ * `../hooks/use-escape-interceptor.ts` para não desempilhar a home.
+ *
+ * #31 (detalhe) acrescenta `./home-selection.js`: a tela é DESMONTADA ao
+ * empilhar `issue-detail`, então seleção (`selectedIndex` + issue escolhida)
+ * vive num contexto acima da pilha (padrão do `OnboardingProvider`) — ver o
+ * JSDoc de `./home-selection.js`.
  */
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 
 import { Spinner } from '../components/spinner.js';
@@ -46,8 +39,10 @@ import { useIssueSearch, type SearchStatusFilter } from '../hooks/use-issue-sear
 import { useListNavigation } from '../hooks/use-list-navigation.js';
 import { useMyIssues, type MyIssue } from '../hooks/use-my-issues.js';
 import { useNavigation } from '../navigation.js';
+import { statusColor } from '../status-color.js';
 import { symbols } from '../symbols.js';
-import { useTheme, type Theme } from '../theme.js';
+import { useTheme } from '../theme.js';
+import { useHomeSelection } from './home-selection.js';
 
 /** Tamanho máximo do subject antes de truncar com reticências. */
 const SUBJECT_MAX_LENGTH = 60;
@@ -76,26 +71,6 @@ function truncate(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
 
-/**
- * Cor do badge de status: heurística por nome do status, sempre via token do
- * tema (nunca um literal de cor — a varredura anti-hardcode cobre esta
- * tela). `theme.primary` é o fallback para status sem correspondência
- * (ex.: "Nova", "Em espera").
- */
-function statusColor(theme: Theme, statusName: string): string {
-  const normalized = statusName.toLowerCase();
-  if (/fechad|closed|resolvid|resolved|conclu[ií]d/.test(normalized)) {
-    return theme.success;
-  }
-  if (/cancel/.test(normalized)) {
-    return theme.danger;
-  }
-  if (/andamento|progress|curso/.test(normalized)) {
-    return theme.warning;
-  }
-  return theme.primary;
-}
-
 /** Uma linha da lista: `#id` em `theme.muted`, subject truncado, badge de status. */
 function IssueRow({ issue, selected }: { issue: MyIssue; selected: boolean }) {
   const theme = useTheme();
@@ -114,6 +89,10 @@ export function HomeScreen() {
   const theme = useTheme();
   const { push } = useNavigation();
   const { state, retry } = useMyIssues();
+  // #31: índice preservado entre remounts + registro de qual issue foi aberta
+  // (ver o JSDoc do módulo e de `./home-selection.js`).
+  const { selectedIndex: persistedIndex, setSelectedIndex: persistIndex, setSelectedIssueId } =
+    useHomeSelection();
 
   // --- Busca/filtros inline (M2-07, #30) ---
   const [isSearching, setIsSearching] = useState(false);
@@ -140,18 +119,30 @@ export function HomeScreen() {
   // cada render des/re-subscreve o useInput e pode perder uma tecla rápida.
   const pushRef = useRef(push);
   pushRef.current = push;
+  const setSelectedIssueIdRef = useRef(setSelectedIssueId);
+  setSelectedIssueIdRef.current = setSelectedIssueId;
   const handleSelect = useCallback((index: number) => {
-    if (issues[index] !== undefined) {
+    const issue = issues[index];
+    if (issue !== undefined) {
+      setSelectedIssueIdRef.current(issue.id);
       pushRef.current('issue-detail');
     }
   }, [issues]);
-  // M2-07 (#30): navegação da lista desligada enquanto a busca está aberta —
-  // sem isso, `j`/`k`/Enter digitados no campo de busca também moveriam a
-  // seleção (invisível) da lista por baixo.
+  // #30: navegação desligada com a busca aberta; #31: cursor semeado com a
+  // última posição persistida (sobrevive ao unmount via home-selection).
   const { selectedIndex } = useListNavigation(issues.length, {
     onSelect: handleSelect,
     isActive: !isSearching,
+    initialIndex: persistedIndex,
   });
+
+  // Espelha `selectedIndex` ao contexto — a cópia externa sobrevive ao
+  // unmount desta tela (ver ./home-selection.js).
+  const persistIndexRef = useRef(persistIndex);
+  persistIndexRef.current = persistIndex;
+  useEffect(() => {
+    persistIndexRef.current(selectedIndex);
+  }, [selectedIndex]);
 
   const retryRef = useRef(retry);
   retryRef.current = retry;

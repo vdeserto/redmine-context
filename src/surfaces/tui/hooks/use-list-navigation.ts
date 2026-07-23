@@ -12,7 +12,7 @@
  * lista específica.
  */
 import { useInput } from 'ink';
-import { useEffect, useState, type Dispatch, type SetStateAction } from 'react';
+import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 
 /** Opções do hook — todas opcionais. */
 export interface UseListNavigationOptions {
@@ -26,11 +26,15 @@ export interface UseListNavigationOptions {
    * Desliga a captura de teclado deste hook quando `false` (mesmo padrão de
    * `isActive` do `../components/text-input.tsx`) — necessário quando outro
    * campo da mesma tela está temporariamente "dono" do teclado (ex.: a busca
-   * inline da home, M2-07/#30: enquanto o campo de texto está ativo, `j`/`k`
-   * digitados na busca não devem também mover a seleção da lista por baixo).
-   * Default: `true`.
+   * inline da home, M2-07/#30). Default: `true`.
    */
   isActive?: boolean;
+  /**
+   * Cursor inicial — default `0`. Aplicado assim que `itemCount` deixa de
+   * ser `0` pela primeira vez (clampado); mudanças subsequentes NÃO
+   * reposicionam o cursor (preservação de seleção entre remounts — #31).
+   */
+  initialIndex?: number;
 }
 
 /** Valor retornado pelo hook. */
@@ -58,8 +62,21 @@ export function useListNavigation(
   itemCount: number,
   options: UseListNavigationOptions = {},
 ): UseListNavigationResult {
-  const [selectedIndex, setSelectedIndex] = useState(0);
-  const { onSelect, isActive = true } = options;
+  const { onSelect, isActive = true, initialIndex } = options;
+  // Ref (não dep de efeito): a aplicação do `initialIndex` deve acontecer uma
+  // única vez, na primeira vez que a lista deixa de estar vazia — mesmo que
+  // `initialIndex` mude entre renders (ex.: o contexto de origem re-renderiza
+  // por outro motivo).
+  const appliedInitialRef = useRef(false);
+  const [selectedIndex, setSelectedIndex] = useState(() => {
+    if (itemCount <= 0) {
+      // Nada para clampar ainda — o efeito abaixo aplica `initialIndex` assim
+      // que `itemCount` deixar de ser 0 (ex.: lista ainda carregando).
+      return 0;
+    }
+    appliedInitialRef.current = true;
+    return Math.min(Math.max(initialIndex ?? 0, 0), itemCount - 1);
+  });
 
   useInput(
     (input, key) => {
@@ -86,14 +103,23 @@ export function useListNavigation(
 
   // Reason: mantém `selectedIndex` dentro dos limites quando `itemCount`
   // encolhe (ex.: um filtro reduz a lista) — evita um índice "fantasma" que
-  // aponta para fora do array de itens da tela.
+  // aponta para fora do array de itens da tela. Também é o gatilho de
+  // aplicação do `initialIndex` (#31): na primeira vez que `itemCount` deixa
+  // de ser 0, usa `initialIndex` (se informado) como base em vez do cursor
+  // atual — cobre tanto o caso síncrono (lista já não-vazia no primeiro
+  // render) quanto o assíncrono (lista carrega depois, ex.: `home.tsx`).
   useEffect(() => {
     setSelectedIndex((current) => {
       if (itemCount <= 0) {
         return 0;
       }
-      return Math.min(current, itemCount - 1);
+      const base = !appliedInitialRef.current && initialIndex !== undefined ? initialIndex : current;
+      appliedInitialRef.current = true;
+      return Math.min(Math.max(base, 0), itemCount - 1);
     });
+    // Reason: `initialIndex` é intencionalmente OMITIDO das deps — é lido só
+    // na aplicação única controlada por `appliedInitialRef`, nunca deve
+    // reexecutar este efeito por si só (ver o JSDoc da opção).
   }, [itemCount]);
 
   return { selectedIndex, setSelectedIndex };
