@@ -22,6 +22,15 @@ export interface UseListNavigationOptions {
    * `selectedIndex`.
    */
   onSelect?: (index: number) => void;
+  /**
+   * Desliga a captura de teclado deste hook quando `false` (mesmo padrão de
+   * `isActive` do `../components/text-input.tsx`) — necessário quando outro
+   * campo da mesma tela está temporariamente "dono" do teclado (ex.: a busca
+   * inline da home, M2-07/#30: enquanto o campo de texto está ativo, `j`/`k`
+   * digitados na busca não devem também mover a seleção da lista por baixo).
+   * Default: `true`.
+   */
+  isActive?: boolean;
 }
 
 /** Valor retornado pelo hook. */
@@ -50,27 +59,30 @@ export function useListNavigation(
   options: UseListNavigationOptions = {},
 ): UseListNavigationResult {
   const [selectedIndex, setSelectedIndex] = useState(0);
-  const { onSelect } = options;
+  const { onSelect, isActive = true } = options;
 
-  useInput((input, key) => {
-    if (itemCount <= 0) {
-      return;
-    }
+  useInput(
+    (input, key) => {
+      if (itemCount <= 0) {
+        return;
+      }
 
-    if (key.upArrow || input === 'k') {
-      setSelectedIndex((current) => (current - 1 + itemCount) % itemCount);
-      return;
-    }
+      if (key.upArrow || input === 'k') {
+        setSelectedIndex((current) => (current - 1 + itemCount) % itemCount);
+        return;
+      }
 
-    if (key.downArrow || input === 'j') {
-      setSelectedIndex((current) => (current + 1) % itemCount);
-      return;
-    }
+      if (key.downArrow || input === 'j') {
+        setSelectedIndex((current) => (current + 1) % itemCount);
+        return;
+      }
 
-    if (key.return) {
-      onSelect?.(selectedIndex);
-    }
-  });
+      if (key.return) {
+        onSelect?.(selectedIndex);
+      }
+    },
+    { isActive },
+  );
 
   // Reason: mantém `selectedIndex` dentro dos limites quando `itemCount`
   // encolhe (ex.: um filtro reduz a lista) — evita um índice "fantasma" que

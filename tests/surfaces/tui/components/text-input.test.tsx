@@ -36,12 +36,14 @@ function Harness({
   isActive,
   onSubmit,
   showMarker = true,
+  reservedChars,
 }: {
   mask?: string;
   isActive?: boolean;
   onSubmit?: (value: string) => void;
   /** Renderiza `marker:<value>` para inspeção do estado bruto — desligado no teste de máscara, que existe justamente para provar que o valor bruto NUNCA aparece no frame. */
   showMarker?: boolean;
+  reservedChars?: readonly string[];
 }) {
   const [value, setValue] = useState('');
   return (
@@ -53,6 +55,7 @@ function Harness({
         mask={mask}
         isActive={isActive}
         placeholder="digite aqui"
+        reservedChars={reservedChars}
       />
       {showMarker ? <Text>marker:{value}</Text> : null}
     </ThemeProvider>
@@ -112,5 +115,42 @@ describe('TUI: TextInput', () => {
     stdin.write('abc');
     expect(lastFrame()).toContain('marker:');
     expect(lastFrame()).not.toContain('marker:abc');
+  });
+
+  describe('reservedChars (M2-07, #30)', () => {
+    it('ignora um caractere reservado isolado (não vira texto digitado)', async () => {
+      const { lastFrame, stdin } = render(<Harness reservedChars={['f']} />);
+      stdin.write('f');
+      // Reason: precisamos provar uma AUSÊNCIA — como não há um evento
+      // positivo para esperar, um tick garante que o (não-)efeito já
+      // aconteceria se fosse acontecer, sem depender de timing arbitrário.
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(lastFrame()).toContain('marker:');
+      expect(lastFrame()).not.toContain('marker:f');
+    });
+
+    it('caracteres não reservados continuam sendo digitados normalmente', async () => {
+      const { lastFrame, stdin } = render(<Harness reservedChars={['f']} />);
+      stdin.write('bug');
+      await vi.waitFor(() => {
+        expect(lastFrame()).toContain('marker:bug');
+      });
+    });
+
+    it('uma sequência colada que CONTÉM o caractere reservado ainda é digitada por inteiro', async () => {
+      const { lastFrame, stdin } = render(<Harness reservedChars={['f']} />);
+      stdin.write('focus');
+      await vi.waitFor(() => {
+        expect(lastFrame()).toContain('marker:focus');
+      });
+    });
+
+    it('sem reservedChars (default): nenhum caractere é bloqueado', async () => {
+      const { lastFrame, stdin } = render(<Harness />);
+      stdin.write('f');
+      await vi.waitFor(() => {
+        expect(lastFrame()).toContain('marker:f');
+      });
+    });
   });
 });

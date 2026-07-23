@@ -40,6 +40,17 @@ export interface TextInputProps {
   placeholder?: string;
   /** Captura teclado quando `true` (default). Ver guideline de foco acima. */
   isActive?: boolean;
+  /**
+   * Caracteres reservados por uma tecla de CONTROLE da tela pai (ex.: `f`
+   * cicla o filtro de status na busca da home, M2-07/#30) — quando o `input`
+   * recebido for EXATAMENTE um desses (tecla única, não uma sequência
+   * colada com mais de um caractere), o `TextInput` ignora e NÃO chama
+   * `onChange`. A tela pai continua recebendo o mesmo evento normalmente
+   * (Ink despacha para todos os `useInput()` registrados, não só este) e
+   * decide o que fazer com ele — este campo só evita que a tecla de controle
+   * também vire texto digitado. Default: nenhum caractere reservado.
+   */
+  reservedChars?: readonly string[];
 }
 
 /**
@@ -50,7 +61,15 @@ export interface TextInputProps {
  * @example
  * <TextInput value={password} onChange={setPassword} mask="•" isActive={field === 'password'} />
  */
-export function TextInput({ value, onChange, onSubmit, mask, placeholder, isActive = true }: TextInputProps) {
+export function TextInput({
+  value,
+  onChange,
+  onSubmit,
+  mask,
+  placeholder,
+  isActive = true,
+  reservedChars = [],
+}: TextInputProps) {
   const theme = useTheme();
 
   // O handler do useInput pode disparar antes do resubscribe pós-commit do
@@ -63,6 +82,8 @@ export function TextInput({ value, onChange, onSubmit, mask, placeholder, isActi
   onChangeRef.current = onChange;
   const onSubmitRef = useRef(onSubmit);
   onSubmitRef.current = onSubmit;
+  const reservedCharsRef = useRef(reservedChars);
+  reservedCharsRef.current = reservedChars;
 
   // Handler ESTÁVEL (useCallback + refs): identidade nova a cada render faz o
   // useInput des/re-subscrever no efeito pós-commit, abrindo janelas sem
@@ -92,6 +113,14 @@ export function TextInput({ value, onChange, onSubmit, mask, placeholder, isActi
       }
       if (key.backspace || key.delete) {
         onChangeRef.current(valueRef.current.slice(0, -1));
+        return;
+      }
+      // Reason: tecla ÚNICA reservada por um controle da tela pai (ex.: "f"
+      // cicla o filtro de status na busca da home, M2-07/#30) — ignorada
+      // aqui para não virar texto digitado; a tela pai trata o mesmo evento
+      // via seu próprio `useInput()`. Só bloqueia o caractere isolado, não
+      // uma sequência colada maior que o contenha.
+      if (reservedCharsRef.current.includes(input)) {
         return;
       }
       if (input.length > 0) {

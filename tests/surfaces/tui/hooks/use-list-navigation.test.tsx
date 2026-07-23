@@ -19,15 +19,17 @@ const ARROW_DOWN = `${ESC}[B`;
 /** Enter (retorno de carro). */
 const ENTER = '\r';
 
-/** Harness: renderiza o índice selecionado e repassa `onSelect` ao hook. */
+/** Harness: renderiza o índice selecionado e repassa `onSelect`/`isActive` ao hook. */
 function ListHarness({
   itemCount,
   onSelect,
+  isActive,
 }: {
   itemCount: number;
   onSelect?: (index: number) => void;
+  isActive?: boolean;
 }) {
-  const { selectedIndex } = useListNavigation(itemCount, { onSelect });
+  const { selectedIndex } = useListNavigation(itemCount, { onSelect, isActive });
   return <Text>{selectedIndex}</Text>;
 }
 
@@ -109,5 +111,18 @@ describe('TUI: useListNavigation', () => {
     const { lastFrame, stdin } = render(<ListHarness itemCount={0} />);
     expect(() => stdin.write('j')).not.toThrow();
     expect(lastFrame()).toBe('0');
+  });
+
+  it('isActive=false desliga a captura de teclado (M2-07, #30): "j" não move a seleção', () => {
+    const { lastFrame, stdin } = render(<ListHarness itemCount={3} isActive={false} />);
+    stdin.write('j');
+    expect(lastFrame()).toBe('0');
+  });
+
+  it('isActive=false também ignora Enter (onSelect não é chamado)', () => {
+    const onSelect = vi.fn();
+    const { stdin } = render(<ListHarness itemCount={3} onSelect={onSelect} isActive={false} />);
+    stdin.write(ENTER);
+    expect(onSelect).not.toHaveBeenCalled();
   });
 });
