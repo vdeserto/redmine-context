@@ -13,10 +13,21 @@ import type { ComponentType } from 'react';
 import { AboutScreen } from './screens/about.js';
 import { ConfigScreen } from './screens/config.js';
 import { DoctorScreen } from './screens/doctor.js';
+import { OnboardingLoginScreen } from './screens/onboarding/login.js';
+import { OnboardingModeScreen } from './screens/onboarding/mode.js';
+import { OnboardingUrlScreen } from './screens/onboarding/url.js';
 import { WelcomeScreen } from './screens/welcome.js';
+import { symbols } from './symbols.js';
 
 /** Nomes de tela conhecidos pelo roteador (state machine simples). */
-export type ScreenName = 'welcome' | 'about' | 'doctor' | 'config';
+export type ScreenName =
+  | 'welcome'
+  | 'about'
+  | 'doctor'
+  | 'config'
+  | 'onboarding-url'
+  | 'onboarding-mode'
+  | 'onboarding-login';
 
 /** Tela renderizada ao abrir a TUI (base da pilha de navegação). */
 export const INITIAL_SCREEN: ScreenName = 'welcome';
@@ -29,10 +40,19 @@ export interface ScreenEntry {
   title: string;
 }
 
-/** Mapa tela -> entrada, consultado pelo roteador a cada troca e pelo breadcrumb. */
+/**
+ * Mapa tela -> entrada, consultado pelo roteador a cada troca e pelo
+ * breadcrumb. As três telas de onboarding (M2-05.1, issue #27) usam
+ * `Onboarding <separador> <passo>` como título — o mesmo separador do
+ * breadcrumb entre frames da pilha (`symbols.pointerSmall`) — para que o
+ * caminho fique auto-descritivo mesmo isolado (ex.: "Início › Onboarding › URL").
+ */
 export const SCREENS: Record<ScreenName, ScreenEntry> = {
   welcome: { component: WelcomeScreen, title: 'Início' },
   about: { component: AboutScreen, title: 'Atalhos' },
   doctor: { component: DoctorScreen, title: 'Doctor' },
   config: { component: ConfigScreen, title: 'Configuração' },
+  'onboarding-url': { component: OnboardingUrlScreen, title: `Onboarding ${symbols.pointerSmall} URL` },
+  'onboarding-mode': { component: OnboardingModeScreen, title: `Onboarding ${symbols.pointerSmall} Modo` },
+  'onboarding-login': { component: OnboardingLoginScreen, title: `Onboarding ${symbols.pointerSmall} Login` },
 };

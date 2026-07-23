@@ -13,23 +13,33 @@
  * registrado aqui como no-op para não ser usado por engano por outra tela
  * antes da tela de busca existir.
  */
+import { useCallback, useRef } from 'react';
 import { Box, Text, useApp, useInput } from 'ink';
 
 import { Breadcrumb } from './components/breadcrumb.js';
 import { useExitGuard } from './hooks/use-exit-guard.js';
 import { NavigationProvider, useNavigation, useNavigationStack } from './navigation.js';
+import { OnboardingProvider } from './screens/onboarding/onboarding-context.js';
 import { INITIAL_SCREEN, SCREENS } from './screen.js';
 import { symbols } from './symbols.js';
 import { ThemeProvider, useTheme } from './theme.js';
 
-/** App raiz da TUI: só monta os providers (tema, pilha de navegação). */
+/**
+ * App raiz da TUI: só monta os providers (tema, pilha de navegação,
+ * onboarding — M2-05.1). `OnboardingProvider` sem `callbacks` usa o no-op
+ * padrão (ver `screens/onboarding/onboarding-context.tsx`); o wiring real
+ * com o core (validação de URL, `loginWithPassword`, credential cascade) é
+ * a #28.
+ */
 export function App() {
   const navigation = useNavigationStack(INITIAL_SCREEN);
 
   return (
     <ThemeProvider>
       <NavigationProvider value={navigation}>
-        <AppShell />
+        <OnboardingProvider>
+          <AppShell />
+        </OnboardingProvider>
       </NavigationProvider>
     </ThemeProvider>
   );
@@ -46,14 +56,22 @@ function AppShell() {
   const theme = useTheme();
   const { armed } = useExitGuard(exit);
 
-  useInput((input, key) => {
+  // Handler ESTÁVEL (refs + useCallback): identidade nova a cada render faz o
+  // useInput des/re-subscrever no efeito pós-commit, abrindo janelas em que
+  // teclas rápidas (Esc em sequência) se perdem — mesma classe de bug
+  // corrigida no TextInput.
+  const exitRef = useRef(exit);
+  exitRef.current = exit;
+  const popRef = useRef(pop);
+  popRef.current = pop;
+  const handleGlobalInput = useCallback((input: string, key: { escape: boolean }) => {
     if (input === 'q') {
-      exit();
+      exitRef.current();
       return;
     }
 
     if (key.escape) {
-      pop();
+      popRef.current();
       return;
     }
 
@@ -63,7 +81,8 @@ function AppShell() {
       // "/" para algo diferente antes da tela de busca existir.
       return;
     }
-  });
+  }, []);
+  useInput(handleGlobalInput);
 
   const Screen = SCREENS[current].component;
 
