@@ -68,7 +68,25 @@ export interface Job {
   cancelable?: boolean;
   /** Chamado pelo painel ao usuário pressionar Ctrl+C com este job selecionado, quando `cancelable` é `true`. */
   onCancel?: () => void;
+  /** Progresso incremental 0–100 (extrações M3/M4). Omitido: indeterminado. */
+  progress?: number;
+  /** Detalhe curto da fase atual ou mensagem de erro (ex.: "transcrevendo áudio"). */
+  detail?: string;
 }
+
+/** Campos atualizáveis de um job em andamento — ver {@link JobRegistryValue.updateJob}. */
+export interface JobPatch {
+  status?: JobStatus;
+  progress?: number;
+  detail?: string;
+  label?: string;
+}
+
+/** Teto de jobs retidos: além disso, os CONCLUÍDOS mais antigos são descartados (GC). */
+const MAX_JOBS = 50;
+
+/** Estados terminais — não aceitam transição de volta (ver validação no updateJob). */
+const TERMINAL: readonly JobStatus[] = ['done', 'failed'];
 
 /** Valor exposto pelo contexto do registro de jobs. */
 export interface JobRegistryValue {
@@ -80,10 +98,12 @@ export interface JobRegistryValue {
    */
   registerJob: (job: Job) => void;
   /**
-   * Atualiza o `status` do job com o `id` informado. Sem efeito (nem erro)
-   * se `id` não corresponder a nenhum job registrado — um produtor que
-   * chame isso após um cancelamento/limpeza não tem por que quebrar a tela.
+   * Atualiza campos do job (`status`/`progress`/`detail`/`label`). Sem efeito
+   * se `id` não existir. Transições a partir de estado TERMINAL (`done`/
+   * `failed`) são ignoradas — bug de produtor não regride o painel.
    */
+  updateJob: (id: string, patch: JobPatch) => void;
+  /** Atalho de compatibilidade: `updateJob(id, { status })`. */
   updateJobStatus: (id: string, status: JobStatus) => void;
 }
 
@@ -102,20 +122,49 @@ export function JobRegistryProvider({ children }: { children: ReactNode }) {
   const registerJob = useCallback((job: Job) => {
     setJobs((current) => {
       const index = current.findIndex((existing) => existing.id === job.id);
+      let next: Job[];
       if (index === -1) {
-        return [...current, job];
+        next = [...current, job];
+      } else {
+        next = current.slice();
+        next[index] = job;
       }
-      const next = current.slice();
-      next[index] = job;
+      // GC: acima do teto, descarta os CONCLUÍDOS mais antigos (em andamento
+      // nunca são descartados) — sessões longas com muitas extrações (M3/M4)
+      // não acumulam sem bound.
+      if (next.length > MAX_JOBS) {
+        const overflow = next.length - MAX_JOBS;
+        let removed = 0;
+        next = next.filter((j) => {
+          if (removed < overflow && TERMINAL.includes(j.status)) {
+            removed += 1;
+            return false;
+          }
+          return true;
+        });
+      }
       return next;
     });
   }, []);
 
-  const updateJobStatus = useCallback((id: string, status: JobStatus) => {
-    setJobs((current) => current.map((job) => (job.id === id ? { ...job, status } : job)));
+  const updateJob = useCallback((id: string, patch: JobPatch) => {
+    setJobs((current) =>
+      current.map((job) => {
+        if (job.id !== id) return job;
+        if (TERMINAL.includes(job.status) && patch.status !== undefined && patch.status !== job.status) {
+          // Estado terminal não regride — ignora a transição inválida inteira.
+          return job;
+        }
+        return { ...job, ...patch };
+      }),
+    );
   }, []);
 
-  const value: JobRegistryValue = { jobs, registerJob, updateJobStatus };
+  const updateJobStatus = useCallback((id: string, status: JobStatus) => {
+    updateJob(id, { status });
+  }, [updateJob]);
+
+  const value: JobRegistryValue = { jobs, registerJob, updateJob, updateJobStatus };
 
   return <JobRegistryContext.Provider value={value}>{children}</JobRegistryContext.Provider>;
 }

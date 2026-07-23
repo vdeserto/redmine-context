@@ -147,3 +147,79 @@ describe('TUI: useJobRegistry — unitário', () => {
     expect(lastFrame()).toBe('(vazio)');
   });
 });
+
+
+describe('fixes do review #125: GC, patch e transições', () => {
+  it('estado terminal não regride (done → pending ignorado por inteiro)', async () => {
+    function Harness() {
+      const { registerJob, updateJob } = useJobRegistry();
+      useInput((input) => {
+        if (input === '1') registerJob({ id: 'j1', label: 'x', status: 'done' });
+        if (input === '2') updateJob('j1', { status: 'pending', detail: 'oops' });
+      });
+      return <Probe />;
+    }
+    const { lastFrame, stdin } = render(
+      <JobRegistryProvider>
+        <Harness />
+      </JobRegistryProvider>,
+    );
+    stdin.write('1');
+    await vi.waitFor(() => expect(lastFrame()).toBe('j1:done'));
+    stdin.write('2');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(lastFrame()).toBe('j1:done');
+  });
+
+  it('updateJob atualiza progress/detail de job em andamento', async () => {
+    function Harness() {
+      const { registerJob, updateJob, jobs } = useJobRegistry();
+      useInput((input) => {
+        if (input === '1') registerJob({ id: 'j1', label: 'x', status: 'processing' });
+        if (input === '2') updateJob('j1', { progress: 40, detail: 'transcrevendo áudio' });
+      });
+      const j = jobs[0];
+      return <Text>{j ? `${j.id}:${j.status}:${j.progress ?? '-'}:${j.detail ?? '-'}` : '(vazio)'}</Text>;
+    }
+    const { lastFrame, stdin } = render(
+      <JobRegistryProvider>
+        <Harness />
+      </JobRegistryProvider>,
+    );
+    stdin.write('1');
+    await vi.waitFor(() => expect(lastFrame()).toBe('j1:processing:-:-'));
+    stdin.write('2');
+    await vi.waitFor(() => expect(lastFrame()).toBe('j1:processing:40:transcrevendo áudio'));
+  });
+
+  it('GC: acima de 50, concluídos mais antigos saem; em andamento ficam', async () => {
+    function Harness() {
+      const { registerJob, jobs } = useJobRegistry();
+      useInput(() => {
+        registerJob({ id: 'ativo', label: 'a', status: 'processing' });
+        for (let i = 0; i < 55; i += 1) {
+          registerJob({ id: `done-${i}`, label: `d${i}`, status: 'done' });
+        }
+      });
+      return (
+        <Text>
+          {String(jobs.length)}|{jobs.some((j) => j.id === 'ativo') ? 'ativo-ok' : 'ativo-caiu'}|
+          {jobs.some((j) => j.id === 'done-0') ? 'd0-vivo' : 'd0-gc'}
+        </Text>
+      );
+    }
+    const { lastFrame, stdin } = render(
+      <JobRegistryProvider>
+        <Harness />
+      </JobRegistryProvider>,
+    );
+    stdin.write('x');
+    await vi.waitFor(() => {
+      const frame = lastFrame() ?? '';
+      expect(frame).toContain('ativo-ok');
+      expect(frame).toContain('d0-gc');
+      const count = Number(frame.split('|')[0]);
+      expect(count).toBeLessThanOrEqual(50);
+    });
+  });
+});
