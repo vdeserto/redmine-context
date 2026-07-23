@@ -10,6 +10,13 @@
  * global que preserva a posição da home é coberto por
  * `home-selection.test.tsx`, no nível de integração). Escrito ANTES da
  * implementação (TDD).
+ *
+ * Anexos (#32): seção "Anexos" dentro do MESMO `ScrollView` (após os
+ * journals) — nome, tamanho humanizado, `content_type` e badge textual de
+ * status de extração (mapeamento local, ver `../../../../src/surfaces/tui/attachment-status.ts`).
+ * Usa fixtures próprias e enxutas (sem journals) para a seção aparecer sem
+ * precisar rolar; a rolagem com MUITOS anexos é coberta à parte, reutilizando
+ * o mesmo mecanismo de `ScrollView` já testado acima.
  */
 import { render } from 'ink-testing-library';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -20,7 +27,7 @@ vi.mock('../../../../src/surfaces/tui/hooks/use-issue-detail.js', async (importO
   return { ...actual, useIssueDetail: vi.fn() };
 });
 
-import type { Issue } from '../../../../src/index.js';
+import type { Attachment, Issue } from '../../../../src/index.js';
 import * as useIssueDetailModule from '../../../../src/surfaces/tui/hooks/use-issue-detail.js';
 import type { IssueDetailState } from '../../../../src/surfaces/tui/hooks/use-issue-detail.js';
 import { NavigationProvider, type NavigationValue } from '../../../../src/surfaces/tui/navigation.js';
@@ -264,5 +271,147 @@ describe('TUI: IssueDetailScreen — viewport rolável (descrição + journals)'
     expect(() => stdin.write(PAGE_DOWN)).not.toThrow();
     await new Promise((resolve) => setImmediate(resolve));
     expect(lastFrame()).toBe(atBottom);
+  });
+});
+
+/** Fixture enxuta (sem journals, sem descrição) — a seção de anexos fica visível sem rolar. */
+function issueWithAttachments(attachments: Attachment[]): Issue {
+  return {
+    ...RICH_ISSUE,
+    description: undefined,
+    journals: [],
+    attachments,
+  };
+}
+
+describe('TUI: IssueDetailScreen — anexos (#32)', () => {
+  it('issue sem anexos: seção mostra "(nenhum)", sem quebrar', () => {
+    mockState({ status: 'loaded', issue: issueWithAttachments([]) });
+    const { lastFrame } = renderDetail();
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('Anexos');
+    expect(frame).toContain('(nenhum)');
+  });
+
+  it('anexo de texto (content_type text/*) mostra nome, tamanho e badge "texto"', () => {
+    mockState({
+      status: 'loaded',
+      issue: issueWithAttachments([
+        {
+          id: 1,
+          filename: 'notas.txt',
+          filesize: 999,
+          content_type: 'text/plain',
+          created_on: '2024-01-01T10:00:00Z',
+          content_url: 'https://example.test/attachments/1',
+        },
+      ]),
+    });
+    const { lastFrame } = renderDetail();
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('notas.txt');
+    expect(frame).toContain('999B');
+    expect(frame).toContain('text/plain');
+    expect(frame).toContain('texto');
+  });
+
+  it('anexo binário conhecido (ex.: imagem) mostra badge "não suportado"', () => {
+    mockState({
+      status: 'loaded',
+      issue: issueWithAttachments([
+        {
+          id: 2,
+          filename: 'foto.png',
+          filesize: 1536,
+          content_type: 'image/png',
+          created_on: '2024-01-01T10:00:00Z',
+          content_url: 'https://example.test/attachments/2',
+        },
+      ]),
+    });
+    const { lastFrame } = renderDetail();
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('foto.png');
+    expect(frame).toContain('1.5KB');
+    expect(frame).toContain('image/png');
+    expect(frame).toContain('não suportado');
+  });
+
+  it('anexo sem content_type mostra badge "pendente" e placeholder de tipo', () => {
+    mockState({
+      status: 'loaded',
+      issue: issueWithAttachments([
+        {
+          id: 3,
+          filename: 'arquivo-sem-tipo',
+          filesize: 2 * 1024 * 1024,
+          created_on: '2024-01-01T10:00:00Z',
+          content_url: 'https://example.test/attachments/3',
+        },
+      ]),
+    });
+    const { lastFrame } = renderDetail();
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('arquivo-sem-tipo');
+    expect(frame).toContain('2MB');
+    expect(frame).toContain('pendente');
+  });
+
+  it('múltiplos anexos com status distintos renderizam todos, sem bloquear a navegação', () => {
+    const nav = navMock();
+    mockState({
+      status: 'loaded',
+      issue: issueWithAttachments([
+        {
+          id: 1,
+          filename: 'notas.txt',
+          filesize: 999,
+          content_type: 'text/plain',
+          created_on: '2024-01-01T10:00:00Z',
+          content_url: 'https://example.test/attachments/1',
+        },
+        {
+          id: 2,
+          filename: 'foto.png',
+          filesize: 1536,
+          content_type: 'image/png',
+          created_on: '2024-01-01T10:00:00Z',
+          content_url: 'https://example.test/attachments/2',
+        },
+      ]),
+    });
+    const { lastFrame, stdin } = renderDetail(nav);
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('notas.txt');
+    expect(frame).toContain('foto.png');
+
+    // "b" continua funcionando normalmente — anexos nunca bloqueiam navegação.
+    stdin.write('b');
+    expect(nav.pop).toHaveBeenCalledOnce();
+  });
+
+  it('anexos longos continuam dentro da viewport rolável — PgDn revela anexos mais adiante', async () => {
+    const manyAttachments: Attachment[] = Array.from({ length: 20 }, (_unused, index) => ({
+      id: index + 1,
+      filename: `anexo-${index + 1}.txt`,
+      filesize: 100,
+      content_type: 'text/plain',
+      created_on: '2024-01-01T10:00:00Z',
+      content_url: `https://example.test/attachments/${index + 1}`,
+    }));
+    mockState({ status: 'loaded', issue: issueWithAttachments(manyAttachments) });
+    const { lastFrame, stdin } = renderDetail();
+
+    expect(lastFrame()).not.toContain('anexo-20.txt');
+
+    for (let i = 0; i < 4; i += 1) {
+      stdin.write(PAGE_DOWN);
+    }
+
+    await vi.waitFor(() => {
+      expect(lastFrame()).toContain('anexo-20.txt');
+    });
+    // Metadados fixos continuam visíveis — scroll não quebrou o layout.
+    expect(lastFrame()).toContain('#123');
   });
 });

@@ -23,13 +23,28 @@
  * 401 é responsabilidade de `useAuthGuard`, já embutido em
  * `use-issue-detail.js` (mandatório, M2-13/#36) — esta tela só formata o
  * estado `auth-aborted` (neutro) igual aos demais banners de erro.
+ *
+ * Anexos (#32): seção "Anexos" adicionada ao FIM do mesmo `ScrollView` de
+ * descrição/journals (nunca em área fixa própria) — nome, tamanho humanizado
+ * (`../format-file-size.js`) e badge de status de extração
+ * (`../attachment-status.js`, mapeamento local documentado ali — o core ainda
+ * não expõe `ExtractionResult['status']`). Entrar no MESMO viewport rolável
+ * garante o AC "navegação nunca bloqueia por causa de anexos": uma issue com
+ * dezenas de anexos apenas acrescenta linhas à rolagem existente, sem tela
+ * própria, sem fetch adicional e sem novo atalho de teclado.
  */
 import { Box, Text, useInput } from 'ink';
 import type { ReactNode } from 'react';
 
-import type { Issue } from '../../../index.js';
+import type { Attachment, Issue } from '../../../index.js';
+import {
+  attachmentStatusColor,
+  attachmentStatusLabel,
+  deriveAttachmentExtractionStatus,
+} from '../attachment-status.js';
 import { Spinner } from '../components/spinner.js';
 import { ScrollView } from '../components/scroll-view.js';
+import { humanizeFileSize } from '../format-file-size.js';
 import { useIssueDetail } from '../hooks/use-issue-detail.js';
 import { useNavigation } from '../navigation.js';
 import { statusColor } from '../status-color.js';
@@ -69,6 +84,43 @@ function IssueMeta({ issue, theme }: { issue: Issue; theme: Theme }) {
       </Box>
     </Box>
   );
+}
+
+/** Constrói a linha de um único anexo: nome (texto derivado, puro) · tamanho humanizado · content_type · badge de status. */
+function buildAttachmentRow(attachment: Attachment, theme: Theme): ReactNode {
+  const status = deriveAttachmentExtractionStatus(attachment);
+  return (
+    <Text key={`attachment-${attachment.id}`}>
+      {attachment.filename}{' '}
+      <Text color={theme.muted}>
+        ({humanizeFileSize(attachment.filesize)} · {attachment.content_type ?? EMPTY_PLACEHOLDER})
+      </Text>{' '}
+      <Text bold color={attachmentStatusColor(theme, status)}>
+        [{attachmentStatusLabel(status)}]
+      </Text>
+    </Text>
+  );
+}
+
+/** Constrói as linhas da seção de anexos (após os journals): cabeçalho + 1 linha por anexo, ou "(nenhum)". */
+function buildAttachmentRows(issue: Issue, theme: Theme): ReactNode[] {
+  const rows: ReactNode[] = [
+    <Text bold color={theme.primary} key="attachments-header">
+      Anexos
+    </Text>,
+  ];
+  if (issue.attachments.length === 0) {
+    rows.push(
+      <Text color={theme.muted} key="attachments-empty">
+        (nenhum)
+      </Text>,
+    );
+  } else {
+    issue.attachments.forEach((attachment) => {
+      rows.push(buildAttachmentRow(attachment, theme));
+    });
+  }
+  return rows;
 }
 
 /** Constrói as linhas da viewport rolável: bloco de descrição + histórico cronológico de journals. */
@@ -130,6 +182,10 @@ function buildContentRows(issue: Issue, theme: Theme): ReactNode[] {
       rows.push(<Text key={`journal-${journal.id}-spacer`}> </Text>);
     });
   }
+
+  rows.push(<Text key="journals-attachments-spacer"> </Text>);
+  // Anexos (#32) SEMPRE por último — após journals, dentro do mesmo ScrollView.
+  rows.push(...buildAttachmentRows(issue, theme));
 
   return rows;
 }
