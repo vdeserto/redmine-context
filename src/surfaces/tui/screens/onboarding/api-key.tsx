@@ -12,6 +12,13 @@
  * credencial funciona). Estado assíncrono gerenciado localmente (mesmo
  * padrão de `../config.tsx` no fluxo de logout): idle → validating → error,
  * com spinner próprio (`../../components/spinner.tsx`) durante a validação.
+ *
+ * M2-13 (issue #36): esta tela também é o fallback de 2FA (`validating.tsx`,
+ * `replace('onboarding-api-key')`) quando o login por senha de um re-auth
+ * falha com 401 — então o sucesso aqui também precisa checar
+ * `OnboardingContext.reAuth` e, se definido, voltar à tela de origem
+ * (`popTo`) e retomar a operação original (`resolveReAuth()`) em vez de
+ * seguir para a splash.
  */
 import { Box, Text } from 'ink';
 import { useState } from 'react';
@@ -29,8 +36,8 @@ type Status = 'idle' | 'validating' | 'error';
 /** Tela de onboarding: colar api_key — Enter valida e confirma, Esc volta (atalho global, ver `../../app.tsx`). */
 export function OnboardingApiKeyScreen() {
   const theme = useTheme();
-  const { replace } = useNavigation();
-  const { callbacks, setUser } = useOnboarding();
+  const { replace, popTo } = useNavigation();
+  const { callbacks, setUser, reAuth, resolveReAuth } = useOnboarding();
   const [apiKey, setApiKey] = useState('');
   const [status, setStatus] = useState<Status>('idle');
   const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined);
@@ -42,6 +49,13 @@ export function OnboardingApiKeyScreen() {
       (outcome) => {
         if (outcome.kind === 'success') {
           setUser(outcome.user);
+          if (reAuth !== undefined) {
+            // M2-13 (#36): volta à tela de origem e retoma a operação
+            // original — ver o mesmo desvio em `validating.tsx`.
+            popTo(reAuth.origin);
+            resolveReAuth();
+            return;
+          }
           replace('onboarding-success');
           return;
         }

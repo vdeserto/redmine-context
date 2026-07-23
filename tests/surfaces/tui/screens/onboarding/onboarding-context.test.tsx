@@ -178,3 +178,61 @@ describe('TUI: useOnboarding — pendingLogin/user (#28)', () => {
     await vi.waitFor(() => expect(lastFrame()).toContain('user:alice'));
   });
 });
+
+describe('TUI: useOnboarding — reAuth/beginReAuth/resolveReAuth (M2-13, #36)', () => {
+  /** Harness: expõe `reAuth` como texto e mapeia teclas para begin/resolve. */
+  function ReAuthHarness({ retry }: { retry: () => void }) {
+    const { reAuth, beginReAuth, resolveReAuth } = useOnboarding();
+    useInput((input) => {
+      if (input === 'b') {
+        beginReAuth({ origin: 'about', retry });
+      }
+      if (input === 'r') {
+        resolveReAuth();
+      }
+    });
+    return <Text>{reAuth === undefined ? 'none' : `origin:${reAuth.origin}`}</Text>;
+  }
+
+  it('começa com reAuth indefinido', () => {
+    const { lastFrame } = render(
+      <OnboardingProvider>
+        <ReAuthHarness retry={vi.fn()} />
+      </OnboardingProvider>,
+    );
+    expect(lastFrame()).toBe('none');
+  });
+
+  it('beginReAuth guarda a origem no contexto', async () => {
+    const { lastFrame, stdin } = render(
+      <OnboardingProvider>
+        <ReAuthHarness retry={vi.fn()} />
+      </OnboardingProvider>,
+    );
+    stdin.write('b');
+    await vi.waitFor(() => expect(lastFrame()).toBe('origin:about'));
+  });
+
+  it('resolveReAuth dispara o retry guardado e limpa o reAuth', async () => {
+    const retry = vi.fn();
+    const { lastFrame, stdin } = render(
+      <OnboardingProvider>
+        <ReAuthHarness retry={retry} />
+      </OnboardingProvider>,
+    );
+    stdin.write('b');
+    await vi.waitFor(() => expect(lastFrame()).toBe('origin:about'));
+    stdin.write('r');
+    await vi.waitFor(() => expect(lastFrame()).toBe('none'));
+    expect(retry).toHaveBeenCalledTimes(1);
+  });
+
+  it('resolveReAuth sem um reAuth em andamento é um no-op seguro', () => {
+    const { stdin } = render(
+      <OnboardingProvider>
+        <ReAuthHarness retry={vi.fn()} />
+      </OnboardingProvider>,
+    );
+    expect(() => stdin.write('r')).not.toThrow();
+  });
+});

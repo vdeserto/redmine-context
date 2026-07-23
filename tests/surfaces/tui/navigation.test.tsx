@@ -45,6 +45,12 @@ function StackHarness() {
     if (input === 'z') {
       value.resetTo('welcome');
     }
+    if (input === 'x') {
+      value.popTo('welcome');
+    }
+    if (input === 'd') {
+      value.popTo('doctor');
+    }
   });
 
   return (
@@ -112,6 +118,33 @@ describe('TUI: useNavigationStack (pilha push/pop/replace)', () => {
   });
 });
 
+
+describe('TUI: popTo — retomada de navegação após um fluxo empilhado (M2-13, #36)', () => {
+  it('desempilha repetidamente até target virar o topo', async () => {
+    const { lastFrame, stdin } = render(<StackHarness />);
+    stdin.write('a'); // welcome>about
+    await vi.waitFor(() => expect(lastFrame()).toBe('welcome>about'));
+    stdin.write('a'); // welcome>about>about
+    await vi.waitFor(() => expect(lastFrame()).toBe('welcome>about>about'));
+    stdin.write('x'); // popTo('welcome')
+    await vi.waitFor(() => expect(lastFrame()).toBe('welcome'));
+  });
+
+  it('não faz nada se target não estiver na pilha', async () => {
+    const { lastFrame, stdin } = render(<StackHarness />);
+    stdin.write('a');
+    await vi.waitFor(() => expect(lastFrame()).toBe('welcome>about'));
+    stdin.write('d'); // popTo('doctor') — não está na pilha
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(lastFrame()).toBe('welcome>about');
+  });
+
+  it('target já no topo é um no-op (nada é removido)', () => {
+    const { lastFrame, stdin } = render(<StackHarness />);
+    stdin.write('x'); // popTo('welcome') — já é o único item
+    expect(lastFrame()).toBe('welcome');
+  });
+});
 
 describe('TUI: resetTo — fim de fluxo multi-tela (fix review #28)', () => {
   it('zera a pilha para uma única tela; pop na raiz não volta ao fluxo encerrado', async () => {

@@ -13,6 +13,13 @@
  *   `theme.danger`, sem stack, com a próxima ação sugerida; `Esc` (atalho
  *   global, `../../app.tsx`) volta para o formulário de login para tentar de
  *   novo.
+ *
+ * M2-13 (issue #36): quando o sucesso acontece com um fluxo de re-auth em
+ * andamento (`OnboardingContext.reAuth`, empilhado por
+ * `../../hooks/use-auth-guard.ts` após um 401 numa tela de dados), o caminho
+ * de sucesso é DIFERENTE — em vez da splash, a navegação volta à tela de
+ * origem (`popTo`) e a operação original é retomada automaticamente
+ * (`resolveReAuth()`, que dispara o `retry` guardado no contexto).
  */
 import { Box, Text } from 'ink';
 import { useEffect, useState } from 'react';
@@ -29,8 +36,8 @@ const NETWORK_ERROR_HINT =
 
 export function OnboardingValidatingScreen() {
   const theme = useTheme();
-  const { replace } = useNavigation();
-  const { pendingLogin, setUser } = useOnboarding();
+  const { replace, popTo } = useNavigation();
+  const { pendingLogin, setUser, reAuth, resolveReAuth } = useOnboarding();
   const [networkError, setNetworkError] = useState<string | undefined>(undefined);
 
   useEffect(() => {
@@ -45,6 +52,14 @@ export function OnboardingValidatingScreen() {
         }
         if (outcome.kind === 'success') {
           setUser(outcome.user);
+          if (reAuth !== undefined) {
+            // M2-13 (#36): volta à tela de origem e retoma a operação
+            // original — não passa pela splash (esse re-login é invisível
+            // para o fluxo da tela de dados que o disparou).
+            popTo(reAuth.origin);
+            resolveReAuth();
+            return;
+          }
           replace('onboarding-success');
           return;
         }
@@ -67,7 +82,7 @@ export function OnboardingValidatingScreen() {
     return () => {
       cancelled = true;
     };
-  }, [pendingLogin, replace, setUser]);
+  }, [pendingLogin, replace, popTo, reAuth, resolveReAuth, setUser]);
 
   if (networkError !== undefined) {
     return (

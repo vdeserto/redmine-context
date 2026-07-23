@@ -24,6 +24,7 @@ import {
   OnboardingProvider,
   useOnboarding,
   type OnboardingLoginOutcome,
+  type OnboardingReAuth,
 } from '../../../../../src/surfaces/tui/screens/onboarding/onboarding-context.js';
 import { OnboardingValidatingScreen } from '../../../../../src/surfaces/tui/screens/onboarding/validating.js';
 import { ThemeProvider } from '../../../../../src/surfaces/tui/theme.js';
@@ -53,6 +54,53 @@ function ValidatingHarness({ outcome }: { outcome: Promise<OnboardingLoginOutcom
             onApiKeySubmit: () => Promise.resolve({ kind: 'network-error', message: 'unused' }),
           }}
         >
+          <SetPending outcome={outcome} />
+          <Text>stack:{navigation.stack.join('>')}</Text>
+          <OnboardingValidatingScreen />
+        </OnboardingProvider>
+      </NavigationProvider>
+    </ThemeProvider>
+  );
+}
+
+/** Dispara `beginReAuth` assim que monta — simula o que `use-auth-guard.ts` já fez antes desta tela existir. */
+function BeginReAuth({ reAuth }: { reAuth: OnboardingReAuth }) {
+  const { beginReAuth } = useOnboarding();
+  useEffect(() => beginReAuth(reAuth), []);
+  return null;
+}
+
+/**
+ * Harness M2-13 (#36): pilha com uma tela de origem + `onboarding-login` +
+ * `onboarding-validating` empilhados por cima (o que `useAuthGuard` faz ao
+ * capturar um 401), e um `reAuth` já em andamento.
+ */
+function ReAuthValidatingHarness({
+  outcome,
+  retry,
+}: {
+  outcome: Promise<OnboardingLoginOutcome>;
+  retry: () => void;
+}) {
+  const navigation = useNavigationStack('about');
+  useEffect(() => {
+    navigation.push('onboarding-login');
+    navigation.push('onboarding-validating');
+    // Reason: simula a pilha já empilhada por `useAuthGuard` antes desta
+    // tela montar — roda uma única vez, na montagem do harness.
+  }, []);
+  return (
+    <ThemeProvider>
+      <NavigationProvider value={navigation}>
+        <OnboardingProvider
+          callbacks={{
+            onUrlSubmit: () => undefined,
+            onModeSelect: () => undefined,
+            onLoginSubmit: () => Promise.resolve({ kind: 'network-error', message: 'unused' }),
+            onApiKeySubmit: () => Promise.resolve({ kind: 'network-error', message: 'unused' }),
+          }}
+        >
+          <BeginReAuth reAuth={{ origin: 'about', retry }} />
           <SetPending outcome={outcome} />
           <Text>stack:{navigation.stack.join('>')}</Text>
           <OnboardingValidatingScreen />
@@ -110,6 +158,27 @@ describe('TUI: OnboardingValidatingScreen', () => {
     expect(lastFrame()).toContain('NODE_EXTRA_CA_CERTS');
     expect(lastFrame()).not.toContain('stack:onboarding-success');
     expect(lastFrame()).not.toContain('    at '); // sem stack trace
+  });
+
+  it('re-auth (M2-13, #36): sucesso volta à tela de origem e retoma a operação (retry), sem passar pela splash', async () => {
+    const retry = vi.fn();
+    const { lastFrame } = render(
+      <ReAuthValidatingHarness outcome={Promise.resolve({ kind: 'success', user: USER })} retry={retry} />,
+    );
+    // Reason: "stack:about" também é PREFIXO da pilha empilhada inicial
+    // ("stack:about>onboarding-login>onboarding-validating") — casa a linha
+    // inteira (fim de linha) para não passar antes do popTo acontecer.
+    await vi.waitFor(() => {
+      expect(lastFrame()).toMatch(/stack:about$/m);
+    });
+    expect(lastFrame()).not.toContain('onboarding-success');
+    // Reason: `resolveReAuth()` limpa o estado num updater funcional do
+    // React — o `retry()` guardado só dispara quando esse updater roda,
+    // numa passagem de commit LOGO APÓS a mudança de pilha observada acima
+    // (não na mesma volta síncrona do `.then()`).
+    await vi.waitFor(() => {
+      expect(retry).toHaveBeenCalledTimes(1);
+    });
   });
 
   it('a tela nunca recebe a senha/api_key em si — só o outcome (já redigido pelo core)', () => {
