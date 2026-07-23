@@ -38,6 +38,21 @@ export interface NavigationValue {
   replace(next: ScreenName): void;
   /** Zera a pilha para uma única tela (fim de fluxo multi-tela). */
   resetTo(next: ScreenName): void;
+  /**
+   * Desempilha repetidamente até `target` ficar no topo — usado para
+   * retomar a navegação após um fluxo empilhado por cima de uma tela de
+   * origem (ex.: re-autenticação, M2-13/#36: `onboarding-login` é
+   * empilhado sobre a tela de dados que recebeu um 401; ao logar de novo,
+   * `popTo(origin)` desfaz esse empilhamento de uma vez, mesmo que o login
+   * tenha passado por telas intermediárias como `onboarding-api-key`).
+   *
+   * Fix do review #119: se `target` não estiver na pilha (ex.: abandono do
+   * re-auth via Esc, `../app.tsx`, numa sessão onde a origem já não é mais
+   * alcançável), cai em {@link resetTo} — zera a pilha para `target` — em
+   * vez de silenciosamente não fazer nada (o que deixaria o usuário preso
+   * numa tela de onboarding sem saída visível).
+   */
+  popTo(target: ScreenName): void;
 }
 
 const NavigationContext = createContext<NavigationValue | undefined>(undefined);
@@ -96,10 +111,28 @@ export function useNavigationStack(initial: ScreenName): NavigationValue {
     setStack(() => [next]);
   }, []);
 
+  // Corta a pilha logo após a última ocorrência de `target` — equivalente a
+  // chamar `pop()` repetidamente até `target` virar o topo, mas em uma única
+  // atualização de estado (evita re-renders intermediários).
+  //
+  // Fix do review #119: quando `target` NÃO está na pilha, o comportamento
+  // passa a ser o mesmo de `resetTo(target)` (zera a pilha para uma única
+  // tela) em vez de um no-op silencioso — evita deixar o usuário preso numa
+  // tela sem rota de volta visível (ex.: abandono do re-auth, `../app.tsx`).
+  const popTo = useCallback((target: ScreenName) => {
+    setStack((current) => {
+      const index = current.lastIndexOf(target);
+      if (index === -1) {
+        return [target];
+      }
+      return current.slice(0, index + 1);
+    });
+  }, []);
+
   // Reason: a pilha sempre tem ao menos 1 item (inicializada com `initial`,
   // `pop()` nunca a esvazia) — o fallback só existe para satisfazer
   // `noUncheckedIndexedAccess` do TypeScript, nunca é de fato alcançado.
   const current = stack[stack.length - 1] ?? initial;
 
-  return { stack, current, push, navigate: push, pop, replace, resetTo };
+  return { stack, current, push, navigate: push, pop, replace, resetTo, popTo };
 }
