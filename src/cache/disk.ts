@@ -91,11 +91,13 @@ export class DiskCacheStore<V = unknown> implements CacheStore<V> {
    * chave com o mesmo comportamento (stale-lock TTL, aviso) do contrato.
    */
   private readonly locks: InMemoryCacheStore<never>;
+  private readonly logger: { warn(message: string): void };
 
   /** @param options - Ver {@link DiskCacheStoreOptions}. */
   constructor(options: DiskCacheStoreOptions = {}) {
     this.root = options.cacheDir ?? defaultCacheDir();
     this.onGc = options.onGc;
+    this.logger = options.logger ?? { warn: () => undefined };
     // Repassa apenas as opções de lock; o GC é responsabilidade deste store.
     this.locks = new InMemoryCacheStore<never>({
       ...(options.logger !== undefined ? { logger: options.logger } : {}),
@@ -114,7 +116,15 @@ export class DiskCacheStore<V = unknown> implements CacheStore<V> {
       }
       throw cause;
     }
-    return JSON.parse(raw) as V;
+    try {
+      return JSON.parse(raw) as V;
+    } catch {
+      // Arquivo corrompido (ex.: crash antes de um rename antigo): trata como
+      // cache-miss auto-curável — o próximo put sobrescreve. Nunca crasha nem
+      // se confunde com erro de IO real (fix review #131).
+      this.logger.warn(`cache: entrada corrompida ignorada (${this.pathFor(key)})`);
+      return undefined;
+    }
   }
 
   /** @inheritdoc */
@@ -152,7 +162,14 @@ export class DiskCacheStore<V = unknown> implements CacheStore<V> {
   private pathFor(key: CacheKey): string {
     const fileName = createHash('sha256').update(serializeCacheKey(key)).digest('hex') + VALUE_EXTENSION;
     if (key.kind === 'attachment') {
-      const digest8 = key.digest.slice(0, DIGEST_PATH_LENGTH);
+      // O digest vem da API (conteúdo EXTERNO): só entra no path se for hex
+      // puro; qualquer outra forma (fallback id+filesize+created_on de
+      // Redmine antigo, ou valor malicioso com `../`) é normalizada por
+      // sha256 — traversal impossível por construção (fix review #131).
+      const hexDigest = /^[0-9a-fA-F]{8,64}$/.test(key.digest)
+        ? key.digest.toLowerCase()
+        : createHash('sha256').update(key.digest).digest('hex');
+      const digest8 = hexDigest.slice(0, DIGEST_PATH_LENGTH);
       const dir = join(this.root, key.instanceHash, ATTACHMENTS_DIR, `${key.attachmentId}-${digest8}`);
       return join(dir, fileName);
     }

@@ -10,12 +10,12 @@
  * no contexto do layout.
  */
 
-import { existsSync, mkdtempSync, readdirSync } from 'node:fs';
-import { readFile, rm } from 'node:fs/promises';
+import { existsSync, mkdtempSync, readdirSync, statSync } from 'node:fs';
+import { readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { DiskCacheStore, defaultCacheDir, instanceHash } from '../../src/cache/index.js';
 
@@ -188,5 +188,49 @@ describe('defaultCacheDir', () => {
     const dir = defaultCacheDir();
     expect(dir.length).toBeGreaterThan(0);
     expect(dir).toContain('redmine-context');
+  });
+});
+
+
+/** Lista recursiva simples de arquivos sob `dir` (absolutos). */
+function listFiles(dir: string): string[] {
+  const out: string[] = [];
+  for (const name of readdirSync(dir)) {
+    const full = join(dir, name);
+    if (statSync(full).isDirectory()) out.push(...listFiles(full));
+    else out.push(full);
+  }
+  return out;
+}
+
+describe('fixes do review #131: JSON corrompido e digest hostil', () => {
+  it('entrada corrompida em disco vira cache-miss com aviso (nunca crash)', async () => {
+    const dir = freshCacheDir();
+    const warn = vi.fn();
+    const store = new DiskCacheStore<{ v: number }>({ cacheDir: dir, logger: { warn } });
+    const key = contractKeys.attachment();
+    await store.put(key, { v: 1 });
+    const target = listFiles(dir).find((f) => f.endsWith('.json'));
+    await writeFile(target as string, '{ nao é json', 'utf8');
+    await expect(store.get(key)).resolves.toBeUndefined();
+    expect(warn).toHaveBeenCalledOnce();
+  });
+
+  it('digest com ../ não escapa do cacheDir (normalizado por sha256) e continua recuperável', async () => {
+    const dir = freshCacheDir();
+    const store = new DiskCacheStore<{ v: number }>({ cacheDir: dir });
+    const evil = contractKeys.attachment({ digest: '../../../../tmp/evil' });
+    await store.put(evil, { v: 7 });
+    const files = listFiles(dir);
+    expect(files.length).toBeGreaterThan(0);
+    for (const f of files) expect(f.startsWith(dir)).toBe(true);
+    await expect(store.get(evil)).resolves.toEqual({ v: 7 });
+  });
+
+  it('digest não-hex (fallback Redmine antigo) é determinístico entre instâncias', async () => {
+    const dir = freshCacheDir();
+    const key = contractKeys.attachment({ digest: '123-4567-2026-01-01' });
+    await new DiskCacheStore<{ v: number }>({ cacheDir: dir }).put(key, { v: 3 });
+    await expect(new DiskCacheStore<{ v: number }>({ cacheDir: dir }).get(key)).resolves.toEqual({ v: 3 });
   });
 });
