@@ -10,8 +10,10 @@
  * `accent`), mas aqui é o clímax de um fluxo que só acontece uma vez por
  * instância configurada.
  *
- * `Enter` segue para a tela inicial com a PILHA ZERADA (`resetTo`) — sem
- * telas do onboarding sobrando por baixo para um Esc alcançar.
+ * `Enter` segue para a home (M2-06, #29) com a PILHA ZERADA (`resetTo`) —
+ * sem telas do onboarding sobrando por baixo para um Esc alcançar. A home é
+ * o destino pós-onboarding: lista "minhas issues" com a credencial recém
+ * salva.
  */
 import { Box, Text, useInput } from 'ink';
 import { useCallback, useRef } from 'react';
@@ -21,7 +23,7 @@ import { symbols } from '../../symbols.js';
 import { useTheme } from '../../theme.js';
 import { useOnboarding } from './onboarding-context.js';
 
-/** Tela de onboarding: sucesso — `Enter` segue para o início (pilha zerada via `resetTo`). */
+/** Tela de onboarding: sucesso — `Enter` segue para a home (pilha zerada via `resetTo`). */
 export function OnboardingSuccessScreen() {
   const theme = useTheme();
   const { resetTo } = useNavigation();
@@ -33,7 +35,7 @@ export function OnboardingSuccessScreen() {
   resetToRef.current = resetTo;
   const handleInput = useCallback((_input: string, key: { return: boolean }) => {
     if (key.return) {
-      resetToRef.current('welcome');
+      resetToRef.current('home');
     }
   }, []);
   useInput(handleInput);

@@ -1,7 +1,8 @@
 /**
- * Testes da tela de onboarding "Sucesso" (#28) — splash comemorativa com o
- * usuário autenticado; Enter segue para o início com a pilha resetada via
- * `replace`. Escrito ANTES da implementação (TDD).
+ * Testes da tela de onboarding "Sucesso" (#28, evoluída na #29) — splash
+ * comemorativa com o usuário autenticado; Enter segue para a home (destino
+ * pós-onboarding, M2-06) com a pilha resetada via `resetTo`. Escrito ANTES
+ * da implementação (TDD).
  */
 import { Text } from 'ink';
 import { render as inkRender } from 'ink-testing-library';
@@ -78,13 +79,13 @@ describe('TUI: OnboardingSuccessScreen', () => {
     expect(lastFrame()).toContain('Bem-vindo');
   });
 
-  it('Enter segue para o início com a pilha resetada via replace (topo trocado)', async () => {
+  it('Enter segue para a home com a pilha resetada via resetTo (topo trocado)', async () => {
     const { lastFrame, stdin } = render(<SuccessHarness user={USER} />);
     expect(lastFrame()).toContain('stack:onboarding-success');
 
     stdin.write(ENTER);
     await vi.waitFor(() => {
-      expect(lastFrame()).toContain('stack:welcome');
+      expect(lastFrame()).toContain('stack:home');
     });
     expect(lastFrame()).not.toContain('onboarding-success');
   });
