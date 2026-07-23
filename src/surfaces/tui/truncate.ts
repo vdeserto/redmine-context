@@ -15,6 +15,12 @@
  * variável ANTES de renderizar evita esse caso — diferente de um bloco de
  * texto isolado (ex.: descrição/journals em `screens/issue-detail.tsx`), que
  * pode seguir confiando no wrap nativo do Ink sem risco de sobreposição.
+  *
+ * LIMITAÇÃO ACEITA (review #126): mede em unidades UTF-16 (`.length`), não em
+ * largura visual de terminal — acentos PT-BR ocupam 1 coluna e funcionam;
+ * CJK/emoji (largura dupla) podem estourar o orçamento. Suporte real de
+ * largura visual (ex.: string-width) fica para quando houver demanda — ver
+ * issue de follow-up da responsividade.
  */
 
 /** Marcador de corte — um único caractere (reticências), nunca `'...'` (3 colunas). */
