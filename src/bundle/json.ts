@@ -158,6 +158,10 @@ function renderExtraction(result: ExtractionResult): JsonValue {
   }
   const reason = result.metadata?.['reason'];
   if (typeof reason === 'string') out.reason = reason;
+  // Paridade com o MD (review #141): o hint (texto NOSSO, ex.: instrução de
+  // instalação) é a parte acionável para o consumidor do JSON (MCP/LLM).
+  const hint = result.metadata?.['hint'];
+  if (typeof hint === 'string') out.hint = hint;
   return out;
 }
 

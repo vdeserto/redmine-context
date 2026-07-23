@@ -28,6 +28,7 @@ import {
   type CacheStore,
   type ExtractorConfig,
 } from './cache/index.js';
+import { RedmineAuthError } from './client/index.js';
 import type { HttpClient, Logger } from './client/index.js';
 import type { Attachment, ExtractionResult, Issue } from './contract.js';
 import {
@@ -186,8 +187,13 @@ export async function extractIssueAttachments(
         });
         return [attachment.id, result] as const;
       } catch (error) {
-        // Reason: um anexo que falha (rede/IO) NÃO pode derrubar os demais nem o
-        // bundle — vira `failed` e o pipeline segue (ADR-002).
+        // Erro de AUTENTICAÇÃO não é falha de UM anexo: a credencial do
+        // processo expirou e nenhum download vai funcionar — propaga para o
+        // chamador acionar o re-login (review #141). O resto (rede/IO/
+        // subprocesso) degrada por anexo, como manda o ADR-002.
+        if (error instanceof RedmineAuthError) {
+          throw error;
+        }
         logger?.warn(
           `extract: falha ao processar o anexo #${attachment.id} (${attachment.filename}); ` +
             `seguindo sem ele: ${error instanceof Error ? error.message : String(error)}`,

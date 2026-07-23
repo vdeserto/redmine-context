@@ -18,6 +18,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { InMemoryCacheStore } from '../src/cache/index.js';
 import type { Attachment, ExtractionResult, Issue } from '../src/contract.js';
+import { RedmineAuthError } from '../src/client/index.js';
 import type { HttpClient } from '../src/client/index.js';
 import {
   ExtractorRegistry,
@@ -213,5 +214,21 @@ describe('extractIssueAttachments: degradação graciosa', () => {
 
     // A segunda passada é servida do cache attachment-level: sem re-extração.
     expect(extractor.extract).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('fixes do review #141', () => {
+  it('RedmineAuthError propaga (credencial expirada não vira failed silencioso)', async () => {
+    const registry = new ExtractorRegistry().register(fakeExtractor());
+    const http = fakeHttp(vi.fn().mockRejectedValue(new RedmineAuthError('credencial expirada')));
+
+    await expect(
+      extractIssueAttachments(http, issueWith([imageAttachment()]), {
+        instanceUrl: INSTANCE_URL,
+        cacheDir,
+        store,
+        registry,
+      }),
+    ).rejects.toBeInstanceOf(RedmineAuthError);
   });
 });
