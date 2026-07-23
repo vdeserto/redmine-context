@@ -13,7 +13,9 @@ Consumidor de Redmine que entrega contexto completo de issues — texto e mídia
 Do login ao contexto da issue no seu LLM, em três passos:
 
 ```bash
-# 1) login — autentica e grava a api_key da instância na cascata de credenciais
+# 1) login — autentica e grava a api_key da instância na cascata de credenciais:
+#    keychain do sistema (preferido) → arquivo 0600 → REDMINE_API_KEY (env).
+#    Credenciais antigas em arquivo migram para o keychain automaticamente.
 #    (senha ou, em contas com 2FA, cole a api_key quando solicitado).
 redmine-context login --url https://redmine.example
 
@@ -46,7 +48,7 @@ ver [Ambiente de teste](#ambiente-de-teste) e [E2E](#e2e-dogfood-cli--mcp)).
 
 ## Estrutura
 
-`src/` segue os 6 módulos do core (ADR-005): `client` (REST Redmine), `normalize`, `extract` (pipeline de mídia), `bundle`, `config` (auth/credenciais), `cache`. Superfícies (CLI/TUI/MCP) chegam nos milestones M1–M2.
+`src/` segue os 6 módulos do core (ADR-005): `client` (REST Redmine), `normalize`, `extract` (pipeline de mídia), `bundle`, `config` (auth/credenciais — cascata keychain → arquivo → env), `cache`. Superfícies: CLI e MCP (M1) e TUI interativa (M2) em `src/surfaces/`.
 
 ## MCP server (stdio)
 
@@ -63,6 +65,27 @@ claude mcp add redmine-context -- npx -y redmine-context mcp
 ```
 
 Configure o ambiente do servidor com `REDMINE_URL` e `REDMINE_API_KEY` (ou rode `redmine-context login` para gravar a credencial na cascata).
+
+
+## TUI interativa
+
+`redmine-context` **sem argumentos** (num terminal interativo) abre a interface
+de texto completa — mesma credencial e mesmo core da CLI/MCP:
+
+| Tela | Como chegar | Para quê |
+|---|---|---|
+| Início | abertura | roteia para onboarding (sem credencial) ou Home |
+| Onboarding | `Enter` no Início | URL → modo de auth → login (senha mascarada) → splash |
+| Home | pós-login | suas issues com estados, seleção e retry |
+| Busca | `/` na Home | full-text + filtro de status (`f` com a busca fechada) |
+| Detalhe | `Enter` numa issue | metadados, descrição/journals roláveis, anexos |
+| Exportação | `e` no Detalhe | grava o bundle MD/JSON (destino com `~`) |
+| Jobs | `t` | operações da sessão |
+| Doctor / Config | `d` / `c` no Início | status do ambiente · logout |
+
+Atalhos globais: `Esc` volta · `q` sai · `Ctrl+C` duas vezes sai · `?` atalhos.
+Sessão expirada (401) reabre o login e retoma a operação automaticamente.
+Em `NO_COLOR`, `CI=true` ou saída não-TTY, a TUI cede lugar ao modo texto puro.
 
 ## Ambiente de teste
 
