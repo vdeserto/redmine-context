@@ -35,7 +35,13 @@ export function humanizeFileSize(bytes: number): string {
     unitIndex += 1;
   }
 
-  const rounded = Math.round(value * 10) / 10;
+  let rounded = Math.round(value * 10) / 10;
+  // O arredondamento pode "estourar" a unidade (1048575 bytes → 1024KB):
+  // nesse caso, escala mais um degrau para exibir 1MB, não 1024KB.
+  if (rounded >= 1024 && unitIndex < UNITS.length - 1) {
+    rounded = Math.round((rounded / 1024) * 10) / 10;
+    unitIndex += 1;
+  }
   const formatted = Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
   return `${formatted}${UNITS[unitIndex]}`;
 }

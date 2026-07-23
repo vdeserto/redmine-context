@@ -41,3 +41,9 @@ describe('TUI: humanizeFileSize', () => {
     expect(humanizeFileSize(-10)).toBe('0B');
   });
 });
+
+it('quase-1024 escala para a unidade seguinte (1048575B → 1MB, nunca 1024KB)', () => {
+  expect(humanizeFileSize(1048575)).toBe('1MB');
+  expect(humanizeFileSize(1024 * 1024 * 1024 - 1)).toBe('1GB');
+  expect(humanizeFileSize(1023 * 1024 + 1000)).toBe('1MB');
+});
