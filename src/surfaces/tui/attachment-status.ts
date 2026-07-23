@@ -1,52 +1,44 @@
 /**
- * Mapeamento local (TUI-only) de status de extração de anexo (#32).
+ * Mapeamento de status de extração de anexo para a apresentação na TUI (#32).
  *
- * FRONTEIRA/BOUNDARY: `src/contract.ts` (o único módulo que as superfícies
- * consomem do core, ADR-005) ainda NÃO exporta um tipo `ExtractionResult`
- * nem `ExtractionResult['status']` — o pipeline de extração real só chega em
- * M3 (OCR/texto de imagem e PDF) e M4 (áudio/vídeo). Este arquivo existe
- * exatamente para não bloquear o M2 nisso: define o vocabulário provisório
- * que a TUI usa HOJE, derivado apenas de `Attachment.content_type` (heurística
- * de apresentação, sem nenhuma extração de fato acontecendo) e documenta a
- * migração esperada:
+ * MIGRAÇÃO (M3-08): desde a #50, `src/contract.ts` — a fronteira única que as
+ * superfícies consomem do core (ADR-005) — PASSA a exportar o vocabulário
+ * canônico {@link ExtractionStatus} do pipeline de extração real. Este módulo
+ * foi então REALINHADO: {@link AttachmentExtractionStatus} agora é um ALIAS do
+ * tipo do contrato (não mais uma união local paralela), de modo que a TUI e o
+ * core compartilham exatamente os mesmos estados — incluindo o novo `skipped`
+ * (anexo pulado por exceder o limite de tamanho, ADR-002).
  *
- * Quando `src/contract.ts` passar a exportar `ExtractionResult['status']`
- * (M3/M4), este módulo deve ser substituído/realinhado para consumir o tipo
- * do contrato em vez desta união local — `deriveAttachmentExtractionStatus`
- * deixa de existir (o status passa a vir pronto do core) e
- * `attachmentStatusColor`/`attachmentStatusLabel` passam a receber o tipo
- * importado de `../../contract.js`.
+ * O que AINDA é TUI-only e provisório é apenas a HEURÍSTICA
+ * {@link deriveAttachmentExtractionStatus}: enquanto a fila de jobs de extração
+ * não roda ligada à TUI, o status exibido é derivado só de
+ * `Attachment.content_type` (apresentação, sem extração de fato). Quando o core
+ * passar a entregar o `ExtractionResult` pronto por anexo (M3/M4), esta derivação
+ * deixa de existir e o status vem direto do `ExtractionResult['status']`;
+ * `attachmentStatusColor`/`attachmentStatusLabel` já operam sobre o tipo do
+ * contrato e permanecem.
  *
- * Vocabulário do M2 (únicos valores que {@link deriveAttachmentExtractionStatus}
- * produz hoje):
+ * Valores que {@link deriveAttachmentExtractionStatus} produz HOJE:
  * - `text` — anexo textual (content_type `text/*`), referenciado como texto-only.
  * - `pending` — ainda não é possível classificar (ex.: `content_type` ausente
  *   no payload do Redmine) — aguarda uma análise futura, não é erro.
  * - `unsupported` — anexo binário conhecido (imagem/PDF/áudio/vídeo) para o
- *   qual o M2 não tem NENHUM extrator — M3 endereça imagem/PDF (OCR), M4
- *   endereça áudio/vídeo.
+ *   qual não há extrator disponível na TUI ainda.
  *
- * Reservados (o layout de badge já suporta, mas nada no M2 produz esses
- * valores — chegarão do core real em M3/M4):
- * - `processing` — extração em andamento (jobs assíncronos, M3/M4).
- * - `done` — texto extraído com sucesso e disponível.
- * - `failed` — extração tentada e falhou.
+ * Valores restantes do vocabulário (produzidos pelo core real em M3/M4; o
+ * layout de badge já os suporta): `processing` (extração em andamento), `done`
+ * (texto extraído com sucesso), `failed` (extração falhou) e `skipped` (pulado
+ * deliberadamente, ex.: limite de tamanho).
  */
-import type { Attachment } from '../../index.js';
+import type { Attachment, ExtractionStatus } from '../../index.js';
 import type { Theme } from './theme.js';
 
 /**
- * União do vocabulário de status de extração consumido pela TUI.
- * Ver o JSDoc do módulo para o que cada valor significa e a fronteira com o
- * core (M3/M4).
+ * Vocabulário de status de extração consumido pela TUI — ALIAS de
+ * {@link ExtractionStatus} do contrato (ADR-005), garantindo alinhamento total
+ * entre a apresentação e o core. Ver o JSDoc do módulo para a migração.
  */
-export type AttachmentExtractionStatus =
-  | 'text'
-  | 'pending'
-  | 'unsupported'
-  | 'processing'
-  | 'done'
-  | 'failed';
+export type AttachmentExtractionStatus = ExtractionStatus;
 
 /** Prefixo de `content_type` considerado texto puro (extraível sem OCR/ASR). */
 const TEXT_CONTENT_TYPE_PREFIX = 'text/';
@@ -100,6 +92,7 @@ export function attachmentStatusColor(theme: Theme, status: AttachmentExtraction
       return theme.danger;
     case 'pending':
     case 'processing':
+    case 'skipped':
       return theme.muted;
     default: {
       // Exaustividade: se a união ganhar um novo membro sem atualizar este
@@ -131,6 +124,8 @@ export function attachmentStatusLabel(status: AttachmentExtractionStatus): strin
       return 'concluído';
     case 'failed':
       return 'falhou';
+    case 'skipped':
+      return 'pulado';
     default: {
       const exhaustiveCheck: never = status;
       return exhaustiveCheck;

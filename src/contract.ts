@@ -101,6 +101,65 @@ export interface Issue {
   watchers?: RedmineRef[];
 }
 
+/**
+ * Status de uma extração de anexo (ADR-005 — pipeline de extração, M3/M4).
+ *
+ * Vocabulário único e canônico do core; as superfícies (TUI/CLI/MCP) apenas o
+ * consomem. Ver a migração documentada em `src/surfaces/tui/attachment-status.ts`.
+ *
+ * - `text` — anexo textual (o conteúdo já É o texto, sem OCR/ASR).
+ * - `pending` — enfileirado/aguardando, ainda não processado.
+ * - `processing` — extração em andamento (job assíncrono).
+ * - `done` — extração concluída; `text` (e/ou `artifacts`) disponível(is).
+ * - `failed` — extração tentada e falhou (ver `metadata.reason`).
+ * - `unsupported` — não há extrator registrado para o MIME REAL do arquivo.
+ * - `skipped` — pulado deliberadamente (ex.: excede o limite de tamanho, ADR-002).
+ */
+export type ExtractionStatus =
+  | 'text'
+  | 'pending'
+  | 'processing'
+  | 'done'
+  | 'failed'
+  | 'unsupported'
+  | 'skipped';
+
+/**
+ * Artefato derivado de uma extração (arquivo produzido e cacheado ao lado do
+ * `original` do anexo, ADR-004) — ex.: transcrição, texto de página, thumbnail.
+ */
+export interface ExtractionArtifact {
+  /** Tipo do artefato (ex.: `transcript`, `page-text`, `thumbnail`). */
+  kind: string;
+  /** Caminho absoluto do artefato no cache local. */
+  path: string;
+  /** MIME do artefato, quando conhecido. */
+  mime?: string;
+}
+
+/**
+ * Resultado de uma extração de anexo (ADR-005).
+ *
+ * `status` é sempre presente; `text`/`confidence`/`artifacts` são preenchidos
+ * conforme o extrator e o status (ex.: `done` traz `text`; `unsupported`/
+ * `skipped` trazem apenas `status` + `metadata`). `mime` carrega o MIME REAL
+ * detectado por magic bytes (NUNCA por extensão/Content-Type).
+ */
+export interface ExtractionResult {
+  /** Estado final/atual da extração. */
+  status: ExtractionStatus;
+  /** Texto extraído (quando `status === 'text'` ou `'done'`). */
+  text?: string;
+  /** Confiança da extração em [0, 1] (ex.: score de OCR/ASR). */
+  confidence?: number;
+  /** Artefatos derivados produzidos pela extração. */
+  artifacts?: ExtractionArtifact[];
+  /** MIME REAL detectado por magic bytes do arquivo baixado. */
+  mime?: string;
+  /** Metadados livres (ex.: `extractorId`, `version`, `reason`, `declaredMime`). */
+  metadata?: Record<string, unknown>;
+}
+
 /** Evento de progresso incremental emitido durante uma operação longa. */
 export interface ProgressEvent {
   kind: 'progress';
