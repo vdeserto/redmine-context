@@ -79,16 +79,22 @@ export class DiskCacheIndex {
     this.logger = logger;
   }
 
-  /** Registra (ou substitui) a entrada de um put — persiste imediatamente. */
+  /**
+   * Registra (ou substitui) a entrada de um put — persiste imediatamente.
+   * @returns O tamanho anterior da entrada substituída (0 se era nova) — usado
+   *   pelo total incremental do GC (review #137).
+   */
   async recordPut(
     instanceHash: string,
     recordKey: string,
     entry: CacheIndexEntry,
-  ): Promise<void> {
+  ): Promise<number> {
     const index = await this.load(instanceHash);
+    const previousSize = index.entries.get(recordKey)?.size ?? 0;
     index.entries.set(recordKey, entry);
     index.pendingAccess.delete(recordKey);
     await this.persist(instanceHash, index);
+    return previousSize;
   }
 
   /** Bufferiza a atualização de `last_accessed_at` de um get (throttled). */
@@ -105,12 +111,17 @@ export class DiskCacheIndex {
     lazy.pendingAccess.set(recordKey, at);
   }
 
-  /** Remove a entrada de um invalidate — persiste imediatamente. */
-  async remove(instanceHash: string, recordKey: string): Promise<void> {
+  /**
+   * Remove a entrada de um invalidate — persiste imediatamente.
+   * @returns O tamanho da entrada removida (0 se não existia).
+   */
+  async remove(instanceHash: string, recordKey: string): Promise<number> {
     const index = await this.load(instanceHash);
+    const removedSize = index.entries.get(recordKey)?.size ?? 0;
     index.entries.delete(recordKey);
     index.pendingAccess.delete(recordKey);
     await this.persist(instanceHash, index);
+    return removedSize;
   }
 
   /** Faz flush de TODOS os buffers pendentes (chamado pelo gc()). */

@@ -7,7 +7,7 @@
  * (entradas removidas saem do `index.json`) e o hook `onGc` continua observável.
  */
 
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -18,6 +18,7 @@ import { DiskCacheStore, type GcContext } from '../../src/cache/index.js';
 import type { CacheIndexEntry } from '../../src/cache/disk-index.js';
 
 import { contractKeys } from './contract-suite.js';
+import { serializeCacheKey } from '../../src/cache/index.js';
 
 /** Lê as entradas do `index.json` de uma instância como array. */
 function readIndexEntries(cacheDir: string, instanceHash: string): CacheIndexEntry[] {
@@ -123,5 +124,37 @@ describe('DiskCacheStore GC: teto default não despeja e hook observável', () =
 
     expect(readIndexEntries(cacheDir, INSTANCE)).toHaveLength(2);
     expect(calls.at(-1)?.entryCount).toBe(2);
+  });
+});
+
+describe('fixes do review #137: órfã reconciliada elegível + curto-circuito', () => {
+  it('entrada órfã reconciliada pelo gc() é despejada quando o teto exige', async () => {
+    const cacheDir = freshCacheDir();
+    const store = new DiskCacheStore<string>({ cacheDir, maxBytes: 40 });
+    const hash = 'aaaa000011112222';
+    const keep = contractKeys.attachment({ instanceHash: hash, attachmentId: 1 });
+    const orphanKey = contractKeys.attachment({ instanceHash: hash, attachmentId: 2 });
+    await store.put(keep, 'pequeno');
+    await store.put(orphanKey, 'valor-grande-que-estoura-o-teto');
+
+    // Simula o crash: apaga a entrada do órfão do índice (arquivo permanece).
+    const indexPath = join(cacheDir, hash, 'index.json');
+    const parsed = JSON.parse(readFileSync(indexPath, 'utf8')) as {
+      entries: Record<string, { key: string }>;
+    };
+    for (const [recordKey, entry] of Object.entries(parsed.entries)) {
+      if (entry.key === serializeCacheKey(orphanKey)) delete parsed.entries[recordKey];
+    }
+    writeFileSync(indexPath, JSON.stringify(parsed), 'utf8');
+
+    // Novo processo: gc() reconcilia o órfão E o despeja pelo teto.
+    const reopened = new DiskCacheStore<string>({ cacheDir, maxBytes: 40 });
+    await reopened.gc();
+    // O órfão (extraction LRU maior) saiu; algo permaneceu dentro do teto.
+    const after = JSON.parse(readFileSync(indexPath, 'utf8')) as {
+      entries: Record<string, { size: number }>;
+    };
+    const total = Object.values(after.entries).reduce((s, e) => s + e.size, 0);
+    expect(total).toBeLessThanOrEqual(40);
   });
 });
