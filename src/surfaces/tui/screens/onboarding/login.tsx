@@ -7,13 +7,18 @@
  * Ink não tem noção de foco, então só um `TextInput` fica `isActive` por
  * vez, senão a mesma tecla digitaria nos dois campos ao mesmo tempo. Enter
  * no campo de usuário avança para a senha; Enter na senha confirma o
- * formulário via o callback injetável `onLoginSubmit` — a chamada real a
- * `loginWithPassword` (core) é a #28.
+ * formulário: dispara `callbacks.onLoginSubmit` (wiring real a
+ * `loginWithPassword` do core em `../../hooks/use-onboarding-callbacks.ts`,
+ * #28), guarda a `Promise` resultante em `pendingLogin` (`OnboardingContext`)
+ * e navega para `onboarding-validating`, que consome essa promise e decide a
+ * próxima tela (splash de sucesso, fallback de api_key em 401/2FA, ou
+ * mensagem de erro de rede).
  */
 import { Box, Text, useInput } from 'ink';
 import { useState, useCallback } from 'react';
 
 import { TextInput } from '../../components/text-input.js';
+import { useNavigation } from '../../navigation.js';
 import { symbols } from '../../symbols.js';
 import { useTheme } from '../../theme.js';
 import { useOnboarding } from './onboarding-context.js';
@@ -29,7 +34,8 @@ function otherField(field: Field): Field {
 /** Tela de onboarding: login por usuário/senha — Esc volta (atalho global, ver `../../app.tsx`). */
 export function OnboardingLoginScreen() {
   const theme = useTheme();
-  const { callbacks } = useOnboarding();
+  const { push } = useNavigation();
+  const { callbacks, setPendingLogin } = useOnboarding();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [field, setField] = useState<Field>('username');
@@ -67,7 +73,10 @@ export function OnboardingLoginScreen() {
           <TextInput
             value={password}
             onChange={setPassword}
-            onSubmit={() => callbacks.onLoginSubmit({ username, password })}
+            onSubmit={() => {
+              setPendingLogin(callbacks.onLoginSubmit({ username, password }));
+              push('onboarding-validating');
+            }}
             mask="•"
             isActive={field === 'password'}
           />

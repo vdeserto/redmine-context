@@ -2,9 +2,11 @@ export const MODULE_NAME = 'config' as const;
 
 export {
   loginWithPassword,
+  validateApiKey,
   RedmineLoginError,
   type LoginOptions,
   type LoginResult,
+  type ValidateApiKeyOptions,
 } from './login.js';
 
 export {
