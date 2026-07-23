@@ -63,6 +63,7 @@ import { DoctorScreen } from '../../../src/surfaces/tui/screens/doctor.js';
 import { ExportScreen } from '../../../src/surfaces/tui/screens/export.js';
 import { HomeScreen } from '../../../src/surfaces/tui/screens/home.js';
 import { HomeSelectionProvider } from '../../../src/surfaces/tui/screens/home-selection.js';
+import { JobRegistryProvider } from '../../../src/surfaces/tui/job-registry.js';
 import { IssueDetailScreen } from '../../../src/surfaces/tui/screens/issue-detail.js';
 import * as loadedIssueModule from '../../../src/surfaces/tui/screens/loaded-issue-context.js';
 import { LoadedIssueProvider } from '../../../src/surfaces/tui/screens/loaded-issue-context.js';
@@ -280,7 +281,9 @@ describe('Layout responsivo — ExportScreen', () => {
     const { lastFrame, cleanup } = renderAtWidth(
       <ThemeProvider>
         <NavigationProvider value={navMock()}>
-          <ExportScreen />
+          <JobRegistryProvider>
+            <ExportScreen />
+          </JobRegistryProvider>
         </NavigationProvider>
       </ThemeProvider>,
       width,
@@ -294,7 +297,9 @@ describe('Layout responsivo — ExportScreen', () => {
     const { lastFrame, cleanup } = renderAtWidth(
       <ThemeProvider>
         <NavigationProvider value={navMock()}>
-          <ExportScreen />
+          <JobRegistryProvider>
+            <ExportScreen />
+          </JobRegistryProvider>
         </NavigationProvider>
       </ThemeProvider>,
       60,
@@ -311,7 +316,9 @@ describe('Layout responsivo — ExportScreen', () => {
     const { lastFrame, stdin, cleanup } = renderAtWidth(
       <ThemeProvider>
         <NavigationProvider value={navMock()}>
-          <ExportScreen />
+          <JobRegistryProvider>
+            <ExportScreen />
+          </JobRegistryProvider>
         </NavigationProvider>
       </ThemeProvider>,
       60,
