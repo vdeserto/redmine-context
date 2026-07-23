@@ -10,7 +10,8 @@
  * `accent`), mas aqui é o clímax de um fluxo que só acontece uma vez por
  * instância configurada.
  *
- * `Enter` segue para a tela inicial com a pilha resetada via `replace`.
+ * `Enter` segue para a tela inicial com a PILHA ZERADA (`resetTo`) — sem
+ * telas do onboarding sobrando por baixo para um Esc alcançar.
  */
 import { Box, Text, useInput } from 'ink';
 import { useCallback, useRef } from 'react';
@@ -20,19 +21,19 @@ import { symbols } from '../../symbols.js';
 import { useTheme } from '../../theme.js';
 import { useOnboarding } from './onboarding-context.js';
 
-/** Tela de onboarding: sucesso — `Enter` segue para o início (pilha resetada via `replace`). */
+/** Tela de onboarding: sucesso — `Enter` segue para o início (pilha zerada via `resetTo`). */
 export function OnboardingSuccessScreen() {
   const theme = useTheme();
-  const { replace } = useNavigation();
+  const { resetTo } = useNavigation();
   const { user } = useOnboarding();
 
   // Handler ESTÁVEL (useCallback + refs, padrão do repo — ver text-input.tsx/app.tsx):
   // identidade nova a cada render des/re-subscreve o useInput e pode perder um Enter rápido.
-  const replaceRef = useRef(replace);
-  replaceRef.current = replace;
+  const resetToRef = useRef(resetTo);
+  resetToRef.current = resetTo;
   const handleInput = useCallback((_input: string, key: { return: boolean }) => {
     if (key.return) {
-      replaceRef.current('welcome');
+      resetToRef.current('welcome');
     }
   }, []);
   useInput(handleInput);

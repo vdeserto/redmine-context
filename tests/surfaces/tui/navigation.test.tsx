@@ -42,6 +42,9 @@ function StackHarness() {
     if (input === 'r') {
       value.replace('about');
     }
+    if (input === 'z') {
+      value.resetTo('welcome');
+    }
   });
 
   return (
@@ -106,5 +109,22 @@ describe('TUI: useNavigationStack (pilha push/pop/replace)', () => {
     await vi.waitFor(() => {
       expect(lastFrame()).toBe('about');
     });
+  });
+});
+
+
+describe('TUI: resetTo — fim de fluxo multi-tela (fix review #28)', () => {
+  it('zera a pilha para uma única tela; pop na raiz não volta ao fluxo encerrado', async () => {
+    const { lastFrame, stdin } = render(<StackHarness />);
+    stdin.write('a');
+    await vi.waitFor(() => expect(lastFrame()).toBe('welcome>about'));
+    stdin.write('a');
+    await vi.waitFor(() => expect(lastFrame()).toBe('welcome>about>about'));
+    stdin.write('z');
+    await vi.waitFor(() => expect(lastFrame()).toBe('welcome'));
+    stdin.write('p');
+    // pop na raiz é no-op — segue em welcome, sem "voltar" ao fluxo zerado.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(lastFrame()).toBe('welcome');
   });
 });

@@ -35,6 +35,7 @@ function navMock(overrides: Partial<NavigationValue> = {}): NavigationValue {
     navigate: vi.fn(),
     pop: vi.fn(),
     replace: vi.fn(),
+    resetTo: vi.fn(),
     ...overrides,
   };
 }
@@ -135,7 +136,7 @@ describe('TUI: tela config', () => {
     expect(lastFrame()).not.toContain(FAKE_API_KEY);
   });
 
-  it('depois do logout, qualquer tecla volta ao início com a pilha resetada (replace)', async () => {
+  it('depois do logout, qualquer tecla volta ao início com a pilha zerada (resetTo)', async () => {
     const nav = navMock();
     vi.stubEnv('REDMINE_URL', 'https://redmine.example');
     vi.mocked(core.describeCredentialSource)
@@ -152,7 +153,7 @@ describe('TUI: tela config', () => {
     });
 
     stdin.write('x');
-    expect(nav.replace).toHaveBeenCalledWith('welcome');
+    expect(nav.resetTo).toHaveBeenCalledWith('welcome');
   });
 
   it('sem instância configurada, "l" não faz nada (nenhum destino para o logout)', () => {

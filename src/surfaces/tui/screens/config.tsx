@@ -8,7 +8,7 @@
  * api_key em si, só a fonte, via `describeCredentialSource`).
  *
  * Depois do logout, a tela aguarda uma tecla qualquer para voltar ao início
- * com `replace('welcome')` — como `config` só é alcançada a partir da
+ * com `resetTo('welcome')` — como `config` só é alcançada a partir da
  * `welcome` (hint da tela inicial), isso equivale a resetar a pilha de
  * navegação para a base.
  */
@@ -26,7 +26,7 @@ type LogoutState = 'idle' | 'working' | 'done' | 'error';
 
 /** Tela config: instância + credencial em uso, `l` faz logout, `b` volta. */
 export function ConfigScreen() {
-  const { pop, replace } = useNavigation();
+  const { pop, resetTo } = useNavigation();
   const theme = useTheme();
   const status = useDoctorStatus();
   const [logoutState, setLogoutState] = useState<LogoutState>('idle');
@@ -51,8 +51,8 @@ export function ConfigScreen() {
 
   useInput((input) => {
     if (logoutState === 'done' || logoutState === 'error') {
-      // Qualquer tecla confirma e volta ao início — pilha resetada (replace).
-      replace('welcome');
+      // Qualquer tecla confirma e volta ao início — pilha zerada (resetTo).
+      resetTo('welcome');
       return;
     }
 
