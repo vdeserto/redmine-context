@@ -138,6 +138,35 @@ export async function runIssue(parsed: ParsedArgs, deps: RunDeps): Promise<numbe
 }
 
 /**
+ * Comando `doctor`: diagnostica os binários de mídia (hoje o `tesseract`) e
+ * imprime um relatório em TEXTO PURO no stdout. Degrada naturalmente em
+ * `NO_COLOR`/não-TTY (não emite cor/ANSI). Exit 0 se todos presentes, 1 se
+ * faltar algum — o exit code deixa o resultado programável em scripts.
+ *
+ * @param _parsed - Argumentos parseados (o comando não usa flags hoje).
+ * @param deps - Dependências injetáveis (I/O).
+ * @returns Exit code do processo (0 = tudo ok, 1 = binário faltando).
+ */
+export async function runDoctor(_parsed: ParsedArgs, deps: RunDeps): Promise<number> {
+  const diagnoses = await core.diagnoseBinaries();
+  deps.stdout('Binários de mídia:\n');
+
+  let allPresent = true;
+  for (const binary of diagnoses) {
+    if (binary.found) {
+      const version = binary.version !== undefined ? ` v${binary.version}` : '';
+      const location = binary.path !== undefined ? ` (${binary.path})` : '';
+      deps.stdout(`  [ok] ${binary.name}${version}${location}\n`);
+    } else {
+      allPresent = false;
+      deps.stdout(`  [faltando] ${binary.name} — instale com: ${binary.installHint}\n`);
+    }
+  }
+
+  return allPresent ? 0 : EXIT.GENERIC;
+}
+
+/**
  * Descobre a api_key interativamente: login por senha e, no fallback de 2FA
  * (ou senha inválida), orienta colar a api_key.
  *

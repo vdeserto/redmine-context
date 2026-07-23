@@ -11,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../../../../src/index.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../../src/index.js')>();
-  return { ...actual, describeCredentialSource: vi.fn() };
+  return { ...actual, describeCredentialSource: vi.fn(), diagnoseBinaries: vi.fn() };
 });
 
 import * as core from '../../../../src/index.js';
@@ -51,6 +51,8 @@ let fetchMock: ReturnType<typeof vi.fn>;
 beforeEach(() => {
   fetchMock = vi.fn();
   vi.stubGlobal('fetch', fetchMock);
+  // Default hermético: sem binários (a maioria dos testes não olha esta seção).
+  vi.mocked(core.diagnoseBinaries).mockResolvedValue([]);
 });
 
 afterEach(() => {
@@ -147,6 +149,31 @@ describe('TUI: tela doctor', () => {
       expect(lastFrame()).toContain('variável de ambiente');
     });
     expect(lastFrame()).not.toContain(FAKE_API_KEY);
+  });
+
+  it('seção "Binários de mídia": tesseract presente mostra a versão', async () => {
+    vi.stubEnv('REDMINE_URL', '');
+    vi.mocked(core.diagnoseBinaries).mockResolvedValue([
+      { name: 'tesseract', found: true, path: '/usr/bin/tesseract', version: '5.5.0', installHint: 'brew install tesseract' },
+    ]);
+    const { lastFrame } = renderDoctor();
+    await vi.waitFor(() => {
+      expect(lastFrame()).toContain('Binários de mídia');
+      expect(lastFrame()).toContain('tesseract');
+      expect(lastFrame()).toContain('5.5.0');
+    });
+  });
+
+  it('seção "Binários de mídia": tesseract ausente mostra a instrução de instalação', async () => {
+    vi.stubEnv('REDMINE_URL', '');
+    vi.mocked(core.diagnoseBinaries).mockResolvedValue([
+      { name: 'tesseract', found: false, installHint: 'winget install UB-Mannheim.TesseractOCR' },
+    ]);
+    const { lastFrame } = renderDoctor();
+    await vi.waitFor(() => {
+      expect(lastFrame()).toContain('ausente');
+      expect(lastFrame()).toContain('UB-Mannheim');
+    });
   });
 
   it('"b" volta para a tela anterior (pop)', () => {

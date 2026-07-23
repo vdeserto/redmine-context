@@ -16,11 +16,13 @@
  */
 import { Box, Text, useInput } from 'ink';
 
+import type { BinaryDiagnosis } from '../../../index.js';
 import {
   useDoctorStatus,
   type ConnectivityStatus,
   type DoctorStatus,
 } from '../hooks/use-doctor-status.js';
+import { useMediaBinaries } from '../hooks/use-media-binaries.js';
 import { useTerminalWidth } from '../hooks/use-terminal-width.js';
 import { useNavigation } from '../navigation.js';
 import { symbols } from '../symbols.js';
@@ -104,6 +106,35 @@ function connectivityRow(
   return { value: `falha${detail !== undefined ? ` (${detail})` : ''}`, tone: 'error' };
 }
 
+/** Formata o valor + tom da linha de um binário de mídia (M3-11, #53). */
+function mediaBinaryRow(binary: BinaryDiagnosis): { value: string; tone: RowTone } {
+  if (!binary.found) {
+    return { value: `ausente — instale com: ${binary.installHint}`, tone: 'error' };
+  }
+  const version = binary.version !== undefined ? `v${binary.version}` : 'instalado';
+  const location = binary.path !== undefined ? ` (${binary.path})` : '';
+  return { value: `${version}${location}`, tone: 'ok' };
+}
+
+/** Seção "Binários de mídia": consome o mesmo diagnóstico do core que a CLI (#53). */
+function MediaBinariesSection() {
+  const theme = useTheme();
+  const { loading, binaries } = useMediaBinaries();
+  return (
+    <Box marginTop={1} flexDirection="column">
+      <Text color={theme.muted}>Binários de mídia</Text>
+      {loading ? (
+        <StatusRow label="tesseract" value="verificando..." tone="neutral" />
+      ) : (
+        binaries.map((binary) => {
+          const row = mediaBinaryRow(binary);
+          return <StatusRow key={binary.name} label={binary.name} value={row.value} tone={row.tone} />;
+        })
+      )}
+    </Box>
+  );
+}
+
 /** Tela doctor: `b` (ou `Esc`, atalho global) volta para a tela anterior (ver `app.tsx`). */
 export function DoctorScreen() {
   const { pop } = useNavigation();
@@ -132,6 +163,7 @@ export function DoctorScreen() {
         <StatusRow label="Credencial" value={credential.value} tone={credential.tone} />
         <StatusRow label="Conectividade" value={connectivity.value} tone={connectivity.tone} />
       </Box>
+      <MediaBinariesSection />
       <Box marginTop={1}>
         <Text color={theme.muted}>
           Pressione{' '}

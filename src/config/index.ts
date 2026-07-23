@@ -34,3 +34,10 @@ export {
   type KeyringModule,
   type KeyringModuleLoader,
 } from './keyring.js';
+
+export {
+  diagnoseBinaries,
+  tesseractInstallHint,
+  type BinaryDiagnosis,
+  type DiagnoseBinariesOptions,
+} from './doctor.js';

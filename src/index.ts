@@ -94,3 +94,13 @@ export {
   type CredentialCascadeOptions,
   type CredentialSourceKind,
 } from './config/index.js';
+
+// Diagnóstico de binários de mídia (M3-11, #53) — núcleo do comando `doctor`
+// (CLI) e da seção "Binários de mídia" da TUI. Detecção do tesseract + hint de
+// instalação por SO (ADR-002).
+export {
+  diagnoseBinaries,
+  tesseractInstallHint,
+  type BinaryDiagnosis,
+  type DiagnoseBinariesOptions,
+} from './config/index.js';
