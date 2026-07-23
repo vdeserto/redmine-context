@@ -36,6 +36,8 @@ Comando issue:
   O progresso da operação é enviado para stderr.
 
   --json            Emite o bundle JSON canônico em vez de Markdown.
+  --extract         Extrai o texto (OCR) dos anexos de imagem e o embute no
+                    bundle (adiciona latência de download+OCR; requer tesseract).
   --out <dir>       Grava o bundle em <dir>/<id>.md|.json em vez de stdout.
   --url <url>       URL da instância Redmine (ou defina REDMINE_URL).
   --insecure        Permite http:// sem TLS (não recomendado).
@@ -55,9 +57,10 @@ Comando doctor:
   faltar algum.
 
 Comando mcp:
-  Sobe um servidor MCP (stdio) expondo a tool read-only get_issue_context.
-  A instância vem de REDMINE_URL + credencial da cascata (REDMINE_API_KEY);
-  nenhuma tool aceita URL/host arbitrário. Logs vão para stderr.
+  Sobe um servidor MCP (stdio) expondo as tools read-only get_issue_context,
+  search_issues e get_attachment_text. A instância vem de REDMINE_URL +
+  credencial da cascata (REDMINE_API_KEY); nenhuma tool aceita URL/host
+  arbitrário. Logs vão para stderr.
 
 Credenciais:
   A api_key é resolvida na ordem: keychain do sistema -> arquivo de

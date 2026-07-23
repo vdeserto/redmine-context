@@ -99,6 +99,8 @@ export async function runIssue(parsed: ParsedArgs, deps: RunDeps): Promise<numbe
 
   const format: BundleFormat = parsed.flags.get('json') === true ? 'json' : 'md';
   const outDir = stringFlag(parsed, 'out');
+  // --extract liga a extração de texto dos anexos (OCR) no bundle (M3-13).
+  const extractAttachments = parsed.flags.get('extract') === true;
 
   try {
     let content: string | undefined;
@@ -109,6 +111,7 @@ export async function runIssue(parsed: ParsedArgs, deps: RunDeps): Promise<numbe
       format,
       toolVersion: core.TOOL_VERSION,
       insecure,
+      extractAttachments,
     })) {
       if (event.kind === 'progress') {
         deps.stderr(`... ${event.message}\n`);

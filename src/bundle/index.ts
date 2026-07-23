@@ -7,7 +7,7 @@ export {
   type JsonBundleMeta,
   type JsonBundleSource,
 } from './json.js';
-export { buildMarkdownBundle, fenceInline, type MarkdownBundleMeta } from './markdown.js';
+export { buildMarkdownBundle, fenceBlock, fenceInline, type MarkdownBundleMeta } from './markdown.js';
 export {
   buildSearchListMarkdown,
   type SearchListItem,
