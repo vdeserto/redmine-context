@@ -195,7 +195,11 @@ async function* toChunks(stream: ReadableStream<Uint8Array>): AsyncGenerator<Uin
       if (value !== undefined) yield value;
     }
   } finally {
-    reader.releaseLock();
+    // cancel() de fato ABORTA a leitura da resposta HTTP (corta a banda) —
+    // releaseLock() sozinho só liberaria o lock e o corpo continuaria sendo
+    // baixado em background (fix review #136). Em conclusão normal (done),
+    // cancel é um no-op seguro.
+    await reader.cancel().catch(() => reader.releaseLock());
   }
 }
 

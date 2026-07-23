@@ -348,3 +348,27 @@ describe('downloadAttachment: derivação do digest no path', () => {
     expect(path).toContain(`${attachment.id}-${digest8}`);
   });
 });
+
+
+describe('fix review #136: cancelamento real do stream no pós-check', () => {
+  it('exceder o limite chama cancel() do stream (corta a banda), não só para de gravar', async () => {
+    const cancel = vi.fn(() => Promise.resolve());
+    // Stream "infinito": só o cancel() interrompe a fonte.
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(new Uint8Array(64 * 1024));
+      },
+      cancel,
+    });
+    const attachment = makeAttachment({ filesize: 10 });
+    const cacheDir = mkdtempSync(join(tmpdir(), 'rc-dl-cancel-'));
+    const result = await downloadAttachment(
+      fakeHttp(vi.fn().mockResolvedValue(body)),
+      attachment,
+      { cacheDir, instanceUrl: INSTANCE_URL, maxBytes: 16 },
+    );
+    expect(typeof result).toBe('object');
+    expect((result as { skipped: boolean }).skipped).toBe(true);
+    expect(cancel).toHaveBeenCalled();
+  });
+});
