@@ -9,9 +9,11 @@
  *
  * Atalhos globais (qualquer tela): `q` sai, `Esc` volta (`pop()` da pilha,
  * ver `navigation.tsx`), `Ctrl+C` segue o padrão de duas pressões (ver
- * `hooks/use-exit-guard.ts`), `/` está reservado para a busca (M2-07) —
- * registrado aqui como no-op para não ser usado por engano por outra tela
- * antes da tela de busca existir.
+ * `hooks/use-exit-guard.ts`). `/` era reservado (no-op) para a busca antes
+ * da M2-07 existir; a semântica real agora vive na home (`screens/home.tsx`,
+ * que registra seu PRÓPRIO `useInput` para `/`) — o handler global permanece
+ * no-op aqui, o que automaticamente CONTINUA bloqueando `/` em qualquer tela
+ * que não seja a home (nenhuma outra tela trata essa tecla).
  *
  * Fix do review do PR #119: `Esc` numa tela `onboarding-*` enquanto um
  * re-auth (M2-13, #36) está em andamento (`OnboardingContext.reAuth`) passa
@@ -21,12 +23,19 @@
  * `abortReAuth()` rejeita as pendências com `ReAuthAbortedError` e a
  * navegação volta direto para a tela de ORIGEM do 401 (`popTo`,
  * `navigation.tsx`) em vez de só desempilhar uma tela por vez.
+ *
+ * M2-07 (#30): `Esc` no campo de busca da home precisa fechar a busca em vez
+ * de desempilhar a home inteira — `consumeEscapeInterceptor()`
+ * (`hooks/use-escape-interceptor.ts`) é consultado ANTES do `pop()` padrão;
+ * se a home registrou um interceptor (busca aberta), ele é quem trata o Esc
+ * e o `pop()`/abandono de re-auth abaixo é pulado nesse ciclo.
  */
 import { useCallback, useRef } from 'react';
 import { Box, Text, useApp, useInput } from 'ink';
 
 import { Breadcrumb } from './components/breadcrumb.js';
 import { ReAuthAbortedError } from './hooks/use-auth-guard.js';
+import { consumeEscapeInterceptor } from './hooks/use-escape-interceptor.js';
 import { useExitGuard } from './hooks/use-exit-guard.js';
 import { useOnboardingCallbacks } from './hooks/use-onboarding-callbacks.js';
 import { NavigationProvider, useNavigation, useNavigationStack } from './navigation.js';
@@ -121,6 +130,12 @@ function AppShell() {
     }
 
     if (key.escape) {
+      // M2-07 (#30): a busca da home intercepta Esc para fechar o campo em
+      // vez de desempilhar a tela — consultado ANTES de qualquer outra
+      // semântica de Esc (pop/abandono de re-auth).
+      if (consumeEscapeInterceptor()) {
+        return;
+      }
       // Fix do review #119: Esc numa tela de onboarding com um re-auth ativo
       // é ABANDONO explícito — aborta as pendências (rejeita o(s) `guard()`
       // original(is) com `ReAuthAbortedError`) e volta direto à tela de
