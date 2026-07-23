@@ -13,6 +13,8 @@ import type { ComponentType } from 'react';
 import { AboutScreen } from './screens/about.js';
 import { ConfigScreen } from './screens/config.js';
 import { DoctorScreen } from './screens/doctor.js';
+import { HomeScreen } from './screens/home.js';
+import { IssueDetailScreen } from './screens/issue-detail.js';
 import { OnboardingApiKeyScreen } from './screens/onboarding/api-key.js';
 import { OnboardingLoginScreen } from './screens/onboarding/login.js';
 import { OnboardingModeScreen } from './screens/onboarding/mode.js';
@@ -28,6 +30,8 @@ export type ScreenName =
   | 'about'
   | 'doctor'
   | 'config'
+  | 'home'
+  | 'issue-detail'
   | 'onboarding-url'
   | 'onboarding-mode'
   | 'onboarding-login'
@@ -58,6 +62,8 @@ export const SCREENS: Record<ScreenName, ScreenEntry> = {
   about: { component: AboutScreen, title: 'Atalhos' },
   doctor: { component: DoctorScreen, title: 'Doctor' },
   config: { component: ConfigScreen, title: 'Configuração' },
+  home: { component: HomeScreen, title: 'Minhas issues' },
+  'issue-detail': { component: IssueDetailScreen, title: 'Detalhe da issue' },
   'onboarding-url': { component: OnboardingUrlScreen, title: `Onboarding ${symbols.pointerSmall} URL` },
   'onboarding-mode': { component: OnboardingModeScreen, title: `Onboarding ${symbols.pointerSmall} Modo` },
   'onboarding-login': { component: OnboardingLoginScreen, title: `Onboarding ${symbols.pointerSmall} Login` },

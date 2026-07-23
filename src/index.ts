@@ -26,6 +26,20 @@ export {
 // Primitiva full-text `/search.json` (usada pela orquestração acima).
 export { searchIssues, type SearchIssuesOptions, type SearchIssuesPage } from './client/index.js';
 
+// Client HTTP base (auth por api_key + retry) — usado por telas que precisam
+// montar suas próprias chamadas ao core sem uma orquestração pronta (ex.: a
+// home da TUI, #29, que lista "minhas issues" via `listIssues` abaixo).
+export {
+  createHttpClient,
+  type HttpClient,
+  type HttpClientOptions,
+  type QueryParams,
+} from './client/index.js';
+
+// Listagem paginada de issues (`GET /issues.json`), payload bruto sem
+// normalização — usada pela home da TUI (#29) com o filtro `assigned_to_id=me`.
+export { listIssues, type ListIssuesOptions, type RedmineIssuePayload } from './client/index.js';
+
 // Erros HTTP tipados — usados pelas superfícies para mapear exit codes (ADR-005).
 export {
   RedmineHttpError,
