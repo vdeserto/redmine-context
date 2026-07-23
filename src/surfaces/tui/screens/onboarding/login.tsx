@@ -11,7 +11,7 @@
  * `loginWithPassword` (core) é a #28.
  */
 import { Box, Text, useInput } from 'ink';
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 
 import { TextInput } from '../../components/text-input.js';
 import { symbols } from '../../symbols.js';
@@ -34,11 +34,14 @@ export function OnboardingLoginScreen() {
   const [password, setPassword] = useState('');
   const [field, setField] = useState<Field>('username');
 
-  useInput((_input, key) => {
+  // Handler estável — setField (setState) já tem identidade fixa; o useCallback
+  // garante que o useInput subscreva uma única vez (padrão do repo).
+  const handleFieldSwitch = useCallback((_input: string, key: { tab: boolean; downArrow: boolean; upArrow: boolean }) => {
     if (key.tab || key.downArrow || key.upArrow) {
       setField(otherField);
     }
-  });
+  }, []);
+  useInput(handleFieldSwitch);
 
   return (
     <Box flexDirection="column" paddingX={1} paddingY={1} borderStyle="round" borderColor={theme.border}>

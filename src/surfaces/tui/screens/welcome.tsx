@@ -7,6 +7,7 @@
  * central (M2-02, `useTheme()`) — nenhum literal de cor aqui, ver
  * `theme.ts` para o guideline de uso de cada token.
  */
+import { useCallback, useRef } from 'react';
 import { Box, Text, useInput } from 'ink';
 
 import { TOOL_NAME, TOOL_VERSION } from '../../../index.js';
@@ -21,7 +22,11 @@ export function WelcomeScreen() {
   const { navigate } = useNavigation();
   const theme = useTheme();
 
-  useInput((input, key) => {
+  // Handler estável (useCallback+refs) — mesmo padrão do TextInput/app.tsx:
+  // identidade nova por render des/re-subscreve o useInput e perde teclas.
+  const navigateRef = useRef(navigate);
+  navigateRef.current = navigate;
+  const handleInput = useCallback((input: string, key: { return: boolean; ctrl: boolean }) => {
     // Reason: o Ink reporta Ctrl+<letra> com o MESMO `input` da letra solta
     // (ex.: Ctrl+C chega como `input === 'c'`, `key.ctrl === true`) — sem essa
     // guarda, o atalho global de sair (duplo Ctrl+C, `app.tsx`) navegaria
@@ -30,19 +35,20 @@ export function WelcomeScreen() {
       return;
     }
     if (input === '?') {
-      navigate('about');
+      navigateRef.current('about');
       return;
     }
     if (key.return) {
-      navigate('onboarding-url');
+      navigateRef.current('onboarding-url');
     }
     if (input === 'd') {
-      navigate('doctor');
+      navigateRef.current('doctor');
     }
     if (input === 'c') {
-      navigate('config');
+      navigateRef.current('config');
     }
-  });
+  }, []);
+  useInput(handleInput);
 
   return (
     <Box flexDirection="column" paddingX={1} paddingY={1}>
