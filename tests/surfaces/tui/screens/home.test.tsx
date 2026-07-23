@@ -103,6 +103,23 @@ describe('TUI: HomeScreen — 403', () => {
   });
 });
 
+describe('TUI: HomeScreen — abandono do re-login (fix do review #120)', () => {
+  it('mostra a mensagem neutra de "auth-aborted" (não o banner de erro)', () => {
+    mockState({ status: 'auth-aborted', message: 'login cancelado — pressione r para tentar de novo' });
+    const { lastFrame } = renderHome();
+    expect(lastFrame()).toContain('login cancelado');
+    expect(lastFrame()).toContain('pressione r');
+  });
+
+  it('"r" chama retry() a partir do estado "auth-aborted"', () => {
+    const retry = vi.fn();
+    mockState({ status: 'auth-aborted', message: 'login cancelado — pressione r para tentar de novo' }, retry);
+    const { stdin } = renderHome();
+    stdin.write('r');
+    expect(retry).toHaveBeenCalledOnce();
+  });
+});
+
 describe('TUI: HomeScreen — lista com issues', () => {
   const ISSUES = [
     { id: 10, subject: 'Corrigir bug de login', statusName: 'Nova' },

@@ -7,12 +7,26 @@
  * nenhum teste deste arquivo toca keychain ou rede reais.
  *
  * Fronteira do core (ADR-005): a única coisa importada daqui é
- * `../../../index.js` — a tela (`../screens/home.tsx`) só formata os 4
- * estados visuais (`loading`/`empty`/`error-network`/`error-forbidden`) mais
- * o estado "com itens" (`loaded`), nunca chama o core diretamente.
+ * `../../../index.js` — a tela (`../screens/home.tsx`) só formata os 5
+ * estados visuais (`loading`/`empty`/`error-network`/`error-forbidden`/
+ * `auth-aborted`) mais o estado "com itens" (`loaded`), nunca chama o core
+ * diretamente.
  *
  * A instância vem de `REDMINE_URL` (mesma convenção do doctor/CLI/MCP —
  * ver `use-doctor-status.ts`), lida do `env` injetado (default `process.env`).
+ *
+ * Fix do review do PR #120: esta era a primeira tela de dados (#29+) a
+ * chamar o core autenticado SEM passar pelo `useAuthGuard` (M2-13, #36,
+ * mandatório para qualquer chamada assim, ver `./use-auth-guard.ts`) — um 401
+ * (api_key expirada/revogada) virava um `error-network` cru em vez de
+ * disparar o re-login e retomar a busca automaticamente. A busca (`listIssues`)
+ * agora é envolvida por `guard()`: em 401, o estado permanece `loading`
+ * durante o re-auth (a `Promise` de `guard()` só resolve/rejeita depois que o
+ * usuário loga de novo, ver `use-auth-guard.ts`) e a lista carrega assim que o
+ * re-login tem sucesso, sem ação extra do usuário. Se o re-login for
+ * abandonado (Esc), `guard()` rejeita com `ReAuthAbortedError` — tratado aqui
+ * como o estado próprio `auth-aborted` (não um erro cru), com `retry` (tecla
+ * `r`, já existente) disponível para tentar de novo.
  */
 import { useCallback, useEffect, useState } from 'react';
 
@@ -25,6 +39,7 @@ import {
   type HttpClient,
   type RedmineIssuePayload,
 } from '../../../index.js';
+import { ReAuthAbortedError, useAuthGuard } from './use-auth-guard.js';
 
 /** Issue resumida exibida numa linha da lista da home — só os campos usados por `IssueRow`. */
 export interface MyIssue {
@@ -40,14 +55,19 @@ export interface MyIssue {
  * Estado da busca de "minhas issues", consumido por `../screens/home.tsx`.
  * `loading`/`empty`/`error-network`/`error-forbidden` são os 4 estados
  * visuais distintos exigidos pela AC da #29; `loaded` é o estado "normal"
- * com a lista preenchida.
+ * com a lista preenchida. `auth-aborted` (fix do review #120) é um 5º
+ * estado leve, distinto de `error-network`: o usuário viu o prompt de
+ * re-login (401 tratado por `useAuthGuard`) e escolheu conscientemente (Esc)
+ * não reautenticar — não é uma falha inesperada, então não usa o vocabulário
+ * de erro; `retry` (tecla `r`) segue disponível para tentar de novo.
  */
 export type MyIssuesState =
   | { status: 'loading' }
   | { status: 'empty' }
   | { status: 'loaded'; issues: MyIssue[] }
   | { status: 'error-network'; message: string }
-  | { status: 'error-forbidden'; message: string };
+  | { status: 'error-forbidden'; message: string }
+  | { status: 'auth-aborted'; message: string };
 
 /** Dependências injetáveis do hook — todas opcionais, com defaults de produção via o core. */
 export interface UseMyIssuesOptions {
@@ -109,6 +129,10 @@ export function useMyIssues(options: UseMyIssuesOptions = {}): UseMyIssuesResult
   const resolve = options.resolveApiKey ?? resolveApiKey;
   const buildClient = options.createHttpClient ?? createHttpClient;
   const fetchIssues = options.listIssues ?? listIssues;
+  // Fix do review #120: a busca é uma chamada autenticada ao core — `guard`
+  // (identidade estável, `useCallback` sem deps em `use-auth-guard.ts`) trata
+  // 401 disparando o re-login e retomando a operação automaticamente.
+  const { guard } = useAuthGuard();
 
   const [state, setState] = useState<MyIssuesState>({ status: 'loading' });
   const [reloadToken, setReloadToken] = useState(0);
@@ -146,7 +170,10 @@ export function useMyIssues(options: UseMyIssuesOptions = {}): UseMyIssuesResult
         }
 
         const http: HttpClient = buildClient({ baseUrl: instanceUrl, apiKey });
-        const raw = await fetchIssues(http, { filters: { assigned_to_id: 'me' } });
+        // Fix do review #120: envolvida por `guard()` — em 401, a Promise só
+        // resolve após o re-login ter sucesso e a busca ser refeita
+        // automaticamente; o estado do hook permanece `loading` enquanto isso.
+        const raw = await guard(() => fetchIssues(http, { filters: { assigned_to_id: 'me' } }));
         if (cancelled) return;
 
         const issues = raw.map(toMyIssue).filter((issue): issue is MyIssue => issue !== undefined);
@@ -160,6 +187,16 @@ export function useMyIssues(options: UseMyIssuesOptions = {}): UseMyIssuesResult
           });
           return;
         }
+        if (cause instanceof ReAuthAbortedError) {
+          // Fix do review #120: abandono consciente do re-login (Esc) — estado
+          // neutro dedicado, não um erro cru. `retry` (tecla `r`, já existente
+          // na tela) refaz a busca do zero.
+          setState({
+            status: 'auth-aborted',
+            message: 'login cancelado — pressione r para tentar de novo',
+          });
+          return;
+        }
         const message = cause instanceof Error ? cause.message : String(cause);
         setState({ status: 'error-network', message });
       }
@@ -168,10 +205,11 @@ export function useMyIssues(options: UseMyIssuesOptions = {}): UseMyIssuesResult
     return () => {
       cancelled = true;
     };
-    // Reason: `env`/`resolve`/`buildClient`/`fetchIssues` são estáveis entre
-    // renders com as deps de produção (defaults do módulo, ou `process.env`)
-    // — o efeito só precisa refazer a busca quando `reloadToken` muda (retry).
-  }, [env, resolve, buildClient, fetchIssues, reloadToken]);
+    // Reason: `env`/`resolve`/`buildClient`/`fetchIssues`/`guard` são estáveis
+    // entre renders com as deps de produção (defaults do módulo, ou
+    // `process.env`, ou a identidade estável de `useAuthGuard().guard`) — o
+    // efeito só precisa refazer a busca quando `reloadToken` muda (retry).
+  }, [env, resolve, buildClient, fetchIssues, guard, reloadToken]);
 
   return { state, retry };
 }

@@ -12,6 +12,13 @@
  * estados. `Enter` sobre a issue selecionada empilha `issue-detail`, uma
  * tela placeholder mínima (`./issue-detail.js`) até a #31 implementar o
  * detalhe real.
+ *
+ * Fix do review do PR #120: `useMyIssues` agora envolve a busca com
+ * `useAuthGuard` (#36) — 401 relogina e retoma a busca sozinho (o estado
+ * fica `loading` até lá, nenhuma tela nova aqui). Se o re-login for
+ * abandonado (Esc), o hook expõe o 5º estado `auth-aborted` (neutro, não um
+ * erro) — renderizado aqui igual aos banners de erro, com o mesmo `r` de
+ * retry.
  */
 import { useCallback, useRef } from 'react';
 import { Box, Text, useInput } from 'ink';
@@ -25,6 +32,11 @@ import { useTheme, type Theme } from '../theme.js';
 
 /** Tamanho máximo do subject antes de truncar com reticências. */
 const SUBJECT_MAX_LENGTH = 60;
+
+// Nit do review #120: referência ESTÁVEL para os estados sem lista — um
+// literal `[]` inline em cada render seria recriado a cada chamada,
+// invalidando memoizações a jusante (`useListNavigation`) sem necessidade.
+const EMPTY_ISSUES: MyIssue[] = [];
 
 /** Trunca `text` em `max` caracteres, com reticências (`…`) quando corta. */
 function truncate(text: string, max: number): string {
@@ -70,7 +82,7 @@ export function HomeScreen() {
   const { push } = useNavigation();
   const { state, retry } = useMyIssues();
 
-  const issues = state.status === 'loaded' ? state.issues : [];
+  const issues = state.status === 'loaded' ? state.issues : EMPTY_ISSUES;
 
   // Handlers ESTÁVEIS (useCallback + refs, padrão do repo): identidade nova a
   // cada render des/re-subscreve o useInput e pode perder uma tecla rápida.
@@ -88,7 +100,13 @@ export function HomeScreen() {
   const statusRef = useRef(state.status);
   statusRef.current = state.status;
   const handleRetryInput = useCallback((input: string) => {
-    if (input === 'r' && (statusRef.current === 'error-network' || statusRef.current === 'error-forbidden')) {
+    if (
+      input === 'r' &&
+      (statusRef.current === 'error-network' ||
+        statusRef.current === 'error-forbidden' ||
+        // Fix do review #120: abandono do re-login (Esc) também tem retry.
+        statusRef.current === 'auth-aborted')
+    ) {
       retryRef.current();
     }
   }, []);
@@ -141,6 +159,14 @@ export function HomeScreen() {
             </Text>{' '}
             para tentar de novo.
           </Text>
+        </Box>
+      ) : null}
+
+      {state.status === 'auth-aborted' ? (
+        // Fix do review #120: estado NEUTRO (abandono consciente do re-login,
+        // Esc) — `theme.muted`, não `theme.danger` (não é uma falha).
+        <Box marginTop={1} flexDirection="column">
+          <Text color={theme.muted}>{state.message}</Text>
         </Box>
       ) : null}
 
