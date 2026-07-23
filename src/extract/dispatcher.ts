@@ -13,6 +13,7 @@
  * extrator fake nos testes prova o roteamento fim-a-fim.
  */
 
+import type { ExtractorParams } from '../cache/contract.js';
 import type { Logger } from '../client/index.js';
 import type { ExtractionResult } from '../contract.js';
 
@@ -41,6 +42,16 @@ export interface Extractor {
   readonly version: string;
   /** MIMEs REAIS que este extrator aceita (ex.: `['image/png', 'image/jpeg']`). */
   readonly supportedMimes: readonly string[];
+  /**
+   * Modelo lógico do extrator (ADR-004). Participa da chave attachment-level; se
+   * omitido, o pipeline usa {@link id} como fallback estável.
+   */
+  readonly model?: string;
+  /**
+   * Parâmetros escalares estáveis do extrator (ADR-004). Participam da chave
+   * attachment-level; se omitidos, o pipeline usa `{}`.
+   */
+  readonly params?: ExtractorParams;
   /**
    * Extrai conteúdo do arquivo.
    *

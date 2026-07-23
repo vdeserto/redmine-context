@@ -24,13 +24,14 @@
 import type {
   Attachment,
   CustomField,
+  ExtractionResult,
   Issue,
   IssueChild,
   IssueRelation,
   Journal,
   RedmineRef,
 } from '../contract.js';
-import { byId, compareJournals } from './json.js';
+import { byId, compareJournals, type ExtractionMap } from './json.js';
 
 /** Metadados de empacotamento do bundle Markdown (sem timestamp — determinismo). */
 export interface MarkdownBundleMeta {
@@ -38,6 +39,11 @@ export interface MarkdownBundleMeta {
   baseUrl: string;
   /** Versão da ferramenta (`TOOL_VERSION`), registrada no rodapé de proveniência. */
   toolVersion: string;
+  /**
+   * Extrações de anexos (M3-10). Quando presente, cada anexo com resultado ganha
+   * a seção "Texto extraído" — o texto de OCR dentro de `<untrusted-content>`.
+   */
+  extractions?: ExtractionMap;
 }
 
 /** Placeholder para ref degradada (id 0) — nunca um nome vazio silencioso. */
@@ -204,28 +210,56 @@ function renderChildren(issue: Issue): string {
 }
 
 /**
+ * Renderiza a seção "Texto extraído" de um anexo (M3-10). O texto de OCR é
+ * conteúdo DERIVADO do anexo, logo isolado dentro de `<untrusted-content>`. Quando
+ * não há texto (skip/falha/unsupported), mostra `status` + `reason`/`hint` — assim
+ * o bundle continua saindo e, no caso de tesseract ausente, DIZ como instalar.
+ *
+ * @param result - Resultado da extração do anexo.
+ * @returns Linhas Markdown da seção (para concatenar ao bloco do anexo).
+ */
+function renderExtraction(result: ExtractionResult): string[] {
+  if (typeof result.text === 'string' && result.text.trim() !== '') {
+    return [`  - Texto extraído (${result.status}):`, fenceBlock(result.text)];
+  }
+  const lines = [`  - Texto extraído (${result.status}):`];
+  const reason = result.metadata?.['reason'];
+  const hint = result.metadata?.['hint'];
+  if (typeof reason === 'string') lines.push(`    - Motivo: ${reason}`);
+  // `hint` é texto NOSSO (não do Redmine) — ex.: instruções de instalação; fica
+  // fora da fence untrusted por ser confiável.
+  if (typeof hint === 'string') lines.push(`    - ${hint}`);
+  if (typeof reason !== 'string' && typeof hint !== 'string') lines.push('    - _(sem texto)_');
+  return lines;
+}
+
+/**
  * Renderiza um anexo: metadados estruturais + URL de download do Redmine.
  *
  * O nome e a descrição (conteúdo derivado) vão em fence; a URL usa o filename
  * percent-encoded como componente de caminho, mantendo-a válida e imune a fuga.
+ * Quando há extração (M3-10), acrescenta a seção "Texto extraído".
  *
  * @param att - Anexo normalizado.
  * @param baseUrl - Base URL do Redmine.
+ * @param extractions - Extrações por anexo; `undefined` = sem extração.
  * @returns Bloco Markdown do anexo.
  */
-function renderAttachment(att: Attachment, baseUrl: string): string {
+function renderAttachment(att: Attachment, baseUrl: string, extractions: ExtractionMap | undefined): string {
   const url = `${baseUrl}/attachments/download/${att.id}/${encodeURIComponent(att.filename)}`;
   const lines: string[] = [`- **Anexo #${att.id}** — ${att.filesize} bytes`];
   lines.push(`  - Nome: ${fenceInline(att.filename)}`);
   lines.push(`  - URL: ${url}`);
   if (att.description !== undefined) lines.push(`  - Descrição: ${fenceInline(att.description)}`);
+  const extraction = extractions?.get(att.id);
+  if (extraction !== undefined) lines.push(...renderExtraction(extraction));
   return lines.join('\n');
 }
 
 /** Seção de anexos — referenciados por URL do Redmine, ordenados por id. */
-function renderAttachments(issue: Issue, baseUrl: string): string {
+function renderAttachments(issue: Issue, baseUrl: string, extractions: ExtractionMap | undefined): string {
   if (issue.attachments.length === 0) return '## Anexos\n\n_(nenhum)_';
-  const rows = byId(issue.attachments).map((att) => renderAttachment(att, baseUrl));
+  const rows = byId(issue.attachments).map((att) => renderAttachment(att, baseUrl, extractions));
   return ['## Anexos', '', ...rows].join('\n');
 }
 
@@ -254,7 +288,7 @@ export function buildMarkdownBundle(issue: Issue, meta: MarkdownBundleMeta): str
     renderRelations(issue),
     renderParent(issue),
     renderChildren(issue),
-    renderAttachments(issue, meta.baseUrl),
+    renderAttachments(issue, meta.baseUrl, meta.extractions),
     `---\n\n_Empacotado por redmine-context v${meta.toolVersion}._`,
   ];
   return `${sections.join('\n\n')}\n`;

@@ -21,6 +21,7 @@
 import type {
   Attachment,
   CustomField,
+  ExtractionResult,
   Issue,
   IssueChild,
   IssueRelation,
@@ -29,6 +30,9 @@ import type {
   RedmineRef,
 } from '../contract.js';
 import { stableStringify, type JsonValue } from './stable-stringify.js';
+
+/** Mapa `attachmentId → resultado da extração` produzido pelo pipeline (M3-10). */
+export type ExtractionMap = ReadonlyMap<number, ExtractionResult>;
 
 /** Versão do schema do bundle — congelada em "1.0" para esta major. */
 const SCHEMA_VERSION = '1.0' as const;
@@ -44,6 +48,11 @@ export interface JsonBundleMeta {
    * quando omitido, usa o relógio do sistema. NUNCA entra no corpo canônico.
    */
   generatedAt?: string;
+  /**
+   * Extrações de anexos (M3-10). Quando presente, cada anexo com resultado ganha
+   * `extraction` no corpo; o texto de OCR entra como conteúdo `untrusted`.
+   */
+  extractions?: ExtractionMap;
 }
 
 /** Proveniência da issue empacotada. */
@@ -134,8 +143,30 @@ function renderCustomField(field: CustomField): JsonValue {
   return out;
 }
 
+/**
+ * Renderiza o resultado da extração de um anexo (M3-10). `status` sempre presente;
+ * `text` só quando há texto, marcado `untrusted` (conteúdo derivado do anexo);
+ * `reason` só quando o resultado (skip/falha/unsupported) o carrega em metadata.
+ *
+ * @param result - Resultado de uma extração de anexo.
+ * @returns Objeto JSON `{ status, text?, reason? }`.
+ */
+function renderExtraction(result: ExtractionResult): JsonValue {
+  const out: { [key: string]: JsonValue } = { status: result.status };
+  if (typeof result.text === 'string' && result.text !== '') {
+    out.text = untrusted(result.text);
+  }
+  const reason = result.metadata?.['reason'];
+  if (typeof reason === 'string') out.reason = reason;
+  // Paridade com o MD (review #141): o hint (texto NOSSO, ex.: instrução de
+  // instalação) é a parte acionável para o consumidor do JSON (MCP/LLM).
+  const hint = result.metadata?.['hint'];
+  if (typeof hint === 'string') out.hint = hint;
+  return out;
+}
+
 /** Renderiza um anexo (metadados; conteúdo binário é extraído fora do bundle). */
-function renderAttachment(att: Attachment): JsonValue {
+function renderAttachment(att: Attachment, extractions: ExtractionMap | undefined): JsonValue {
   const out: { [key: string]: JsonValue } = {
     id: att.id,
     filename: att.filename,
@@ -147,6 +178,8 @@ function renderAttachment(att: Attachment): JsonValue {
   if (att.description !== undefined) out.description = untrusted(att.description);
   if (att.author !== undefined) out.author = renderOptionalRef(att.author);
   if (att.digest !== undefined) out.digest = att.digest;
+  const extraction = extractions?.get(att.id);
+  if (extraction !== undefined) out.extraction = renderExtraction(extraction);
   return out;
 }
 
@@ -195,9 +228,10 @@ export function byId<T extends { id: number }>(items: readonly T[]): T[] {
  * Monta o corpo da issue já ordenado e com marcações `untrusted`.
  *
  * @param issue - Issue normalizada do contrato.
+ * @param extractions - Extrações por anexo (M3-10); `undefined` = sem extração.
  * @returns Objeto JSON pronto para serialização estável.
  */
-function renderIssue(issue: Issue): JsonValue {
+function renderIssue(issue: Issue, extractions: ExtractionMap | undefined): JsonValue {
   const out: { [key: string]: JsonValue } = {
     id: issue.id,
     subject: untrusted(issue.subject),
@@ -211,7 +245,7 @@ function renderIssue(issue: Issue): JsonValue {
     updated_on: issue.updated_on,
     custom_fields: byId(issue.custom_fields).map(renderCustomField),
     journals: [...issue.journals].sort(compareJournals).map(renderJournal),
-    attachments: byId(issue.attachments).map(renderAttachment),
+    attachments: byId(issue.attachments).map((att) => renderAttachment(att, extractions)),
     relations: byId(issue.relations).map(renderRelation),
     children: byId(issue.children).map(renderChild),
   };
@@ -251,7 +285,7 @@ export function buildJsonBundle(issue: Issue, meta: JsonBundleMeta): JsonBundle 
     schema_version: SCHEMA_VERSION,
     tool_version: meta.toolVersion,
     source: { ...source },
-    issue: renderIssue(issue),
+    issue: renderIssue(issue, meta.extractions),
   };
 
   return {

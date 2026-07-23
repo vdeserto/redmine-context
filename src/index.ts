@@ -14,6 +14,14 @@ export {
   type IssueBundleResult,
 } from './fetch-issue-bundle.js';
 
+// Orquestração de extração de anexos (M3-10): baixa → dispatcher → extrator →
+// cache → Map<attachmentId, ExtractionResult>, embutida nos bundles pela flag
+// `extractAttachments` de `fetchIssueBundle`. CLI/MCP ligam a flag na #55.
+export {
+  extractIssueAttachments,
+  type ExtractIssueAttachmentsOptions,
+} from './extract-issue-attachments.js';
+
 // Orquestração de busca (filtros + full-text best-effort) para a tool MCP (#19).
 export {
   fetchIssueSearch,

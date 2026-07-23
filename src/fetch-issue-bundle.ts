@@ -12,8 +12,11 @@
 
 import { buildJsonBundle } from './bundle/index.js';
 import { buildMarkdownBundle } from './bundle/index.js';
+import { DiskCacheStore } from './cache/index.js';
 import { createHttpClient, getIssue } from './client/index.js';
-import type { CoreEvent, ProgressEvent, Result } from './contract.js';
+import type { CoreEvent, ExtractionResult, ProgressEvent, Result } from './contract.js';
+import { extractIssueAttachments } from './extract-issue-attachments.js';
+import { createDefaultRegistry } from './extract/index.js';
 import { normalizeIssue } from './normalize/index.js';
 
 /** Formato de saída do bundle: Markdown (default) ou JSON canônico. */
@@ -33,6 +36,18 @@ export interface FetchIssueBundleOptions {
   toolVersion: string;
   /** Permite `http://` (sem TLS) com aviso ruidoso. Default: `false`. */
   insecure?: boolean;
+  /**
+   * Extrai o texto dos anexos de imagem e o embute no bundle (M3-10). Default:
+   * `false` no M3 — as superfícies (CLI/MCP) ligam a flag na #55. Requer o
+   * binário `tesseract`; ausente, o anexo apenas registra `failed` com a dica de
+   * instalação (o bundle sai mesmo assim — degradação graciosa, ADR-002).
+   */
+  extractAttachments?: boolean;
+  /**
+   * Raiz do cache em disco para downloads/extrações (M3-10). Default do
+   * {@link DiskCacheStore}. Só usado quando `extractAttachments` é `true`.
+   */
+  cacheDir?: string;
 }
 
 /** Resultado final: conteúdo serializado pronto para stdout/arquivo. */
@@ -68,7 +83,7 @@ function progress(stage: string, message: string): ProgressEvent {
 export async function* fetchIssueBundle(
   options: FetchIssueBundleOptions,
 ): AsyncIterable<CoreEvent<IssueBundleResult>> {
-  const { baseUrl, apiKey, issueId, format, toolVersion, insecure = false } = options;
+  const { baseUrl, apiKey, issueId, format, toolVersion, insecure = false, extractAttachments = false } = options;
 
   yield progress('connect', `Conectando a ${baseUrl}`);
   const http = createHttpClient({ baseUrl, apiKey, insecure });
@@ -79,11 +94,25 @@ export async function* fetchIssueBundle(
   yield progress('normalize', 'Normalizando issue');
   const issue = normalizeIssue(payload);
 
+  let extractions: Map<number, ExtractionResult> | undefined;
+  if (extractAttachments) {
+    yield progress('extract', 'Extraindo texto dos anexos');
+    const registry = await createDefaultRegistry();
+    const store = new DiskCacheStore<ExtractionResult>(
+      options.cacheDir !== undefined ? { cacheDir: options.cacheDir } : {},
+    );
+    extractions = await extractIssueAttachments(http, issue, {
+      instanceUrl: baseUrl,
+      registry,
+      store,
+      ...(options.cacheDir !== undefined ? { cacheDir: options.cacheDir } : {}),
+    });
+  }
+
   yield progress('bundle', `Empacotando bundle (${format})`);
+  const meta = { baseUrl, toolVersion, ...(extractions !== undefined ? { extractions } : {}) };
   const content =
-    format === 'json'
-      ? buildJsonBundle(issue, { baseUrl, toolVersion }).canonical
-      : buildMarkdownBundle(issue, { baseUrl, toolVersion });
+    format === 'json' ? buildJsonBundle(issue, meta).canonical : buildMarkdownBundle(issue, meta);
 
   const result: Result<IssueBundleResult> = {
     kind: 'result',
