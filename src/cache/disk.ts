@@ -44,6 +44,7 @@ import {
 } from './contract.js';
 import { InMemoryCacheStore } from './memory.js';
 import { DiskCacheIndex, INDEX_FILE_NAME, type CacheEntryType } from './disk-index.js';
+import { DEFAULT_MAX_BYTES, planGc, resolveEvictionTarget, type GcCandidate } from './gc.js';
 
 /** Comprimento (chars hex) do digest usado no path do anexo (ADR-004). */
 const DIGEST_PATH_LENGTH = 8;
@@ -64,6 +65,14 @@ export interface DiskCacheStoreOptions extends CacheStoreOptions {
    * `env-paths` ({@link defaultCacheDir}). Preenchível por config/CLI ou testes.
    */
   cacheDir?: string;
+  /**
+   * Teto GLOBAL do cache em bytes para o GC/LRU (#47, ADR-004). Ao ser estourado
+   * após um `put` ou num `gc()`, o store despeja entradas por `last_accessed_at`
+   * com quotas separadas: originais (recuperáveis) de forma agressiva, extrações
+   * (caras) só quando necessário. Default {@link DEFAULT_MAX_BYTES} (2 GB);
+   * `Infinity` desabilita o despejo.
+   */
+  maxBytes?: number;
 }
 
 /**
@@ -86,6 +95,8 @@ export function defaultCacheDir(): string {
 export class DiskCacheStore<V = unknown> implements CacheStore<V> {
   private readonly root: string;
   private readonly onGc: GcHook | undefined;
+  /** Teto global (bytes) do GC/LRU; `Infinity` desabilita o despejo (#47). */
+  private readonly maxBytes: number;
   /**
    * Provedor de lock por chave — HERDADO do in-memory (intra-processo). Não é
    * usado para armazenar valores, apenas para serializar seções críticas por
@@ -100,6 +111,7 @@ export class DiskCacheStore<V = unknown> implements CacheStore<V> {
   constructor(options: DiskCacheStoreOptions = {}) {
     this.root = options.cacheDir ?? defaultCacheDir();
     this.onGc = options.onGc;
+    this.maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
     this.logger = options.logger ?? { warn: () => undefined };
     this.index = new DiskCacheIndex(this.root, this.logger);
     // Repassa apenas as opções de lock; o GC é responsabilidade deste store.
@@ -232,14 +244,62 @@ export class DiskCacheStore<V = unknown> implements CacheStore<V> {
   }
 
   /**
-   * Aciona o hook de GC, se configurado, com a contagem REAL de entradas em
-   * disco. Nesta issue não há despejo (GC/LRU é #45/#46): o hook apenas observa.
+   * Executa o GC/LRU (#47): despeja o necessário para respeitar {@link maxBytes}
+   * (com quotas separadas — ver {@link planGc}) e, em seguida, aciona o hook de
+   * observação, se configurado, com a contagem REAL de entradas PÓS-despejo.
    */
   private async runGc(reason: 'put' | 'manual'): Promise<void> {
+    await this.enforceQuotas();
     if (this.onGc === undefined) {
       return;
     }
     await this.onGc({ reason, entryCount: await this.countEntries(this.root) });
+  }
+
+  /**
+   * Coleta as entradas indexadas de TODAS as instâncias, aplica a política pura
+   * ({@link planGc}) e remove (arquivo + registro) o que ela decidir. No-op
+   * quando o teto é `Infinity` (despejo desabilitado) ou nada excede o limite.
+   */
+  private async enforceQuotas(): Promise<void> {
+    if (!Number.isFinite(this.maxBytes)) {
+      return;
+    }
+    const candidates: GcCandidate[] = [];
+    for (const instanceHash of await this.listInstanceDirs()) {
+      const entries = await this.index.entriesOf(instanceHash);
+      for (const [recordKey, entry] of entries) {
+        candidates.push({
+          instanceHash,
+          recordKey,
+          size: entry.size,
+          type: entry.type,
+          lastAccessedAt: entry.lastAccessedAt,
+        });
+      }
+    }
+    const { remove } = planGc(candidates, { maxBytes: this.maxBytes });
+    for (const candidate of remove) {
+      await this.evict(candidate.instanceHash, candidate.recordKey);
+    }
+  }
+
+  /**
+   * Remove com segurança UMA entrada de attachment: apaga o arquivo de valor
+   * (apenas se resolver DENTRO de `<cache_dir>/<instance_hash>/` — guard
+   * anti-traversal do {@link resolveEvictionTarget}) e tira o registro do índice,
+   * mantendo o `index.json` consistente pós-GC.
+   */
+  private async evict(instanceHash: string, recordKey: string): Promise<void> {
+    const instanceRoot = join(this.root, instanceHash);
+    const target = resolveEvictionTarget(instanceRoot, join(ATTACHMENTS_DIR, recordKey));
+    if (target === undefined) {
+      // Registro apontando para fora da instância: nunca apaga; só avisa.
+      this.logger.warn(`cache: GC recusou remover caminho fora da instância (${recordKey})`);
+      return;
+    }
+    await rm(target, { force: true });
+    await this.index.remove(instanceHash, recordKey);
   }
 
   /** Conta recursivamente os arquivos de valor (`.json`) sob `dir`. */

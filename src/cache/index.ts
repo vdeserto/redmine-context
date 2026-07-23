@@ -25,3 +25,13 @@ export {
 
 export { DiskCacheIndex, INDEX_FILE_NAME } from './disk-index.js';
 export type { CacheIndexEntry, CacheEntryType } from './disk-index.js';
+
+export {
+  DEFAULT_MAX_BYTES,
+  DEFAULT_MAX_ORIGINAL_FRACTION,
+  planGc,
+  resolveEvictionTarget,
+  type GcCandidate,
+  type GcDecision,
+  type GcPolicyOptions,
+} from './gc.js';
