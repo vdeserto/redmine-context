@@ -6,7 +6,13 @@
  * chave (exclusão mútua, chaves distintas não bloqueiam, release em erro) e hook
  * de GC. QUALQUER implementação (memória nesta issue, disco nas seguintes) deve
  * passar nesta mesma suíte; ela não conhece detalhes de implementação.
- */
+  *
+ * ESCOPO DAS GARANTIAS (nota do review #129): o lock do contrato garante
+ * exclusão lógica INTRA-processo (fila de promises). Atomicidade de escrita em
+ * disco (crash-safety, write-then-rename) e locking CROSS-processo NÃO são
+ * exercitados por esta suíte — a implementação em disco (#42+) deve cobri-los
+ * com testes próprios além desta suíte.
+*/
 
 import { describe, expect, it } from 'vitest';
 
