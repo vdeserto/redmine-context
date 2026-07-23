@@ -45,6 +45,7 @@ import {
 } from '../../../../src/surfaces/tui/screens/home-selection.js';
 import { HomeScreen } from '../../../../src/surfaces/tui/screens/home.js';
 import { IssueDetailScreen } from '../../../../src/surfaces/tui/screens/issue-detail.js';
+import { LoadedIssueProvider } from '../../../../src/surfaces/tui/screens/loaded-issue-context.js';
 import { symbols } from '../../../../src/surfaces/tui/symbols.js';
 import { ThemeProvider } from '../../../../src/surfaces/tui/theme.js';
 
@@ -146,8 +147,11 @@ describe('TUI: home ⇄ issue-detail — Esc preserva a posição da lista (#31)
       <ThemeProvider>
         <NavigationProvider value={navigation}>
           <HomeSelectionProvider>
-            <GlobalEscape />
-            <Router />
+            {/* #33: `IssueDetailScreen` depende de `useLoadedIssue()` — ver `loaded-issue-context.tsx`. */}
+            <LoadedIssueProvider>
+              <GlobalEscape />
+              <Router />
+            </LoadedIssueProvider>
           </HomeSelectionProvider>
         </NavigationProvider>
       </ThemeProvider>

@@ -24,17 +24,16 @@
  * `use-issue-detail.js` (mandatório, M2-13/#36) — esta tela só formata o
  * estado `auth-aborted` (neutro) igual aos demais banners de erro.
  *
- * Anexos (#32): seção "Anexos" adicionada ao FIM do mesmo `ScrollView` de
- * descrição/journals (nunca em área fixa própria) — nome, tamanho humanizado
- * (`../format-file-size.js`) e badge de status de extração
- * (`../attachment-status.js`, mapeamento local documentado ali — o core ainda
- * não expõe `ExtractionResult['status']`). Entrar no MESMO viewport rolável
- * garante o AC "navegação nunca bloqueia por causa de anexos": uma issue com
- * dezenas de anexos apenas acrescenta linhas à rolagem existente, sem tela
- * própria, sem fetch adicional e sem novo atalho de teclado.
+ * Anexos (#32): seção "Anexos" ao FIM do mesmo `ScrollView` — nome, tamanho
+ * humanizado (`../format-file-size.js`) e badge de status
+ * (`../attachment-status.js`); mesma rolagem, sem bloquear navegação.
+ *
+ * `e` (issue carregada) empilha a tela de exportação (#33, `./export.js`):
+ * a issue normalizada é espelhada em `./loaded-issue-context.js` para a
+ * exportação REUSAR a issue em memória (ver JSDoc daquele módulo).
  */
 import { Box, Text, useInput } from 'ink';
-import type { ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 
 import type { Attachment, Issue } from '../../../index.js';
 import {
@@ -51,6 +50,7 @@ import { statusColor } from '../status-color.js';
 import { symbols } from '../symbols.js';
 import { useTheme, type Theme } from '../theme.js';
 import { useHomeSelection } from './home-selection.js';
+import { useLoadedIssue } from './loaded-issue-context.js';
 
 /** Altura (em linhas) da viewport rolável de descrição + journals. */
 const CONTENT_HEIGHT = 10;
@@ -191,7 +191,7 @@ function buildContentRows(issue: Issue, theme: Theme): ReactNode[] {
 }
 
 /** Rodapé com os atalhos disponíveis nesta tela. */
-function Footer({ showRetry }: { showRetry: boolean }) {
+function Footer({ showRetry, showExport }: { showRetry: boolean; showExport: boolean }) {
   const theme = useTheme();
   return (
     <Box marginTop={1}>
@@ -203,6 +203,15 @@ function Footer({ showRetry }: { showRetry: boolean }) {
               r
             </Text>{' '}
             para tentar de novo,{' '}
+          </>
+        ) : null}
+        {showExport ? (
+          <>
+            Pressione{' '}
+            <Text bold color={theme.accent}>
+              e
+            </Text>{' '}
+            para exportar,{' '}
           </>
         ) : null}
         Pressione{' '}
@@ -221,14 +230,30 @@ function Footer({ showRetry }: { showRetry: boolean }) {
  * é preservado via `./home-selection.js`.
  */
 export function IssueDetailScreen() {
-  const { pop } = useNavigation();
+  const { pop, push } = useNavigation();
   const theme = useTheme();
   const { selectedIssueId } = useHomeSelection();
   const { state, retry } = useIssueDetail(selectedIssueId);
+  const { setIssue } = useLoadedIssue();
+
+  // Espelha a issue carregada no contexto leve consumido por `./export.js`
+  // (#33) — ver o JSDoc do módulo e de `./loaded-issue-context.js` para a
+  // escolha de reuso em memória em vez de refetch.
+  const setIssueRef = useRef(setIssue);
+  setIssueRef.current = setIssue;
+  useEffect(() => {
+    if (state.status === 'loaded') {
+      setIssueRef.current(state.issue);
+    }
+  }, [state]);
 
   useInput((input) => {
     if (input === 'b') {
       pop();
+      return;
+    }
+    if (input === 'e' && state.status === 'loaded') {
+      push('export');
       return;
     }
     if (
@@ -308,6 +333,7 @@ export function IssueDetailScreen() {
           state.status === 'error-not-found' ||
           state.status === 'auth-aborted'
         }
+        showExport={state.status === 'loaded'}
       />
     </Box>
   );

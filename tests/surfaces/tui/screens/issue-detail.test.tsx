@@ -18,6 +18,7 @@
  * precisar rolar; a rolagem com MUITOS anexos é coberta à parte, reutilizando
  * o mesmo mecanismo de `ScrollView` já testado acima.
  */
+import { Text } from 'ink';
 import { render } from 'ink-testing-library';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -33,6 +34,7 @@ import type { IssueDetailState } from '../../../../src/surfaces/tui/hooks/use-is
 import { NavigationProvider, type NavigationValue } from '../../../../src/surfaces/tui/navigation.js';
 import { HomeSelectionProvider } from '../../../../src/surfaces/tui/screens/home-selection.js';
 import { IssueDetailScreen } from '../../../../src/surfaces/tui/screens/issue-detail.js';
+import { LoadedIssueProvider, useLoadedIssue } from '../../../../src/surfaces/tui/screens/loaded-issue-context.js';
 import { ThemeProvider } from '../../../../src/surfaces/tui/theme.js';
 
 /** Caractere ESC (0x1B) — prefixo das sequências CSI de seta abaixo. */
@@ -90,7 +92,9 @@ function renderDetail(nav: NavigationValue = navMock()) {
     <ThemeProvider>
       <NavigationProvider value={nav}>
         <HomeSelectionProvider>
-          <IssueDetailScreen />
+          <LoadedIssueProvider>
+            <IssueDetailScreen />
+          </LoadedIssueProvider>
         </HomeSelectionProvider>
       </NavigationProvider>
     </ThemeProvider>,
@@ -198,6 +202,50 @@ describe('TUI: IssueDetailScreen — render completo (fixture rica)', () => {
     const { stdin } = renderDetail(nav);
     stdin.write('b');
     expect(nav.pop).toHaveBeenCalledOnce();
+  });
+});
+
+describe('TUI: IssueDetailScreen — tela de exportação (#33)', () => {
+  it('"e" empilha a tela de exportação quando a issue está carregada', () => {
+    const nav = navMock();
+    mockState({ status: 'loaded', issue: RICH_ISSUE });
+    const { stdin } = renderDetail(nav);
+    stdin.write('e');
+    expect(nav.push).toHaveBeenCalledWith('export');
+  });
+
+  it('"e" não faz nada enquanto a issue ainda carrega', () => {
+    const nav = navMock();
+    mockState({ status: 'loading' });
+    const { stdin } = renderDetail(nav);
+    stdin.write('e');
+    expect(nav.push).not.toHaveBeenCalled();
+  });
+
+  it('espelha a issue carregada em ./loaded-issue-context.js para a tela de exportação reusar', async () => {
+    mockState({ status: 'loaded', issue: RICH_ISSUE });
+
+    function Probe() {
+      const { issue } = useLoadedIssue();
+      return <>{issue !== undefined ? <Text>{`context-issue:${issue.id}`}</Text> : null}</>;
+    }
+
+    const { lastFrame } = render(
+      <ThemeProvider>
+        <NavigationProvider value={navMock()}>
+          <HomeSelectionProvider>
+            <LoadedIssueProvider>
+              <IssueDetailScreen />
+              <Probe />
+            </LoadedIssueProvider>
+          </HomeSelectionProvider>
+        </NavigationProvider>
+      </ThemeProvider>,
+    );
+
+    await vi.waitFor(() => {
+      expect(lastFrame()).toContain('context-issue:123');
+    });
   });
 });
 

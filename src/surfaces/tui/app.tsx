@@ -40,6 +40,7 @@ import { useExitGuard } from './hooks/use-exit-guard.js';
 import { useOnboardingCallbacks } from './hooks/use-onboarding-callbacks.js';
 import { NavigationProvider, useNavigation, useNavigationStack } from './navigation.js';
 import { HomeSelectionProvider } from './screens/home-selection.js';
+import { LoadedIssueProvider } from './screens/loaded-issue-context.js';
 import {
   OnboardingProvider,
   useOnboarding,
@@ -92,7 +93,11 @@ export function App() {
           {/* #31: sobrevive ao remount de `home.tsx`/`issue-detail.tsx` — ver o
               JSDoc de `./screens/home-selection.tsx` para o contrato completo. */}
           <HomeSelectionProvider>
-            <AppShell />
+            {/* #33: sobrevive ao remount de `issue-detail.tsx`/`export.tsx` —
+                ver o JSDoc de `./screens/loaded-issue-context.tsx`. */}
+            <LoadedIssueProvider>
+              <AppShell />
+            </LoadedIssueProvider>
           </HomeSelectionProvider>
         </OnboardingProvider>
       </NavigationProvider>
