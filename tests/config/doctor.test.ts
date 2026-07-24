@@ -8,7 +8,17 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 
-import { diagnoseBinaries, tesseractInstallHint } from '../../src/config/doctor.js';
+import { diagnoseBinaries, pdftotextInstallHint, tesseractInstallHint } from '../../src/config/doctor.js';
+
+/**
+ * Deps de pdftotext injetadas por padrão nos testes de tesseract para mantê-los
+ * HERMÉTICOS — sem essas injeções, o diagnóstico do pdftotext cairia no
+ * filesystem/binário reais. Aqui o pdftotext é sempre "não instalado".
+ */
+const noPdftotext = {
+  findPdftotext: () => undefined,
+  detectPdftotextVersion: vi.fn(),
+};
 
 describe('core: tesseractInstallHint — instrução por SO', () => {
   it('darwin: sugere brew', () => {
@@ -38,7 +48,12 @@ describe('core: diagnoseBinaries — tesseract presente', () => {
     const findTesseract = vi.fn().mockReturnValue({ path: '/opt/homebrew/bin/tesseract' });
     const detectTesseractVersion = vi.fn().mockResolvedValue('5.5.0');
 
-    const [tesseract] = await diagnoseBinaries({ platform: 'darwin', findTesseract, detectTesseractVersion });
+    const [tesseract] = await diagnoseBinaries({
+      platform: 'darwin',
+      findTesseract,
+      detectTesseractVersion,
+      ...noPdftotext,
+    });
 
     expect(tesseract).toEqual({
       name: 'tesseract',
@@ -53,7 +68,12 @@ describe('core: diagnoseBinaries — tesseract presente', () => {
     const findTesseract = vi.fn().mockReturnValue({ path: '/usr/bin/tesseract' });
     const detectTesseractVersion = vi.fn().mockResolvedValue(undefined);
 
-    const [tesseract] = await diagnoseBinaries({ platform: 'linux', findTesseract, detectTesseractVersion });
+    const [tesseract] = await diagnoseBinaries({
+      platform: 'linux',
+      findTesseract,
+      detectTesseractVersion,
+      ...noPdftotext,
+    });
 
     expect(tesseract.found).toBe(true);
     expect(tesseract.path).toBe('/usr/bin/tesseract');
@@ -66,7 +86,12 @@ describe('core: diagnoseBinaries — tesseract ausente', () => {
     const findTesseract = vi.fn().mockReturnValue(undefined);
     const detectTesseractVersion = vi.fn();
 
-    const [tesseract] = await diagnoseBinaries({ platform: 'win32', findTesseract, detectTesseractVersion });
+    const [tesseract] = await diagnoseBinaries({
+      platform: 'win32',
+      findTesseract,
+      detectTesseractVersion,
+      ...noPdftotext,
+    });
 
     expect(tesseract).toEqual({
       name: 'tesseract',
@@ -79,11 +104,82 @@ describe('core: diagnoseBinaries — tesseract ausente', () => {
   });
 });
 
+describe('core: pdftotextInstallHint — instrução por SO', () => {
+  it('darwin: sugere brew install poppler', () => {
+    expect(pdftotextInstallHint('darwin')).toBe('brew install poppler');
+  });
+
+  it('linux: sugere apt e dnf com poppler-utils', () => {
+    const hint = pdftotextInstallHint('linux');
+    expect(hint).toContain('apt');
+    expect(hint).toContain('dnf');
+    expect(hint).toContain('poppler-utils');
+  });
+
+  it('win32: sugere winget oschwartz10612.Poppler e cita o choco como alternativa', () => {
+    const hint = pdftotextInstallHint('win32');
+    expect(hint).toContain('winget install oschwartz10612.Poppler');
+    expect(hint).toContain('choco');
+  });
+
+  it('plataforma desconhecida cai no hint genérico (apt/dnf)', () => {
+    expect(pdftotextInstallHint('freebsd' as NodeJS.Platform)).toContain('apt');
+  });
+});
+
+describe('core: diagnoseBinaries — pdftotext (segundo binário)', () => {
+  /** Deps de tesseract "ausente" para isolar as asserções no pdftotext. */
+  const noTesseract = { findTesseract: () => undefined, detectTesseractVersion: vi.fn() };
+
+  it('found=true com path e versão quando o pdftotext é localizado e legível', async () => {
+    const findPdftotext = vi.fn().mockReturnValue({ path: '/opt/homebrew/bin/pdftotext' });
+    const detectPdftotextVersion = vi.fn().mockResolvedValue('24.02.0');
+
+    const [, pdftotext] = await diagnoseBinaries({
+      platform: 'darwin',
+      ...noTesseract,
+      findPdftotext,
+      detectPdftotextVersion,
+    });
+
+    expect(pdftotext).toEqual({
+      name: 'pdftotext',
+      found: true,
+      path: '/opt/homebrew/bin/pdftotext',
+      version: '24.02.0',
+      installHint: 'brew install poppler',
+    });
+  });
+
+  it('found=false, sem path/versão, com installHint do SO e sem detectar versão', async () => {
+    const findPdftotext = vi.fn().mockReturnValue(undefined);
+    const detectPdftotextVersion = vi.fn();
+
+    const [, pdftotext] = await diagnoseBinaries({
+      platform: 'win32',
+      ...noTesseract,
+      findPdftotext,
+      detectPdftotextVersion,
+    });
+
+    expect(pdftotext).toEqual({
+      name: 'pdftotext',
+      found: false,
+      installHint: expect.stringContaining('winget install oschwartz10612.Poppler'),
+    });
+    expect(pdftotext.path).toBeUndefined();
+    expect(pdftotext.version).toBeUndefined();
+    expect(detectPdftotextVersion).not.toHaveBeenCalled();
+  });
+});
+
 describe('core: diagnoseBinaries — defaults de produção', () => {
-  it('sem deps injetadas retorna ao menos o tesseract com um installHint não vazio', async () => {
-    const [tesseract] = await diagnoseBinaries();
-    expect(tesseract.name).toBe('tesseract');
-    expect(typeof tesseract.found).toBe('boolean');
-    expect(tesseract.installHint.length).toBeGreaterThan(0);
+  it('sem deps injetadas retorna tesseract e pdftotext, cada um com installHint não vazio', async () => {
+    const diagnoses = await diagnoseBinaries();
+    expect(diagnoses.map((d) => d.name)).toEqual(['tesseract', 'pdftotext']);
+    for (const diagnosis of diagnoses) {
+      expect(typeof diagnosis.found).toBe('boolean');
+      expect(diagnosis.installHint.length).toBeGreaterThan(0);
+    }
   });
 });

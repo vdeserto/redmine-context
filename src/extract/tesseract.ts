@@ -32,6 +32,7 @@ import type { ExtractorConfig } from '../cache/keys.js';
 import type { ExtractionResult } from '../contract.js';
 
 import { ExtractorRegistry, type ExtractOptions, type Extractor } from './dispatcher.js';
+import { createPdfExtractor } from './pdf.js';
 
 /** Identificador estável do extrator (entra em metadados). */
 const EXTRACTOR_ID = 'tesseract-ocr';
@@ -385,10 +386,11 @@ export async function createTesseractExtractor(
 
 /**
  * Cria o registry DEFAULT do pipeline de extração com os extratores de produção
- * registrados (hoje: {@link TesseractExtractor} para imagens). Ponto único de
- * composição consumido pela fila de jobs.
+ * registrados: {@link TesseractExtractor} para imagens (OCR) e {@link PdfExtractor}
+ * para PDF (poppler/pdftotext). Ponto único de composição consumido pela fila de
+ * jobs.
  *
- * @param config - Config repassada ao {@link createTesseractExtractor}.
+ * @param config - Config repassada ao {@link createTesseractExtractor} (OCR).
  * @returns Um {@link ExtractorRegistry} com os extratores default registrados.
  * @example
  * const registry = await createDefaultRegistry();
@@ -398,6 +400,8 @@ export async function createDefaultRegistry(
   config: Omit<TesseractExtractorOptions, 'version' | 'binaryPath'> = {},
 ): Promise<ExtractorRegistry> {
   const registry = new ExtractorRegistry();
-  registry.register(await createTesseractExtractor(config));
+  const [tesseract, pdf] = await Promise.all([createTesseractExtractor(config), createPdfExtractor()]);
+  registry.register(tesseract);
+  registry.register(pdf);
   return registry;
 }

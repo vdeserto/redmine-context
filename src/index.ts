@@ -120,6 +120,7 @@ export {
 export {
   diagnoseBinaries,
   tesseractInstallHint,
+  pdftotextInstallHint,
   type BinaryDiagnosis,
   type DiagnoseBinariesOptions,
 } from './config/index.js';
