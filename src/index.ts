@@ -114,13 +114,27 @@ export {
   type CredentialSourceKind,
 } from './config/index.js';
 
-// Diagnóstico de binários de mídia (M3-11, #53) — núcleo do comando `doctor`
-// (CLI) e da seção "Binários de mídia" da TUI. Detecção do tesseract + hint de
-// instalação por SO (ADR-002).
+// Diagnóstico de binários de mídia (M3-11 #53, M4-01 #57) — núcleo do comando
+// `doctor` (CLI) e da seção "Binários de mídia" da TUI. Detecção de tesseract,
+// ffmpeg e whisper.cpp + status do modelo GGUF, com hint de instalação por SO
+// (ADR-002).
 export {
   diagnoseBinaries,
   tesseractInstallHint,
   pdftotextInstallHint,
-  type BinaryDiagnosis,
+  ffmpegInstallHint,
+  whisperInstallHint,  type BinaryDiagnosis,
   type DiagnoseBinariesOptions,
 } from './config/index.js';
+
+// Localização de binários de mídia e path canônico do modelo GGUF (M4-01, #57).
+// `whisperModelDir` é o ponto único de verdade do cache de modelos, consumido
+// pelo `doctor` e pelo download do modelo (#58) (ADR-002).
+export {
+  findFfmpeg,
+  detectFfmpegVersion,
+  findWhisper,
+  whisperModelDir,
+  type FfmpegLocation,
+  type WhisperLocation,
+} from './extract/index.js';
