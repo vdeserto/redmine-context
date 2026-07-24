@@ -34,3 +34,13 @@ export {
   type TesseractExtractorOptions,
   type TesseractLocation,
 } from './tesseract.js';
+
+export {
+  createPdfExtractor,
+  detectPdftotextVersion,
+  findPdftotext,
+  PdfExtractor,
+  PDF_MIMES,
+  type PdfExtractorOptions,
+  type PdftotextLocation,
+} from './pdf.js';

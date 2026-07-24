@@ -20,6 +20,11 @@
  */
 
 import {
+  detectPdftotextVersion as defaultDetectPdftotextVersion,
+  findPdftotext as defaultFindPdftotext,
+  type PdftotextLocation,
+} from '../extract/pdf.js';
+import {
   detectTesseractVersion as defaultDetectTesseractVersion,
   findTesseract as defaultFindTesseract,
   type TesseractLocation,
@@ -47,6 +52,10 @@ export interface DiagnoseBinariesOptions {
   readonly findTesseract?: () => TesseractLocation | undefined;
   /** Lê a versão do `tesseract`; default {@link defaultDetectTesseractVersion}. */
   readonly detectTesseractVersion?: (bin: string) => Promise<string | undefined>;
+  /** Localiza o binário `pdftotext`; default {@link defaultFindPdftotext}. */
+  readonly findPdftotext?: () => PdftotextLocation | undefined;
+  /** Lê a versão do `pdftotext`; default {@link defaultDetectPdftotextVersion}. */
+  readonly detectPdftotextVersion?: (bin: string) => Promise<string | undefined>;
 }
 
 /** Path convencional do tesseract no Windows citado no hint (ADR-002). */
@@ -75,30 +84,84 @@ export function tesseractInstallHint(platform: NodeJS.Platform): string {
 }
 
 /**
- * Diagnostica o binário `tesseract`: localiza-o (PATH + locais convencionais),
- * lê a versão quando presente e sempre anexa a instrução de instalação do SO.
+ * Instrução de instalação do `pdftotext` (poppler) para um SO. Pura e injetável —
+ * cada plataforma gera uma dica testável isoladamente (ADR-002).
+ *
+ * @param platform - Plataforma alvo (`process.platform`).
+ * @returns Comando/instrução de instalação adequado ao SO.
+ * @example
+ * pdftotextInstallHint('darwin'); // 'brew install poppler'
+ */
+export function pdftotextInstallHint(platform: NodeJS.Platform): string {
+  switch (platform) {
+    case 'darwin':
+      return 'brew install poppler';
+    case 'win32':
+      // Reason: os builds Windows do poppler vêm do repackage oschwartz10612 —
+      // disponível tanto no winget quanto no chocolatey.
+      return 'winget install oschwartz10612.Poppler (ou: choco install poppler)';
+    default:
+      // Reason: Linux e demais UNIX — as duas famílias de gerenciador mais comuns.
+      return 'sudo apt install poppler-utils  (ou: sudo dnf install poppler-utils)';
+  }
+}
+
+/**
+ * Diagnostica UM binário externo: localiza-o (PATH + locais convencionais), lê a
+ * versão quando presente e sempre anexa a instrução de instalação do SO. Sem
+ * injetar `version: undefined` (respeita `exactOptionalPropertyTypes`).
+ *
+ * @param spec - Nome, localizador, leitor de versão e hint do binário.
+ * @returns O {@link BinaryDiagnosis} correspondente.
+ */
+async function diagnoseOne(spec: {
+  readonly name: string;
+  readonly locate: () => { path: string } | undefined;
+  readonly detectVersion: (bin: string) => Promise<string | undefined>;
+  readonly installHint: string;
+}): Promise<BinaryDiagnosis> {
+  const located = spec.locate();
+  if (located === undefined) {
+    return { name: spec.name, found: false, installHint: spec.installHint };
+  }
+  const version = await spec.detectVersion(located.path);
+  const base: BinaryDiagnosis = {
+    name: spec.name,
+    found: true,
+    path: located.path,
+    installHint: spec.installHint,
+  };
+  return version !== undefined ? { ...base, version } : base;
+}
+
+/**
+ * Diagnostica os binários de mídia que a extração local precisa: `tesseract`
+ * (OCR) e `pdftotext` (poppler, PDF→texto). Localiza cada um (PATH + locais
+ * convencionais), lê a versão quando presente e sempre anexa a instrução de
+ * instalação do SO.
  *
  * @param options - Deps injetáveis (plataforma, localização, versão). Ver
  *   {@link DiagnoseBinariesOptions}.
- * @returns Uma lista de {@link BinaryDiagnosis} (hoje só o tesseract).
+ * @returns Uma lista de {@link BinaryDiagnosis} (tesseract, pdftotext).
  * @example
- * const [tesseract] = await diagnoseBinaries();
- * if (!tesseract.found) logger.warn(tesseract.installHint);
+ * const [tesseract, pdftotext] = await diagnoseBinaries();
+ * if (!pdftotext.found) logger.warn(pdftotext.installHint);
  */
 export async function diagnoseBinaries(options: DiagnoseBinariesOptions = {}): Promise<BinaryDiagnosis[]> {
   const platform = options.platform ?? process.platform;
-  const find = options.findTesseract ?? defaultFindTesseract;
-  const detectVersion = options.detectTesseractVersion ?? defaultDetectTesseractVersion;
 
-  const installHint = tesseractInstallHint(platform);
-  const located = find();
-  if (located === undefined) {
-    return [{ name: 'tesseract', found: false, installHint }];
-  }
-
-  const version = await detectVersion(located.path);
-  // Reason: `exactOptionalPropertyTypes` proíbe injetar `version: undefined` —
-  // a chave só entra quando a versão foi de fato lida.
-  const base: BinaryDiagnosis = { name: 'tesseract', found: true, path: located.path, installHint };
-  return [version !== undefined ? { ...base, version } : base];
+  return Promise.all([
+    diagnoseOne({
+      name: 'tesseract',
+      locate: options.findTesseract ?? defaultFindTesseract,
+      detectVersion: options.detectTesseractVersion ?? defaultDetectTesseractVersion,
+      installHint: tesseractInstallHint(platform),
+    }),
+    diagnoseOne({
+      name: 'pdftotext',
+      locate: options.findPdftotext ?? defaultFindPdftotext,
+      detectVersion: options.detectPdftotextVersion ?? defaultDetectPdftotextVersion,
+      installHint: pdftotextInstallHint(platform),
+    }),
+  ]);
 }
