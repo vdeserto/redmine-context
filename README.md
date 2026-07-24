@@ -23,9 +23,12 @@ redmine-context login --url https://redmine.example
 #    (descrição + histórico + custom fields + anexos + relações + pai/filhos).
 redmine-context issue 42 --url https://redmine.example
 #    --json grava/emite o bundle JSON canônico; --out <dir> grava em arquivo.
+#    --extract liga o OCR dos anexos de imagem e embute o texto no bundle
+#    (requer tesseract; ver Extração de mídia abaixo).
 
-# 3) mcp add — registra o MCP server no seu cliente (ex.: Claude) para expor a
-#    tool read-only get_issue_context, usando a mesma credencial da cascata.
+# 3) mcp add — registra o MCP server no seu cliente (ex.: Claude) para expor as
+#    tools read-only get_issue_context, search_issues e get_attachment_text,
+#    usando a mesma credencial da cascata.
 claude mcp add redmine-context \
   --env REDMINE_URL=https://redmine.example \
   -- npx -y redmine-context mcp
@@ -52,9 +55,11 @@ ver [Ambiente de teste](#ambiente-de-teste) e [E2E](#e2e-dogfood-cli--mcp)).
 
 ## MCP server (stdio)
 
-O subcomando `redmine-context mcp` sobe um servidor [MCP](https://modelcontextprotocol.io) sobre stdio, expondo uma tool read-only:
+O subcomando `redmine-context mcp` sobe um servidor [MCP](https://modelcontextprotocol.io) sobre stdio, expondo três tools read-only:
 
-- `get_issue_context(issue_id: number, format?: 'markdown' | 'json')` — busca a issue na instância configurada, normaliza e retorna o bundle (Markdown por padrão).
+- `get_issue_context(issue_id: number, format?: 'markdown' | 'json', extract_attachments?: boolean)` — busca a issue na instância configurada, normaliza e retorna o bundle (Markdown por padrão). Com `extract_attachments: true`, embute o texto (OCR) dos anexos de imagem no bundle (default `false`, pois adiciona latência de download+OCR).
+- `search_issues(query?, project_id?, status_id?, assigned_to_id?, updated_on?, limit?)` — busca issues por filtros estruturados e, opcionalmente, texto livre (`query`, best-effort via `/search`); retorna uma lista compacta paginada.
+- `get_attachment_text(issue_id: number, attachment_id: number)` — retorna o texto extraído (OCR, com cache) de um anexo, dentro de uma fence de conteúdo não confiável. Anexo não processável retorna o status/motivo legível (`skipped`/`unsupported`/`failed`), nunca um erro genérico.
 
 A instância vem sempre da configuração do processo (`REDMINE_URL` + cascata de credencial, `REDMINE_API_KEY` no modo headless): **nenhuma tool aceita URL/host arbitrário**. Erros 403/404 e credencial ausente retornam um erro MCP claro (`isError`). O stdout é reservado ao protocolo; logs vão para stderr.
 
@@ -65,6 +70,37 @@ claude mcp add redmine-context -- npx -y redmine-context mcp
 ```
 
 Configure o ambiente do servidor com `REDMINE_URL` e `REDMINE_API_KEY` (ou rode `redmine-context login` para gravar a credencial na cascata).
+
+## Extração de mídia (OCR)
+
+O texto de anexos de **imagem** (PNG/JPEG/GIF/WebP) é extraído **100% localmente**
+via [`tesseract`](https://github.com/tesseract-ocr/tesseract) (idiomas `por+eng`
+por padrão), conforme o [ADR-002](documentation/adr/ADR-002-midia-100-local-politica-binarios.md).
+O texto extraído é sempre marcado como **não confiável** (`<untrusted-content>`)
+no bundle. Áudio/vídeo entram no M4 pelo mesmo caminho.
+
+- **CLI**: `redmine-context issue <id> --extract` baixa os anexos, roda o OCR e
+  embute o texto no bundle.
+- **MCP**: `get_issue_context(..., extract_attachments: true)` e
+  `get_attachment_text(issue_id, attachment_id)`.
+
+**Degradação graciosa**: o `tesseract` **não** é pré-requisito. Se estiver
+ausente, o bundle é gerado do mesmo jeito — o anexo apenas registra o status de
+falha com a dica de instalação; a falha de um anexo nunca derruba os demais nem o
+bundle. As extrações são cacheadas por `(instância, anexo, digest, versão+modelo+params
+do extrator)` ([ADR-004](documentation/adr/ADR-004-cache-duas-camadas.md)): um
+comentário novo **não** reprocessa o OCR, e CLI e MCP compartilham o mesmo cache.
+
+Verifique a instalação com o `doctor`:
+
+```bash
+redmine-context doctor    # relatório dos binários de mídia (tesseract); exit 0 se ok, 1 se faltar
+```
+
+O `doctor` detecta o binário no `PATH` e em locais convencionais e, quando
+ausente, imprime a instrução de instalação do seu SO (ex.: `brew install tesseract`,
+`apt install tesseract-ocr`, `winget install UB-Mannheim.TesseractOCR`). Degrada
+naturalmente em `NO_COLOR`/não-TTY (texto puro, sem ANSI).
 
 
 ## TUI interativa
