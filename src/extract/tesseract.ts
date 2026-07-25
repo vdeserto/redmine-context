@@ -33,6 +33,7 @@ import type { ExtractionResult } from '../contract.js';
 
 import { ExtractorRegistry, type ExtractOptions, type Extractor } from './dispatcher.js';
 import { createPdfExtractor } from './pdf.js';
+import { runWithWatchdog, sanitizedEnv } from './subprocess.js';
 import { createWhisperExtractor } from './whisper-extract.js';
 
 /** Identificador estável do extrator (entra em metadados). */
@@ -120,18 +121,15 @@ export function findTesseract(): TesseractLocation | undefined {
 }
 
 /**
- * Monta o env MÍNIMO e EXPLÍCITO do subprocesso (ADR-002). Só repassa `PATH` (o
- * tesseract pode invocar sub-ferramentas) e `TESSDATA_PREFIX` quando definido
- * (localização dos `traineddata`). NENHUM outro segredo do pai é herdado.
+ * Env sanitizado do tesseract: o env MÍNIMO compartilhado ({@link sanitizedEnv})
+ * mais `TESSDATA_PREFIX` (localização dos `traineddata`) quando definido — o
+ * tesseract precisa dele para achar os modelos de idioma. Nenhum segredo do pai é
+ * herdado (allowlist explícita, ADR-002).
  *
  * @returns Env sanitizado para o subprocesso tesseract.
  */
-function sanitizedEnv(): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { PATH: process.env.PATH ?? '/usr/bin:/bin' };
-  if (process.env.TESSDATA_PREFIX !== undefined) {
-    env.TESSDATA_PREFIX = process.env.TESSDATA_PREFIX;
-  }
-  return env;
+function tesseractEnv(): NodeJS.ProcessEnv {
+  return sanitizedEnv({ allow: ['TESSDATA_PREFIX'] });
 }
 
 /** Erro interno: o watchdog matou o tesseract por estourar o timeout. */
@@ -164,54 +162,13 @@ interface RunOptions {
 function runTesseract(options: RunOptions): Promise<string> {
   const { bin, filePath, lang, psm, timeoutMs, killGraceMs } = options;
   const args = [filePath, 'stdout', '-l', lang, '--psm', String(psm)];
-
-  return new Promise<string>((resolve, reject) => {
-    let settled = false;
-    let timedOut = false;
-    const timers: NodeJS.Timeout[] = [];
-
-    const cleanup = (): void => {
-      for (const timer of timers) clearTimeout(timer);
-    };
-    const settle = (fn: () => void): void => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      fn();
-    };
-
-    const child = execFile(
-      bin,
-      args,
-      { env: sanitizedEnv(), encoding: 'utf8', maxBuffer: MAX_BUFFER_BYTES, windowsHide: true },
-      (error, stdout) => {
-        if (timedOut) {
-          settle(() => reject(new TesseractTimeoutError(timeoutMs)));
-          return;
-        }
-        if (error !== null) {
-          settle(() => reject(error));
-          return;
-        }
-        settle(() => resolve(stdout));
-      },
-    );
-
-    timers.push(
-      setTimeout(() => {
-        timedOut = true;
-        child.kill('SIGTERM');
-        // Reason: após a graça, força SIGKILL e desiste — um processo que ignora
-        // SIGTERM não pode segurar a fila de jobs indefinidamente (ADR-002).
-        timers.push(
-          setTimeout(() => {
-            child.kill('SIGKILL');
-            settle(() => reject(new TesseractTimeoutError(timeoutMs)));
-          }, killGraceMs),
-        );
-      }, timeoutMs),
-    );
-  });
+  // Delega ao watchdog compartilhado (SEM shell, env sanitizado, SIGTERM → graça →
+  // SIGKILL); o estouro de timeout preserva o {@link TesseractTimeoutError} para a
+  // classificação de falha (`reason: 'timeout'`).
+  return runWithWatchdog(
+    { bin, args, env: tesseractEnv(), timeoutMs, killGraceMs, maxBuffer: MAX_BUFFER_BYTES },
+    { makeTimeoutError: (ms) => new TesseractTimeoutError(ms) },
+  );
 }
 
 /** Opções de construção do {@link TesseractExtractor}. */
@@ -349,7 +306,7 @@ export function detectTesseractVersion(bin: string): Promise<string | undefined>
     execFile(
       bin,
       ['--version'],
-      { env: sanitizedEnv(), encoding: 'utf8', windowsHide: true, timeout: DEFAULT_KILL_GRACE_MS },
+      { env: tesseractEnv(), encoding: 'utf8', windowsHide: true, timeout: DEFAULT_KILL_GRACE_MS },
       (error, stdout) => {
         if (error !== null) {
           resolve(undefined);

@@ -26,7 +26,6 @@
  * e asseguram os args passados ao executor.
  */
 
-import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdir as fsMkdir, rm as fsRm } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -37,6 +36,7 @@ import type { Logger } from '../client/index.js';
 import type { ExtractionStatus } from '../contract.js';
 
 import { findFfmpeg } from './ffmpeg.js';
+import { runWithWatchdog, sanitizedEnv } from './subprocess.js';
 
 /** Nome da aplicação para `env-paths` — em sincronia com o cache de anexos (ADR-004). */
 const APP_NAME = 'redmine-context';
@@ -149,16 +149,6 @@ class FfmpegTimeoutError extends Error {
 }
 
 /**
- * Monta o env MÍNIMO do subprocesso: só `PATH`. Nenhum segredo do pai (ex.:
- * `REDMINE_API_KEY`) vaza para o ffmpeg (ADR-002).
- *
- * @returns Env sanitizado para o subprocesso.
- */
-function sanitizedEnv(): NodeJS.ProcessEnv {
-  return { PATH: process.env.PATH ?? '/usr/bin:/bin' };
-}
-
-/**
  * Monta os argumentos do ffmpeg para transcodificar `inputPath` → WAV PCM 16-bit,
  * 16 kHz, mono em `outputPath`. `-protocol_whitelist file` (opção de INPUT) precede
  * o `-i`; as opções de saída (`-ar`/`-ac`/`-c:a`/`-f`) vêm depois.
@@ -191,63 +181,21 @@ function buildFfmpegArgs(inputPath: string, outputPath: string): readonly string
 }
 
 /**
- * Executor default: roda o ffmpeg SEM shell com env sanitizado e watchdog de
- * timeout (`SIGTERM` → graça → `SIGKILL`). Resolve no exit 0; rejeita caso
- * contrário (com {@link FfmpegTimeoutError} no estouro de timeout).
+ * Executor default: delega ao watchdog compartilhado ({@link runWithWatchdog}) —
+ * ffmpeg SEM shell, env sanitizado e escalonamento `SIGTERM` → graça → `SIGKILL`.
+ * O stdout é irrelevante para a conversão (o WAV é escrito em disco); só o exit
+ * importa. O estouro de timeout é sinalizado com {@link FfmpegTimeoutError} para
+ * preservar a classificação de falha (`reason: 'timeout'`).
  *
  * @param invocation - Ver {@link FfmpegInvocation}.
  * @returns Promessa resolvida no sucesso do ffmpeg.
  */
 function defaultRun(invocation: FfmpegInvocation): Promise<void> {
   const { bin, args, env, timeoutMs, killGraceMs } = invocation;
-
-  return new Promise<void>((resolve, reject) => {
-    let settled = false;
-    let timedOut = false;
-    const timers: NodeJS.Timeout[] = [];
-
-    const cleanup = (): void => {
-      for (const timer of timers) clearTimeout(timer);
-    };
-    const settle = (fn: () => void): void => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      fn();
-    };
-
-    const child = execFile(
-      bin,
-      [...args],
-      { env, encoding: 'utf8', maxBuffer: MAX_BUFFER_BYTES, windowsHide: true },
-      (error) => {
-        if (timedOut) {
-          settle(() => reject(new FfmpegTimeoutError(timeoutMs)));
-          return;
-        }
-        if (error !== null) {
-          settle(() => reject(error));
-          return;
-        }
-        settle(() => resolve());
-      },
-    );
-
-    timers.push(
-      setTimeout(() => {
-        timedOut = true;
-        child.kill('SIGTERM');
-        // Reason: após a graça, força SIGKILL e desiste — um processo que ignora
-        // SIGTERM não pode segurar a fila de jobs indefinidamente (ADR-002).
-        timers.push(
-          setTimeout(() => {
-            child.kill('SIGKILL');
-            settle(() => reject(new FfmpegTimeoutError(timeoutMs)));
-          }, killGraceMs),
-        );
-      }, timeoutMs),
-    );
-  });
+  return runWithWatchdog(
+    { bin, args, env, timeoutMs, killGraceMs, maxBuffer: MAX_BUFFER_BYTES },
+    { makeTimeoutError: (ms) => new FfmpegTimeoutError(ms) },
+  ).then(() => undefined);
 }
 
 /** `true` se o erro sinaliza estouro de timeout do watchdog (por nome, robusto a DI). */
