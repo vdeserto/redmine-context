@@ -44,6 +44,8 @@ export {
   type PdfExtractorOptions,
   type PdftotextLocation,
 } from './pdf.js';
+
+export {
   findExecutable,
   isExecutable,
   type ConventionalDirs,

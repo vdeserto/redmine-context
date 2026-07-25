@@ -83,7 +83,8 @@ export interface DiagnoseBinariesOptions {
   /** Diretório canônico dos modelos GGUF; default {@link defaultWhisperModelDir}. */
   readonly whisperModelDir?: () => string;
   /** Lista os arquivos de um diretório (para achar o `.gguf`); default `readdirSync`. */
-  readonly listDir?: (dir: string) => readonly string[];}
+  readonly listDir?: (dir: string) => readonly string[];
+}
 
 /** Path convencional do tesseract no Windows citado no hint (ADR-002). */
 const WINDOWS_CONVENTIONAL_PATH = 'C:\\Program Files\\Tesseract-OCR';
@@ -138,63 +139,6 @@ export function pdftotextInstallHint(platform: NodeJS.Platform): string {
 }
 
 /**
- * Diagnostica UM binário externo: localiza-o (PATH + locais convencionais), lê a
- * versão quando presente e sempre anexa a instrução de instalação do SO. Sem
- * injetar `version: undefined` (respeita `exactOptionalPropertyTypes`).
- *
- * @param spec - Nome, localizador, leitor de versão e hint do binário.
- * @returns O {@link BinaryDiagnosis} correspondente.
- */
-async function diagnoseOne(spec: {
-  readonly name: string;
-  readonly locate: () => { path: string } | undefined;
-  readonly detectVersion: (bin: string) => Promise<string | undefined>;
-  readonly installHint: string;
-}): Promise<BinaryDiagnosis> {
-  const located = spec.locate();
-  if (located === undefined) {
-    return { name: spec.name, found: false, installHint: spec.installHint };
-  }
-  const version = await spec.detectVersion(located.path);
-  const base: BinaryDiagnosis = {
-    name: spec.name,
-    found: true,
-    path: located.path,
-    installHint: spec.installHint,
-  };
-  return version !== undefined ? { ...base, version } : base;
-}
-
-/**
- * Diagnostica os binários de mídia que a extração local precisa: `tesseract`
- * (OCR) e `pdftotext` (poppler, PDF→texto). Localiza cada um (PATH + locais
- * convencionais), lê a versão quando presente e sempre anexa a instrução de
- * instalação do SO.
- *
- * @param options - Deps injetáveis (plataforma, localização, versão). Ver
- *   {@link DiagnoseBinariesOptions}.
- * @returns Uma lista de {@link BinaryDiagnosis} (tesseract, pdftotext).
- * @example
- * const [tesseract, pdftotext] = await diagnoseBinaries();
- * if (!pdftotext.found) logger.warn(pdftotext.installHint);
- */
-export async function diagnoseBinaries(options: DiagnoseBinariesOptions = {}): Promise<BinaryDiagnosis[]> {
-  const platform = options.platform ?? process.platform;
-
-  return Promise.all([
-    diagnoseOne({
-      name: 'tesseract',
-      locate: options.findTesseract ?? defaultFindTesseract,
-      detectVersion: options.detectTesseractVersion ?? defaultDetectTesseractVersion,
-      installHint: tesseractInstallHint(platform),
-    }),
-    diagnoseOne({
-      name: 'pdftotext',
-      locate: options.findPdftotext ?? defaultFindPdftotext,
-      detectVersion: options.detectPdftotextVersion ?? defaultDetectPdftotextVersion,
-      installHint: pdftotextInstallHint(platform),
-    }),
-  ]);
  * Instrução de instalação do `ffmpeg` por SO, COM menção ao opt-in
  * `--download-binaries` e às builds estáticas BtbN (artefato oficial; ADR-002).
  *
@@ -306,6 +250,22 @@ async function diagnoseFfmpeg(
   return makeDiagnosis('ffmpeg', installHint, { path: located.path, version });
 }
 
+/** Diagnostica o `pdftotext` (poppler): localização, versão e hint por SO. */
+async function diagnosePdftotext(
+  platform: NodeJS.Platform,
+  locate: () => PdftotextLocation | undefined,
+  detectVersion: (bin: string) => Promise<string | undefined>,
+): Promise<BinaryDiagnosis> {
+  const hint = pdftotextInstallHint(platform);
+  const located = locate();
+  if (located === undefined) {
+    return { name: 'pdftotext', found: false, installHint: hint };
+  }
+  const version = await detectVersion(located.path);
+  const base: BinaryDiagnosis = { name: 'pdftotext', found: true, path: located.path, installHint: hint };
+  return version !== undefined ? { ...base, version } : base;
+}
+
 /**
  * Diagnostica o `whisper.cpp`: localiza QUALQUER binário conhecido (`whisper-cli`
  * / `whisper-cpp` / `main`) e reporta o caminho encontrado (que revela qual).
@@ -365,7 +325,7 @@ function diagnoseWhisperModel(
  * @param options - Deps injetáveis (plataforma, localizadores, versões, modelo).
  *   Ver {@link DiagnoseBinariesOptions}.
  * @returns A lista de {@link BinaryDiagnosis} na ordem
- *   `[tesseract, ffmpeg, whisper.cpp, modelo]`.
+ *   `[tesseract, pdftotext, ffmpeg, whisper.cpp, modelo]`.
  * @example
  * for (const item of await diagnoseBinaries()) {
  *   if (!item.found) logger.warn(item.installHint);
@@ -383,7 +343,9 @@ export async function diagnoseBinaries(options: DiagnoseBinariesOptions = {}): P
 
   return [
     await diagnoseTesseract(platform, findTesseract, detectTesseractVersion),
+    await diagnosePdftotext(platform, options.findPdftotext ?? defaultFindPdftotext, options.detectPdftotextVersion ?? defaultDetectPdftotextVersion),
     await diagnoseFfmpeg(platform, findFfmpeg, detectFfmpegVersion),
     diagnoseWhisper(platform, findWhisper),
     diagnoseWhisperModel(modelDir, listDir),
-  ];}
+  ];
+}

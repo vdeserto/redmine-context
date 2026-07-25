@@ -4,25 +4,15 @@
  * binário, a detecção de versão e a listagem do diretório de modelos são TODAS
  * injetadas — nenhum binário real é chamado e nenhum acesso ao filesystem real
  * acontece aqui. Provam: hint correto por SO (darwin/linux/win32) para tesseract,
- * ffmpeg e whisper.cpp; estados found/ausente por binário; whisper sem versão
- * reportando o path como evidência; e o status do modelo GGUF (presente/ausente).
+ * pdftotext, ffmpeg e whisper.cpp; estados found/ausente por binário; whisper sem
+ * versão reportando o path como evidência; e o status do modelo GGUF (presente/ausente).
  */
 import { describe, expect, it, vi } from 'vitest';
 
-import { diagnoseBinaries, pdftotextInstallHint, tesseractInstallHint } from '../../src/config/doctor.js';
-
-/**
- * Deps de pdftotext injetadas por padrão nos testes de tesseract para mantê-los
- * HERMÉTICOS — sem essas injeções, o diagnóstico do pdftotext cairia no
- * filesystem/binário reais. Aqui o pdftotext é sempre "não instalado".
- */
-const noPdftotext = {
-  findPdftotext: () => undefined,
-  detectPdftotextVersion: vi.fn(),
-};
 import {
   diagnoseBinaries,
   ffmpegInstallHint,
+  pdftotextInstallHint,
   tesseractInstallHint,
   whisperInstallHint,
   type DiagnoseBinariesOptions,
@@ -37,6 +27,8 @@ function baseDeps(overrides: DiagnoseBinariesOptions = {}): DiagnoseBinariesOpti
     platform: 'linux',
     findTesseract: () => undefined,
     detectTesseractVersion: vi.fn(),
+    findPdftotext: () => undefined,
+    detectPdftotextVersion: vi.fn(),
     findFfmpeg: () => undefined,
     detectFfmpegVersion: vi.fn(),
     findWhisper: () => undefined,
@@ -53,6 +45,7 @@ async function diagnose(name: string, overrides: DiagnoseBinariesOptions = {}) {
   if (entry === undefined) throw new Error(`entrada não encontrada: ${name}`);
   return entry;
 }
+
 describe('core: tesseractInstallHint — instrução por SO', () => {
   it('darwin: sugere brew', () => {
     expect(tesseractInstallHint('darwin')).toContain('brew install tesseract tesseract-lang');
@@ -90,18 +83,13 @@ describe('core: ffmpegInstallHint — instrução por SO com opt-in e BtbN', () 
     expect(hint).toContain('BtbN');
   });
 
-    const [tesseract] = await diagnoseBinaries({
-      platform: 'darwin',
-      findTesseract,
-      detectTesseractVersion,
-      ...noPdftotext,
-    });
   it('linux: apt/dnf install ffmpeg + BtbN', () => {
     const hint = ffmpegInstallHint('linux');
     expect(hint).toContain('apt install ffmpeg');
     expect(hint).toContain('dnf');
     expect(hint).toContain('BtbN');
   });
+
   it('win32: winget + BtbN', () => {
     const hint = ffmpegInstallHint('win32');
     expect(hint).toContain('winget');
@@ -129,10 +117,11 @@ describe('core: whisperInstallHint — instrução por SO com opt-in e releases'
 });
 
 describe('core: diagnoseBinaries — ordem e composição', () => {
-  it('retorna tesseract, ffmpeg, whisper.cpp e o modelo GGUF, nessa ordem', async () => {
+  it('retorna tesseract, pdftotext, ffmpeg, whisper.cpp e o modelo GGUF, nessa ordem', async () => {
     const list = await diagnoseBinaries(baseDeps({ platform: 'darwin' }));
     expect(list.map((item) => item.name)).toEqual([
       'tesseract',
+      'pdftotext',
       'ffmpeg',
       'whisper.cpp',
       'modelo whisper (GGUF)',
@@ -157,37 +146,23 @@ describe('core: diagnoseBinaries — tesseract', () => {
   });
 
   it('found=true sem versão quando o binário existe mas a versão é ilegível', async () => {
-    const findTesseract = vi.fn().mockReturnValue({ path: '/usr/bin/tesseract' });
-    const detectTesseractVersion = vi.fn().mockResolvedValue(undefined);
-
-    const [tesseract] = await diagnoseBinaries({
-      platform: 'linux',
-      findTesseract,
-      detectTesseractVersion,
-      ...noPdftotext,
-    });
     const tesseract = await diagnose('tesseract', {
       findTesseract: vi.fn().mockReturnValue({ path: '/usr/bin/tesseract' }),
       detectTesseractVersion: vi.fn().mockResolvedValue(undefined),
-    });    expect(tesseract.found).toBe(true);
+    });
+    expect(tesseract.found).toBe(true);
     expect(tesseract.path).toBe('/usr/bin/tesseract');
     expect(tesseract.version).toBeUndefined();
   });
 
   it('ausente: found=false, sem path/versão, hint do SO e SEM detectar versão', async () => {
     const detectTesseractVersion = vi.fn();
-
-    const [tesseract] = await diagnoseBinaries({
-      platform: 'win32',
-      findTesseract,
-      detectTesseractVersion,
-      ...noPdftotext,
-    });
     const tesseract = await diagnose('tesseract', {
       platform: 'win32',
       findTesseract: vi.fn().mockReturnValue(undefined),
       detectTesseractVersion,
-    });    expect(tesseract).toEqual({
+    });
+    expect(tesseract).toEqual({
       name: 'tesseract',
       found: false,
       installHint: expect.stringContaining('winget install UB-Mannheim.TesseractOCR'),
@@ -219,21 +194,13 @@ describe('core: pdftotextInstallHint — instrução por SO', () => {
   });
 });
 
-describe('core: diagnoseBinaries — pdftotext (segundo binário)', () => {
-  /** Deps de tesseract "ausente" para isolar as asserções no pdftotext. */
-  const noTesseract = { findTesseract: () => undefined, detectTesseractVersion: vi.fn() };
-
-  it('found=true com path e versão quando o pdftotext é localizado e legível', async () => {
-    const findPdftotext = vi.fn().mockReturnValue({ path: '/opt/homebrew/bin/pdftotext' });
-    const detectPdftotextVersion = vi.fn().mockResolvedValue('24.02.0');
-
-    const [, pdftotext] = await diagnoseBinaries({
+describe('core: diagnoseBinaries — pdftotext', () => {
+  it('found=true com path e versão quando localizado e a versão é legível', async () => {
+    const pdftotext = await diagnose('pdftotext', {
       platform: 'darwin',
-      ...noTesseract,
-      findPdftotext,
-      detectPdftotextVersion,
+      findPdftotext: vi.fn().mockReturnValue({ path: '/opt/homebrew/bin/pdftotext' }),
+      detectPdftotextVersion: vi.fn().mockResolvedValue('24.02.0'),
     });
-
     expect(pdftotext).toEqual({
       name: 'pdftotext',
       found: true,
@@ -243,17 +210,23 @@ describe('core: diagnoseBinaries — pdftotext (segundo binário)', () => {
     });
   });
 
-  it('found=false, sem path/versão, com installHint do SO e sem detectar versão', async () => {
-    const findPdftotext = vi.fn().mockReturnValue(undefined);
-    const detectPdftotextVersion = vi.fn();
+  it('found=true sem versão quando o binário existe mas a versão é ilegível', async () => {
+    const pdftotext = await diagnose('pdftotext', {
+      findPdftotext: vi.fn().mockReturnValue({ path: '/usr/bin/pdftotext' }),
+      detectPdftotextVersion: vi.fn().mockResolvedValue(undefined),
+    });
+    expect(pdftotext.found).toBe(true);
+    expect(pdftotext.path).toBe('/usr/bin/pdftotext');
+    expect(pdftotext.version).toBeUndefined();
+  });
 
-    const [, pdftotext] = await diagnoseBinaries({
+  it('ausente: found=false, sem path/versão, hint do SO e SEM detectar versão', async () => {
+    const detectPdftotextVersion = vi.fn();
+    const pdftotext = await diagnose('pdftotext', {
       platform: 'win32',
-      ...noTesseract,
-      findPdftotext,
+      findPdftotext: vi.fn().mockReturnValue(undefined),
       detectPdftotextVersion,
     });
-
     expect(pdftotext).toEqual({
       name: 'pdftotext',
       found: false,
@@ -262,6 +235,9 @@ describe('core: diagnoseBinaries — pdftotext (segundo binário)', () => {
     expect(pdftotext.path).toBeUndefined();
     expect(pdftotext.version).toBeUndefined();
     expect(detectPdftotextVersion).not.toHaveBeenCalled();
+  });
+});
+
 describe('core: diagnoseBinaries — ffmpeg', () => {
   it('found=true com path e versão da 1ª linha de `ffmpeg -version`', async () => {
     const ffmpeg = await diagnose('ffmpeg', {
@@ -360,23 +336,19 @@ describe('core: diagnoseBinaries — modelo GGUF', () => {
         throw new Error('ENOENT');
       },
     });
-    expect(model.found).toBe(false);  });
+    expect(model.found).toBe(false);
+  });
 });
 
 describe('core: diagnoseBinaries — defaults de produção', () => {
-  it('sem deps injetadas retorna tesseract e pdftotext, cada um com installHint não vazio', async () => {
-    const diagnoses = await diagnoseBinaries();
-    expect(diagnoses.map((d) => d.name)).toEqual(['tesseract', 'pdftotext']);
-    for (const diagnosis of diagnoses) {
-      expect(typeof diagnosis.found).toBe('boolean');
-      expect(diagnosis.installHint.length).toBeGreaterThan(0);
-    }
-  it('sem deps injetadas retorna as 4 entradas com installHint não vazio, sem lançar', async () => {
+  it('sem deps injetadas retorna as 5 entradas com installHint não vazio, sem lançar', async () => {
     const list = await diagnoseBinaries();
-    expect(list).toHaveLength(4);
+    expect(list).toHaveLength(5);
     for (const item of list) {
       expect(typeof item.found).toBe('boolean');
       expect(item.installHint.length).toBeGreaterThan(0);
     }
-    expect(list[0]?.name).toBe('tesseract');  });
+    expect(list[0]?.name).toBe('tesseract');
+    expect(list[1]?.name).toBe('pdftotext');
+  });
 });
