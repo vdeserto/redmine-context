@@ -33,6 +33,7 @@ import type { ExtractionResult } from '../contract.js';
 
 import { ExtractorRegistry, type ExtractOptions, type Extractor } from './dispatcher.js';
 import { createPdfExtractor } from './pdf.js';
+import { createWhisperExtractor } from './whisper-extract.js';
 
 /** Identificador estável do extrator (entra em metadados). */
 const EXTRACTOR_ID = 'tesseract-ocr';
@@ -400,8 +401,13 @@ export async function createDefaultRegistry(
   config: Omit<TesseractExtractorOptions, 'version' | 'binaryPath'> = {},
 ): Promise<ExtractorRegistry> {
   const registry = new ExtractorRegistry();
-  const [tesseract, pdf] = await Promise.all([createTesseractExtractor(config), createPdfExtractor()]);
+  const [tesseract, pdf, whisper] = await Promise.all([
+    createTesseractExtractor(config),
+    createPdfExtractor(),
+    createWhisperExtractor(),
+  ]);
   registry.register(tesseract);
   registry.register(pdf);
+  registry.register(whisper);
   return registry;
 }
