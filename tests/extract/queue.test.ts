@@ -240,6 +240,39 @@ describe('runQueue — núcleo da fila de jobs (#67)', () => {
     await drain(runQueue(jobs, { concurrency: 1 }));
     expect(seen).toEqual(['ctx-job']);
   });
+
+  it('propaga o orçamento de timeout aos jobs via context.timeoutMs (#68)', async () => {
+    const seen: Array<number | undefined> = [];
+    const jobs: QueueJob<void>[] = [
+      {
+        id: 'budget-job',
+        run: (context) => {
+          seen.push(context.timeoutMs);
+          return Promise.resolve();
+        },
+      },
+    ];
+
+    await drain(runQueue(jobs, { concurrency: 1, jobTimeoutMs: 5_000 }));
+    expect(seen).toEqual([5_000]);
+  });
+
+  it('sem jobTimeoutMs, o context NÃO carrega timeoutMs (exactOptionalPropertyTypes)', async () => {
+    const seen: Array<Record<string, unknown>> = [];
+    const jobs: QueueJob<void>[] = [
+      {
+        id: 'no-budget',
+        run: (context) => {
+          seen.push({ ...context });
+          return Promise.resolve();
+        },
+      },
+    ];
+
+    await drain(runQueue(jobs, { concurrency: 1 }));
+    expect(seen).toEqual([{ jobId: 'no-budget' }]);
+    expect('timeoutMs' in (seen[0] ?? {})).toBe(false);
+  });
 });
 
 describe('defaultConcurrency', () => {

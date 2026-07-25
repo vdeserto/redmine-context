@@ -63,6 +63,17 @@ export {
   type FindExecutableDeps,
 } from './which.js';
 
+export {
+  runWithWatchdog,
+  sanitizedEnv,
+  SubprocessTimeoutError,
+  type ExecFileLike,
+  type SanitizedEnvOptions,
+  type WatchdogChild,
+  type WatchdogDeps,
+  type WatchdogInvocation,
+} from './subprocess.js';
+
 export { detectFfmpegVersion, findFfmpeg, type FfmpegLocation } from './ffmpeg.js';
 
 export {

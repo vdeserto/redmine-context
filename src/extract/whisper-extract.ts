@@ -38,7 +38,6 @@
  * e asseguram os args passados ao executor.
  */
 
-import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -48,6 +47,7 @@ import type { ExtractionResult } from '../contract.js';
 
 import type { ExtractOptions, Extractor } from './dispatcher.js';
 import { GGUF_MODEL_NAME } from './gguf.js';
+import { runWithWatchdog, sanitizedEnv } from './subprocess.js';
 import { findWhisper, whisperModelDir } from './whisper.js';
 
 /** Identificador estável do extrator (entra em metadados). */
@@ -150,16 +150,6 @@ class WhisperTimeoutError extends Error {
 }
 
 /**
- * Monta o env MÍNIMO do subprocesso: só `PATH`. Nenhum segredo do pai (ex.:
- * `REDMINE_API_KEY`) vaza para o whisper (ADR-002).
- *
- * @returns Env sanitizado para o subprocesso.
- */
-function sanitizedEnv(): NodeJS.ProcessEnv {
-  return { PATH: process.env.PATH ?? '/usr/bin:/bin' };
-}
-
-/**
  * Monta os argumentos do whisper.cpp: modelo GGUF via `-m`, entrada WAV via `-f`
  * e `-nt` (sem timestamps, stdout limpo). Nenhuma flag de idioma — auto-detect é o
  * default (ADR-002; o override é a #62).
@@ -178,63 +168,21 @@ function isTimeoutError(error: unknown): boolean {
 }
 
 /**
- * Executor default: roda o whisper.cpp SEM shell com env sanitizado e watchdog de
- * timeout (`SIGTERM` → graça → `SIGKILL`). Resolve com o `stdout` no exit 0;
- * rejeita caso contrário (com {@link WhisperTimeoutError} no estouro de timeout).
+ * Executor default: delega ao watchdog compartilhado ({@link runWithWatchdog}) —
+ * whisper.cpp SEM shell, env sanitizado e escalonamento `SIGTERM` → graça →
+ * `SIGKILL`. Resolve com o `stdout` (a transcrição) no exit 0; o estouro de
+ * timeout é sinalizado com {@link WhisperTimeoutError} para preservar a
+ * classificação de falha (`reason: 'timeout'`).
  *
  * @param invocation - Ver {@link WhisperInvocation}.
  * @returns O stdout (transcrição) do whisper.
  */
 function defaultRun(invocation: WhisperInvocation): Promise<string> {
   const { bin, args, env, timeoutMs, killGraceMs } = invocation;
-
-  return new Promise<string>((resolve, reject) => {
-    let settled = false;
-    let timedOut = false;
-    const timers: NodeJS.Timeout[] = [];
-
-    const cleanup = (): void => {
-      for (const timer of timers) clearTimeout(timer);
-    };
-    const settle = (fn: () => void): void => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      fn();
-    };
-
-    const child = execFile(
-      bin,
-      [...args],
-      { env, encoding: 'utf8', maxBuffer: MAX_BUFFER_BYTES, windowsHide: true },
-      (error, stdout) => {
-        if (timedOut) {
-          settle(() => reject(new WhisperTimeoutError(timeoutMs)));
-          return;
-        }
-        if (error !== null) {
-          settle(() => reject(error));
-          return;
-        }
-        settle(() => resolve(stdout));
-      },
-    );
-
-    timers.push(
-      setTimeout(() => {
-        timedOut = true;
-        child.kill('SIGTERM');
-        // Reason: após a graça, força SIGKILL e desiste — um processo que ignora
-        // SIGTERM não pode segurar a fila de jobs indefinidamente (ADR-002).
-        timers.push(
-          setTimeout(() => {
-            child.kill('SIGKILL');
-            settle(() => reject(new WhisperTimeoutError(timeoutMs)));
-          }, killGraceMs),
-        );
-      }, timeoutMs),
-    );
-  });
+  return runWithWatchdog(
+    { bin, args, env, timeoutMs, killGraceMs, maxBuffer: MAX_BUFFER_BYTES },
+    { makeTimeoutError: (ms) => new WhisperTimeoutError(ms) },
+  );
 }
 
 /** Opções de construção do {@link WhisperExtractor}. */

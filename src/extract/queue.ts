@@ -42,14 +42,23 @@ export type QueueJobStatus = Extract<
 /**
  * Contexto passado ao {@link QueueJob.run} de cada job.
  *
- * Hoje carrega apenas o `jobId` (útil para logs/telemetria do próprio job). É o
- * seam de extensão reservado para as próximas sub-issues do epic da fila: o
- * `AbortSignal` do cancelamento (#69) e o deadline/timeout (#68) entram aqui
- * como campos OPCIONAIS — aditivos, sem quebrar jobs existentes.
+ * Carrega o `jobId` (útil para logs/telemetria do próprio job) e, opcionalmente,
+ * o `timeoutMs` — o ORÇAMENTO DE TEMPO que um job de extração deve repassar ao
+ * watchdog do subprocesso (#68), que o encerra com `SIGTERM`→`SIGKILL` no estouro.
+ * A fila NÃO cancela o job por conta própria (o kill correto vive no subprocesso);
+ * ela só PROPAGA o orçamento. É o seam reservado ao `AbortSignal` do cancelamento
+ * (#69), que entra aqui como mais um campo OPCIONAL — aditivo, sem quebrar jobs
+ * existentes.
  */
 export interface JobContext {
   /** Id do job em execução (o mesmo de {@link QueueJob.id}). */
   readonly jobId: string;
+  /**
+   * Orçamento de tempo (ms) que o job deve aplicar ao seu subprocesso, quando a
+   * fila é criada com {@link RunQueueOptions.jobTimeoutMs}. Ausente = o job usa seu
+   * próprio default. Respeita `exactOptionalPropertyTypes` (nunca `undefined`).
+   */
+  readonly timeoutMs?: number;
 }
 
 /**
@@ -102,6 +111,12 @@ export interface RunQueueOptions {
   readonly concurrency?: number;
   /** Logger para avisar sobre jobs que falharam (boundary ADR-005; sem `console.*`). */
   readonly logger?: Logger;
+  /**
+   * Orçamento de tempo (ms) propagado a cada job via {@link JobContext.timeoutMs}
+   * (#68) — os jobs de extração o repassam ao watchdog do subprocesso. Omitido =
+   * cada job usa seu próprio default. A fila NÃO cancela o job por conta própria.
+   */
+  readonly jobTimeoutMs?: number;
 }
 
 /**
@@ -198,6 +213,7 @@ export function runQueue<T>(
 ): AsyncIterable<QueueEvent<T>> {
   const concurrency = Math.max(1, options.concurrency ?? defaultConcurrency());
   const logger = options.logger;
+  const jobTimeoutMs = options.jobTimeoutMs;
   const channel = createChannel<QueueEvent<T>>();
   const pending = [...jobs];
 
@@ -214,7 +230,11 @@ export function runQueue<T>(
       // `processing` dentro do try: se a emissão falhar, o finally ainda roda e o
       // slot é liberado (sem leak). Cobre também `job.run` que lança SÍNCRONO.
       channel.emit({ id: job.id, status: 'processing' });
-      const result = await job.run({ jobId: job.id });
+      // Reason: só inclui `timeoutMs` quando a fila tem orçamento — nunca injeta
+      // `undefined` (exactOptionalPropertyTypes) no contexto do job.
+      const context: JobContext =
+        jobTimeoutMs !== undefined ? { jobId: job.id, timeoutMs: jobTimeoutMs } : { jobId: job.id };
+      const result = await job.run(context);
       channel.emit({
         id: job.id,
         status: 'done',
