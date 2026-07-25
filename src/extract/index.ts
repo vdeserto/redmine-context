@@ -55,6 +55,17 @@ export {
 
 export { detectFfmpegVersion, findFfmpeg, type FfmpegLocation } from './ffmpeg.js';
 
+export {
+  audioTempDir,
+  convertAudioToWav,
+  type ConvertAudioToWavOptions,
+  type FfmpegInvocation,
+  type FfmpegRunner,
+  type WavConversionFailure,
+  type WavConversionResult,
+  type WavConversionSuccess,
+} from './audio.js';
+
 export { findWhisper, whisperModelDir, type WhisperLocation } from './whisper.js';
 
 export {
