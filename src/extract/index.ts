@@ -79,6 +79,17 @@ export {
 export { findWhisper, whisperModelDir, type WhisperLocation } from './whisper.js';
 
 export {
+  createWhisperExtractor,
+  parseWhisperOutput,
+  WhisperExtractor,
+  WHISPER_MIMES,
+  type CreateWhisperExtractorOptions,
+  type WhisperExtractorOptions,
+  type WhisperInvocation,
+  type WhisperRunner,
+} from './whisper-extract.js';
+
+export {
   downloadGgufModel,
   defaultGgufDeps,
   GgufDownloadError,

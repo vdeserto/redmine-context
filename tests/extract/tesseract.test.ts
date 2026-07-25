@@ -246,11 +246,14 @@ describe('createTesseractExtractor / createDefaultRegistry', () => {
     expect(extractor.version).toBe('tesseract-5.5.2');
   });
 
-  it('createDefaultRegistry registra o tesseract para os MIMEs de imagem e o pdftotext para PDF', async () => {
+  it('createDefaultRegistry registra tesseract (imagem), pdftotext (PDF) e whisper (áudio)', async () => {
     const registry = await createDefaultRegistry();
     for (const mime of ['image/png', 'image/jpeg', 'image/gif', 'image/webp']) {
       expect(registry.find(mime)?.id).toBe('tesseract-ocr');
     }
     expect(registry.find('application/pdf')?.id).toBe('pdftotext');
+    for (const mime of ['audio/wav', 'audio/mpeg']) {
+      expect(registry.find(mime)?.id).toBe('whisper-transcribe');
+    }
   });
 });
