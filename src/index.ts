@@ -138,3 +138,15 @@ export {
   type FfmpegLocation,
   type WhisperLocation,
 } from './extract/index.js';
+
+// Download do modelo GGUF com SHA-256 pinado e guard headless (M4-02, #58).
+// Opt-in interativo (ADR-002): recusa em MCP/headless; consome `whisperModelDir`.
+export {
+  downloadGgufModel,
+  GgufDownloadError,
+  GGUF_MODEL_NAME,
+  GGUF_MODEL_URL,
+  GGUF_MODEL_SHA256,
+  type DownloadGgufOptions,
+  type GgufDownloadFailure,
+} from './extract/index.js';
