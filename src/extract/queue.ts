@@ -210,8 +210,10 @@ export function runQueue<T>(
   let next = 0;
 
   const settle = async (job: QueueJob<T>): Promise<void> => {
-    channel.emit({ id: job.id, status: 'processing' });
     try {
+      // `processing` dentro do try: se a emissão falhar, o finally ainda roda e o
+      // slot é liberado (sem leak). Cobre também `job.run` que lança SÍNCRONO.
+      channel.emit({ id: job.id, status: 'processing' });
       const result = await job.run({ jobId: job.id });
       channel.emit({
         id: job.id,
@@ -222,10 +224,13 @@ export function runQueue<T>(
       // Isolamento de falha: reporta, mas a fila segue com os demais jobs.
       const reason = describeError(error);
       logger?.warn(`queue: job "${job.id}" falhou — ${reason}`);
-      channel.emit({ id: job.id, status: 'failed', reason, error });
+      channel.emit({ id: job.id, status: 'failed', reason, ...(error !== undefined ? { error } : {}) });
     } finally {
       active -= 1;
-      pump();
+      // Fora da pilha do `pump`: um job que lança SÍNCRONO rodaria o finally de
+      // forma reentrante, gerando recursão O(N) (risco de stack overflow) e
+      // `close()` redundante. O microtask serializa as continuações.
+      queueMicrotask(pump);
     }
   };
 

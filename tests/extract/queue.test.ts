@@ -147,6 +147,23 @@ describe('runQueue — núcleo da fila de jobs (#67)', () => {
     expect(idsWithStatus(events, 'done').sort()).toEqual(['ok-1', 'ok-2']);
   });
 
+  it('isola até um job que LANÇA de forma síncrona (sem recursão reentrante)', async () => {
+    // `run` que viola o tipo e lança síncrono aciona o caminho reentrante do
+    // finally — com N grande, prova que não estoura a pilha nem derruba a fila.
+    const jobs: QueueJob<string>[] = Array.from({ length: 500 }, (_, index) => ({
+      id: `sync-${index}`,
+      run: (): Promise<string> => {
+        throw new Error(`boom-${index}`);
+      },
+    }));
+
+    const events = await drain(runQueue(jobs, { concurrency: 1 }));
+
+    expect(idsWithStatus(events, 'failed')).toHaveLength(500);
+    const first = events.find((event) => event.status === 'failed');
+    expect(first?.reason).toBe('boom-0');
+  });
+
   it('descreve falhas que não são Error usando String(error)', async () => {
     const jobs: QueueJob<never>[] = [
       { id: 'raw', run: () => Promise.reject('sem-error-object') },
