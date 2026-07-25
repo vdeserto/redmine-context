@@ -25,6 +25,16 @@ export {
 } from './dispatcher.js';
 
 export {
+  defaultConcurrency,
+  runQueue,
+  type JobContext,
+  type QueueEvent,
+  type QueueJob,
+  type QueueJobStatus,
+  type RunQueueOptions,
+} from './queue.js';
+
+export {
   createDefaultRegistry,
   createTesseractExtractor,
   detectTesseractVersion,
