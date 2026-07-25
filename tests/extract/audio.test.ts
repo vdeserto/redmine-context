@@ -16,7 +16,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 // Mock do child_process (só o runner DEFAULT o usa) e do fs/promises (mkdir
 // default). Os testes por INJEÇÃO passam seu próprio `run`/`mkdir` e não os tocam.
 vi.mock('node:child_process', () => ({ execFile: vi.fn() }));
-vi.mock('node:fs/promises', () => ({ mkdir: vi.fn(async () => undefined) }));
+vi.mock('node:fs/promises', () => ({ mkdir: vi.fn(async () => undefined), rm: vi.fn(async () => undefined) }));
 
 import { execFile } from 'node:child_process';
 
@@ -102,9 +102,14 @@ describe('convertAudioToWav: sucesso e argumentos do ffmpeg', () => {
     const args = captured.invocation?.args ?? [];
     // ADR-002: whitelist de protocolo obrigatória (asserção explícita nos args).
     expect(valueAfter(args, '-protocol_whitelist')).toBe('file');
+    // Segurança: a whitelist é opção de INPUT — DEVE preceder o `-i` para valer
+    // sobre o arquivo de entrada (senão o ffmpeg poderia abrir protocolos remotos).
+    expect(args.indexOf('-protocol_whitelist')).toBeLessThan(args.indexOf('-i'));
     // 16 kHz mono, formato WAV PCM (o que o whisper.cpp espera).
     expect(valueAfter(args, '-ar')).toBe('16000');
     expect(valueAfter(args, '-ac')).toBe('1');
+    expect(valueAfter(args, '-c:a')).toBe('pcm_s16le');
+    expect(valueAfter(args, '-f')).toBe('wav');
     expect(valueAfter(args, '-i')).toBe('/cache/att/original.mp3');
 
     // O último arg é o caminho de saída, dentro do dir TEMP do cache, .wav, e
@@ -198,6 +203,46 @@ describe('convertAudioToWav: degradação graciosa', () => {
     expect(result.status).toBe('failed');
     if (result.status !== 'failed') throw new Error('esperava failed');
     expect(result.reason).toBe('timeout');
+  });
+
+  it('remove o WAV parcial (best-effort) quando a conversão falha — não deixa lixo no cache', async () => {
+    const rm = vi.fn(async () => undefined);
+    let outputPath = '';
+    const result = await convertAudioToWav('/cache/x.mp3', {
+      findFfmpegBinary: () => '/opt/ffmpeg',
+      tempDir: '/cache/tmp',
+      mkdir: async () => undefined,
+      rm,
+      run: async (invocation) => {
+        outputPath = invocation.args.at(-1) ?? '';
+        throw new Error('ffmpeg exit 1');
+      },
+    });
+
+    expect(result.status).toBe('failed');
+    // O `.wav` parcial gerado pelo `-y` é descartado com o MESMO caminho de saída.
+    expect(rm).toHaveBeenCalledWith(outputPath);
+    expect(outputPath.endsWith('.wav')).toBe(true);
+  });
+
+  it('falha ao remover o WAV parcial não mascara o erro original (rm é best-effort)', async () => {
+    const rm = vi.fn(async () => {
+      throw new Error('EACCES');
+    });
+    const result = await convertAudioToWav('/cache/x.mp3', {
+      findFfmpegBinary: () => '/opt/ffmpeg',
+      tempDir: '/cache/tmp',
+      mkdir: async () => undefined,
+      rm,
+      run: async () => {
+        throw new Error('ffmpeg exit 1: boom');
+      },
+    });
+
+    expect(result.status).toBe('failed');
+    if (result.status !== 'failed') throw new Error('esperava failed');
+    expect(result.reason).toBe('erro-conversao');
+    expect(result.error).toContain('boom');
   });
 });
 

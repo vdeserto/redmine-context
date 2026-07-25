@@ -28,7 +28,7 @@
 
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdir as fsMkdir } from 'node:fs/promises';
+import { mkdir as fsMkdir, rm as fsRm } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import envPaths from 'env-paths';
@@ -130,6 +130,8 @@ export interface ConvertAudioToWavOptions {
   readonly tempDir?: string;
   /** Criador de diretório (recursivo); default: `fs/promises.mkdir`. */
   readonly mkdir?: (dir: string) => Promise<void>;
+  /** Remove o `.wav` parcial na falha (best-effort); default: `fs/promises.rm` com `force`. */
+  readonly rm?: (path: string) => Promise<void>;
   /** Timeout antes do `SIGTERM` (ms); default {@link DEFAULT_TIMEOUT_MS}. */
   readonly timeoutMs?: number;
   /** Graça `SIGTERM` → `SIGKILL` (ms); default {@link DEFAULT_KILL_GRACE_MS}. */
@@ -287,6 +289,7 @@ export async function convertAudioToWav(
   const run = options.run ?? defaultRun;
   const tempDir = options.tempDir ?? audioTempDir();
   const mkdir = options.mkdir ?? ((dir: string): Promise<void> => fsMkdir(dir, { recursive: true }).then(() => undefined));
+  const rm = options.rm ?? ((path: string): Promise<void> => fsRm(path, { force: true }));
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const killGraceMs = options.killGraceMs ?? DEFAULT_KILL_GRACE_MS;
 
@@ -299,6 +302,9 @@ export async function convertAudioToWav(
     await run({ bin, args, env: sanitizedEnv(), timeoutMs, killGraceMs });
     return { status: 'done', wavPath: outputPath };
   } catch (error) {
+    // O ffmpeg com `-y` pode ter criado um WAV parcial/zerado; descarta-o para não
+    // acumular lixo no cache temp (convenção de `download.ts`). Best-effort.
+    await rm(outputPath).catch(() => undefined);
     const message = error instanceof Error ? error.message : String(error);
     return {
       status: 'failed',
