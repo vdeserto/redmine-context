@@ -56,3 +56,15 @@ export {
 export { detectFfmpegVersion, findFfmpeg, type FfmpegLocation } from './ffmpeg.js';
 
 export { findWhisper, whisperModelDir, type WhisperLocation } from './whisper.js';
+
+export {
+  downloadGgufModel,
+  defaultGgufDeps,
+  GgufDownloadError,
+  GGUF_MODEL_NAME,
+  GGUF_MODEL_URL,
+  GGUF_MODEL_SHA256,
+  type DownloadGgufOptions,
+  type GgufDeps,
+  type GgufDownloadFailure,
+} from './gguf.js';
