@@ -77,5 +77,6 @@ export {
   GGUF_MODEL_SHA256,
   type DownloadGgufOptions,
   type GgufDeps,
+  type GgufFetchInit,
   type GgufDownloadFailure,
 } from './gguf.js';
