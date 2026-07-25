@@ -97,6 +97,18 @@ describe('extract/gguf: apenas HTTPS', () => {
     ).rejects.toMatchObject({ code: 'insecure-url' });
     expect(h.fetch).not.toHaveBeenCalled();
   });
+
+  it('recusa URL malformada como insecure-url (não vaza TypeError cru)', async () => {
+    const h = makeDeps(okFetch);
+    await expect(
+      downloadGgufModel({
+        url: 'nao-e-uma-url',
+        destDir: '/models',
+        deps: h.deps,
+      }),
+    ).rejects.toMatchObject({ code: 'insecure-url' });
+    expect(h.fetch).not.toHaveBeenCalled();
+  });
 });
 
 describe('extract/gguf: verificação de checksum', () => {

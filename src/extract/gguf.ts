@@ -160,8 +160,17 @@ export async function downloadGgufModel(options: DownloadGgufOptions = {}): Prom
     );
   }
 
-  // Portão 2: só HTTPS — bloqueia downgrade/MITM antes de qualquer rede.
-  const protocol = new URL(url).protocol;
+  // Portão 2: só HTTPS — bloqueia downgrade/MITM antes de qualquer rede. Uma URL
+  // malformada é tratada como insegura (não escapa como TypeError cru).
+  let protocol: string;
+  try {
+    protocol = new URL(url).protocol;
+  } catch {
+    throw new GgufDownloadError(
+      'insecure-url',
+      `Download recusado: URL do modelo GGUF inválida ('${url}'). Apenas HTTPS é permitido.`,
+    );
+  }
   if (protocol !== 'https:') {
     throw new GgufDownloadError(
       'insecure-url',
@@ -181,19 +190,26 @@ export async function downloadGgufModel(options: DownloadGgufOptions = {}): Prom
   await deps.mkdir(destDir);
   const finalPath = join(destDir, GGUF_MODEL_NAME);
   const partPath = `${finalPath}${PART_SUFFIX}`;
-  await deps.writeFile(partPath, bytes);
 
-  // Portão 3: integridade. Só o hash pinado valida o conteúdo — nunca o servidor.
-  const actual = createHash('sha256').update(bytes).digest('hex');
-  if (actual !== expected) {
-    // Descarta o download corrompido; o destino final NUNCA chega a existir.
-    await deps.rm(partPath);
-    throw new GgufDownloadError(
-      'checksum-mismatch',
-      `Integridade do modelo GGUF divergente: esperado ${expected}, obtido ${actual}. Arquivo descartado.`,
-    );
+  try {
+    await deps.writeFile(partPath, bytes);
+
+    // Portão 3: integridade. Só o hash pinado valida o conteúdo — nunca o servidor.
+    const actual = createHash('sha256').update(bytes).digest('hex');
+    if (actual !== expected) {
+      throw new GgufDownloadError(
+        'checksum-mismatch',
+        `Integridade do modelo GGUF divergente: esperado ${expected}, obtido ${actual}. Arquivo descartado.`,
+      );
+    }
+
+    await deps.rename(partPath, finalPath);
+  } catch (error) {
+    // Descarta o `.part` em QUALQUER falha (escrita parcial, checksum ou rename) —
+    // nunca deixa lixo nem um destino final corrompido. `rm` é force, idempotente.
+    await deps.rm(partPath).catch(() => undefined);
+    throw error;
   }
 
-  await deps.rename(partPath, finalPath);
   return finalPath;
 }
