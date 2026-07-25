@@ -44,3 +44,15 @@ export {
   type PdfExtractorOptions,
   type PdftotextLocation,
 } from './pdf.js';
+
+export {
+  findExecutable,
+  isExecutable,
+  type ConventionalDirs,
+  type ExecutableLocation,
+  type FindExecutableDeps,
+} from './which.js';
+
+export { detectFfmpegVersion, findFfmpeg, type FfmpegLocation } from './ffmpeg.js';
+
+export { findWhisper, whisperModelDir, type WhisperLocation } from './whisper.js';
