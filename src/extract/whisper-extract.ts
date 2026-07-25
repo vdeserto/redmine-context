@@ -15,8 +15,13 @@
  * - MODELO GGUF DO CACHE: o modelo é passado via `-m <path>`, resolvido a partir
  *   do diretório canônico de modelos ({@link whisperModelDir}) + {@link GGUF_MODEL_NAME}
  *   — o binário e o modelo são artefatos independentes (ver `whisper.ts`).
- * - IDIOMA AUTO-DETECT: nenhuma flag de idioma é passada aqui; o auto-detect é o
- *   default do whisper.cpp (ADR-002). O override explícito de idioma é a #62.
+ * - IDIOMA AUTO-DETECT COM OVERRIDE (#62): sem `language`, nenhuma flag de idioma
+ *   é passada e o auto-detect (default do whisper.cpp, ADR-002) vale. Com
+ *   `language` (ex.: `'pt'`), o idioma é FORÇADO via `-l <lang>` — e o idioma entra
+ *   no `params` da chave attachment-level (ADR-004) e no `extraction.json`, de modo
+ *   que trocar modelo OU idioma gera chave distinta (reprocessa) e o mesmo par gera
+ *   a mesma chave (cache hit). O idioma é opcional (`exactOptionalPropertyTypes`:
+ *   nunca injetado como `undefined`).
  * - TIMEOUT + KILL: um watchdog envia `SIGTERM` no timeout e, após a graça,
  *   `SIGKILL` — um whisper travado não pendura a fila de jobs.
  * - DEGRADAÇÃO GRACIOSA: binário ausente, modelo GGUF ausente, exit != 0 ou
@@ -77,6 +82,12 @@ const MAX_BUFFER_BYTES = 16 * 1024 * 1024;
 
 /** Flag `-nt` (no timestamps): mantém o stdout como texto puro, fácil de parsear. */
 const NO_TIMESTAMPS_FLAG = '-nt';
+
+/**
+ * Flag de idioma do whisper-cli (whisper.cpp): `-l <lang>` (equiv. `--language`).
+ * Só é acrescentada quando o idioma é forçado (#62); ausente = auto-detect.
+ */
+const LANGUAGE_FLAG = '-l';
 
 /**
  * MIMEs de áudio roteados para a transcrição. O whisper.cpp consome o WAV; o
@@ -150,16 +161,23 @@ class WhisperTimeoutError extends Error {
 }
 
 /**
- * Monta os argumentos do whisper.cpp: modelo GGUF via `-m`, entrada WAV via `-f`
- * e `-nt` (sem timestamps, stdout limpo). Nenhuma flag de idioma — auto-detect é o
- * default (ADR-002; o override é a #62).
+ * Monta os argumentos do whisper.cpp: modelo GGUF via `-m`, entrada WAV via `-f` e
+ * `-nt` (sem timestamps, stdout limpo). Se `language` for dado (#62), acrescenta
+ * `-l <lang>` para FORÇAR o idioma; ausente, nenhuma flag de idioma é passada e o
+ * auto-detect (default do whisper.cpp, ADR-002) vale.
  *
  * @param modelPath - Caminho absoluto do modelo GGUF no cache.
  * @param inputPath - Caminho absoluto do WAV a transcrever.
+ * @param language - Código do idioma a forçar (ex.: `'pt'`), ou `undefined` = auto.
  * @returns Lista de argumentos, na ordem esperada pelo whisper.cpp.
  */
-function buildWhisperArgs(modelPath: string, inputPath: string): readonly string[] {
-  return ['-m', modelPath, '-f', inputPath, NO_TIMESTAMPS_FLAG];
+function buildWhisperArgs(
+  modelPath: string,
+  inputPath: string,
+  language: string | undefined,
+): readonly string[] {
+  const args = ['-m', modelPath, '-f', inputPath, NO_TIMESTAMPS_FLAG];
+  return language !== undefined ? [...args, LANGUAGE_FLAG, language] : args;
 }
 
 /** `true` se o erro sinaliza estouro de timeout do watchdog (por nome, robusto a DI). */
@@ -199,6 +217,13 @@ export interface WhisperExtractorOptions {
   readonly modelPath?: string | undefined;
   /** Versão exposta na chave de cache (default de fábrica: {@link INTEGRATION_VERSION}). */
   readonly version: string;
+  /**
+   * Idioma a FORÇAR (#62), ex.: `'pt'`. Ausente (`undefined`) = auto-detect (o
+   * default do whisper.cpp). Quando dado, entra nos args (`-l <lang>`), no `params`
+   * da chave de cache (ADR-004) e no `extraction.json`. Opcional — nunca injetado
+   * como `undefined` (respeita `exactOptionalPropertyTypes`).
+   */
+  readonly language?: string | undefined;
   /** Executor do subprocesso; default: watchdog real com `execFile`. */
   readonly run?: WhisperRunner;
   /** Timeout antes do `SIGTERM` (ms); default {@link DEFAULT_TIMEOUT_MS}. */
@@ -218,11 +243,16 @@ export class WhisperExtractor implements Extractor {
   readonly supportedMimes = WHISPER_MIMES;
   /** Modelo lógico (nome do GGUF) para a chave de cache (ADR-004). */
   readonly model = EXTRACTOR_MODEL;
-  /** Sem parâmetros escalares próprios (idioma é auto-detect; override é a #62). */
-  readonly params: ExtractorParams = {};
+  /**
+   * Parâmetros escalares da chave de cache (ADR-004). Vazio no auto-detect; com
+   * idioma forçado (#62), `{ language }` — trocar o idioma gera chave distinta.
+   */
+  readonly params: ExtractorParams;
 
   private readonly binaryPath: string | undefined;
   private readonly modelPath: string | undefined;
+  /** Idioma forçado (#62), ou `undefined` = auto-detect. */
+  private readonly language: string | undefined;
   private readonly run: WhisperRunner;
   private readonly timeoutMs: number;
   private readonly killGraceMs: number;
@@ -234,6 +264,10 @@ export class WhisperExtractor implements Extractor {
     this.version = options.version;
     this.binaryPath = options.binaryPath;
     this.modelPath = options.modelPath;
+    this.language = options.language;
+    // Idioma forçado entra no params da chave; auto-detect mantém params vazio (sem
+    // injetar `undefined` — respeita `exactOptionalPropertyTypes`).
+    this.params = options.language !== undefined ? { language: options.language } : {};
     this.run = options.run ?? defaultRun;
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.killGraceMs = options.killGraceMs ?? DEFAULT_KILL_GRACE_MS;
@@ -282,7 +316,7 @@ export class WhisperExtractor implements Extractor {
     try {
       const stdout = await this.run({
         bin,
-        args: buildWhisperArgs(model, filePath),
+        args: buildWhisperArgs(model, filePath, this.language),
         env: sanitizedEnv(),
         timeoutMs: this.timeoutMs,
         killGraceMs: this.killGraceMs,
@@ -291,7 +325,14 @@ export class WhisperExtractor implements Extractor {
         status: 'done',
         text: parseWhisperOutput(stdout),
         mime: options.mime,
-        metadata: { extractorId: this.id, version: this.version, model: this.model },
+        // Reason (#62): model + params (incl. idioma) são persistidos no
+        // extraction.json — registram a identidade da extração produzida.
+        metadata: {
+          extractorId: this.id,
+          version: this.version,
+          model: this.model,
+          params: this.params,
+        },
       };
     } catch (error) {
       return this.failed(options.mime, isTimeoutError(error) ? 'timeout' : 'erro-transcricao', {
@@ -330,6 +371,11 @@ export interface CreateWhisperExtractorOptions {
    * (ausente). Default: {@link whisperModelDir} + {@link GGUF_MODEL_NAME} se existir.
    */
   readonly findModel?: () => string | undefined;
+  /**
+   * Idioma a FORÇAR (#62), ex.: `'pt'`. Ausente = auto-detect. Propagado ao
+   * {@link WhisperExtractor} (args `-l <lang>` + `params` da chave + extraction.json).
+   */
+  readonly language?: string | undefined;
   /** Executor do subprocesso; default: watchdog real com `execFile`. */
   readonly run?: WhisperRunner;
   /** Timeout antes do `SIGTERM` (ms); default {@link DEFAULT_TIMEOUT_MS}. */
@@ -368,6 +414,7 @@ export function createWhisperExtractor(
     binaryPath: findBinary(),
     modelPath: findModel(),
     version: INTEGRATION_VERSION,
+    ...(options.language !== undefined ? { language: options.language } : {}),
     ...(options.run !== undefined ? { run: options.run } : {}),
     ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
     ...(options.killGraceMs !== undefined ? { killGraceMs: options.killGraceMs } : {}),

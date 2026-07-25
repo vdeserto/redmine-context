@@ -21,6 +21,8 @@ vi.mock('node:child_process', () => ({ execFile: vi.fn() }));
 
 import { execFile } from 'node:child_process';
 
+import { buildAttachmentKey, serializeCacheKey } from '../../src/cache/index.js';
+import type { Attachment } from '../../src/contract.js';
 import {
   WhisperExtractor,
   createWhisperExtractor,
@@ -187,6 +189,188 @@ describe('WhisperExtractor.extract: falhas graciosas', () => {
 
     expect(result.status).toBe('failed');
     expect(result.metadata?.reason).toBe('timeout');
+  });
+});
+
+describe('WhisperExtractor: override de idioma (#62)', () => {
+  it('language: "pt" FORÇA o idioma — args contêm `-l pt` (auto-detect é sobrescrito)', async () => {
+    const captured: Captured = {};
+    const extractor = new WhisperExtractor({
+      binaryPath: '/opt/homebrew/bin/whisper-cli',
+      modelPath: '/cache/models/ggml-tiny.bin',
+      version: 'whisper-integration-1',
+      language: 'pt',
+      run: async (invocation) => {
+        captured.invocation = invocation;
+        return 'olá';
+      },
+    });
+
+    const result = await extractor.extract('/cache/tmp/a.wav', { mime: 'audio/wav' });
+
+    expect(result.status).toBe('done');
+    const args = captured.invocation?.args ?? [];
+    // O flag de idioma vem com o valor logo em seguida: `-l pt`.
+    expect(args).toContain('-l');
+    expect(args[args.indexOf('-l') + 1]).toBe('pt');
+    expect(args).toEqual(['-m', '/cache/models/ggml-tiny.bin', '-f', '/cache/tmp/a.wav', '-nt', '-l', 'pt']);
+  });
+
+  it('sem language → NÃO passa flag de idioma (auto-detect, default do whisper.cpp)', async () => {
+    const captured: Captured = {};
+    const extractor = new WhisperExtractor({
+      binaryPath: '/opt/homebrew/bin/whisper-cli',
+      modelPath: '/cache/models/ggml-tiny.bin',
+      version: 'whisper-integration-1',
+      run: async (invocation) => {
+        captured.invocation = invocation;
+        return 'hello';
+      },
+    });
+
+    await extractor.extract('/cache/tmp/a.wav', { mime: 'audio/wav' });
+
+    const args = captured.invocation?.args ?? [];
+    expect(args).not.toContain('-l');
+    expect(args).not.toContain('--language');
+  });
+
+  it('com language, `params` da chave inclui { language }; sem language, `params` é {}', () => {
+    const withLang = new WhisperExtractor({
+      binaryPath: '/opt/whisper-cli',
+      modelPath: '/cache/models/ggml-tiny.bin',
+      version: 'whisper-integration-1',
+      language: 'pt',
+    });
+    const autoDetect = new WhisperExtractor({
+      binaryPath: '/opt/whisper-cli',
+      modelPath: '/cache/models/ggml-tiny.bin',
+      version: 'whisper-integration-1',
+    });
+
+    expect(withLang.params).toEqual({ language: 'pt' });
+    expect(withLang.extractorConfig.params).toEqual({ language: 'pt' });
+    expect(autoDetect.params).toEqual({});
+    expect(autoDetect.extractorConfig.params).toEqual({});
+  });
+
+  it('createWhisperExtractor propaga o language para args e params', async () => {
+    const captured: Captured = {};
+    const extractor = await createWhisperExtractor({
+      findBinary: () => '/opt/homebrew/bin/whisper-cli',
+      findModel: () => '/cache/models/ggml-tiny.bin',
+      language: 'en',
+      run: async (invocation) => {
+        captured.invocation = invocation;
+        return 'ok';
+      },
+    });
+
+    await extractor.extract('/cache/tmp/a.wav', { mime: 'audio/wav' });
+
+    expect(extractor.params).toEqual({ language: 'en' });
+    const args = captured.invocation?.args ?? [];
+    expect(args[args.indexOf('-l') + 1]).toBe('en');
+  });
+});
+
+describe('WhisperExtractor: extraction.json registra modelo e params (#62)', () => {
+  it('done → metadata carrega model e params (incl. idioma) — o que é persistido no extraction.json', async () => {
+    const captured: Captured = {};
+    const extractor = new WhisperExtractor({
+      binaryPath: '/opt/whisper-cli',
+      modelPath: '/cache/models/ggml-tiny.bin',
+      version: 'whisper-integration-1',
+      language: 'pt',
+      run: async (invocation) => {
+        captured.invocation = invocation;
+        return 'texto';
+      },
+    });
+
+    const result = await extractor.extract('/cache/tmp/a.wav', { mime: 'audio/wav' });
+
+    expect(result.status).toBe('done');
+    expect(result.metadata?.model).toBe(extractor.model);
+    expect(result.metadata?.params).toEqual({ language: 'pt' });
+  });
+
+  it('done sem idioma → metadata.params é {} (auto-detect), mas model está presente', async () => {
+    const captured: Captured = {};
+    const extractor = new WhisperExtractor({
+      binaryPath: '/opt/whisper-cli',
+      modelPath: '/cache/models/ggml-tiny.bin',
+      version: 'whisper-integration-1',
+      run: async (invocation) => {
+        captured.invocation = invocation;
+        return 'texto';
+      },
+    });
+
+    const result = await extractor.extract('/cache/tmp/a.wav', { mime: 'audio/wav' });
+
+    expect(result.metadata?.model).toBe(extractor.model);
+    expect(result.metadata?.params).toEqual({});
+  });
+});
+
+describe('WhisperExtractor: chave de cache attachment-level distinta por idioma/modelo (#62, ADR-004)', () => {
+  const attachment: Attachment = {
+    id: 42,
+    filename: 'call.wav',
+    filesize: 12345,
+    created_on: '2026-07-20T00:00:00Z',
+    content_url: 'https://redmine.example/attachments/download/42/call.wav',
+    digest: 'a'.repeat(64),
+  };
+  const instanceUrl = 'https://redmine.example';
+
+  /** Serializa a chave attachment-level para o `extractorConfig` de um extrator. */
+  function keyFor(extractor: WhisperExtractor): string {
+    return serializeCacheKey(
+      buildAttachmentKey({ instanceUrl, attachment, extractor: extractor.extractorConfig }),
+    );
+  }
+
+  function make(opts: { readonly language?: string; readonly modelPath: string }): WhisperExtractor {
+    return new WhisperExtractor({
+      binaryPath: '/opt/whisper-cli',
+      modelPath: opts.modelPath,
+      version: 'whisper-integration-1',
+      ...(opts.language !== undefined ? { language: opts.language } : {}),
+    });
+  }
+
+  it('idiomas diferentes → chaves DISTINTAS (reprocessa)', () => {
+    const pt = make({ language: 'pt', modelPath: '/cache/models/ggml-tiny.bin' });
+    const en = make({ language: 'en', modelPath: '/cache/models/ggml-tiny.bin' });
+    expect(keyFor(pt)).not.toBe(keyFor(en));
+  });
+
+  it('auto-detect vs idioma forçado → chaves DISTINTAS', () => {
+    const auto = make({ modelPath: '/cache/models/ggml-tiny.bin' });
+    const pt = make({ language: 'pt', modelPath: '/cache/models/ggml-tiny.bin' });
+    expect(keyFor(auto)).not.toBe(keyFor(pt));
+  });
+
+  it('mesmo idioma + mesmo modelo → MESMA chave (determinístico → cache hit)', () => {
+    const a = make({ language: 'pt', modelPath: '/cache/models/ggml-tiny.bin' });
+    const b = make({ language: 'pt', modelPath: '/cache/models/ggml-tiny.bin' });
+    expect(keyFor(a)).toBe(keyFor(b));
+  });
+
+  it('modelos diferentes (mesmo idioma) → chaves DISTINTAS', () => {
+    // O `model` lógico é constante nesta build do extrator (o nome do GGUF), então
+    // provamos a participação do modelo na identidade trocando-o no extractorConfig.
+    const pt = make({ language: 'pt', modelPath: '/cache/models/ggml-tiny.bin' });
+    const base = pt.extractorConfig;
+    const keyTiny = serializeCacheKey(
+      buildAttachmentKey({ instanceUrl, attachment, extractor: base }),
+    );
+    const keyLarge = serializeCacheKey(
+      buildAttachmentKey({ instanceUrl, attachment, extractor: { ...base, model: 'ggml-large-v3' } }),
+    );
+    expect(keyTiny).not.toBe(keyLarge);
   });
 });
 
