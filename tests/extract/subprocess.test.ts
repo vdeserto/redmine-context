@@ -219,10 +219,15 @@ describe('runWithWatchdog: timeout → SIGTERM → (graça) → SIGKILL, sem zum
     const settled = promise.catch((error: unknown) => error);
 
     await vi.advanceTimersByTimeAsync(1_000);
+    expect(capture.child?.signals).toEqual(['SIGTERM']);
     // O processo "responde" tarde demais, já sob SIGTERM: não deve virar sucesso.
     late?.(null, 'tarde', '');
 
     await vi.advanceTimersByTimeAsync(500);
+    // ANTI-PID-RECICLADO: como o processo respondeu ao SIGTERM durante a graça, o
+    // timer de SIGKILL foi limpo — nenhum SIGKILL é disparado depois (senão
+    // poderíamos matar um pid já reciclado pelo SO).
+    expect(capture.child?.signals).toEqual(['SIGTERM']);
     const error = await settled;
     expect(error).toBeInstanceOf(SubprocessTimeoutError);
   });
