@@ -90,6 +90,13 @@ export {
 } from './whisper-extract.js';
 
 export {
+  convertVideoToWav,
+  extractVideoTranscript,
+  VIDEO_MIMES,
+  type ExtractVideoTranscriptOptions,
+} from './video.js';
+
+export {
   downloadGgufModel,
   defaultGgufDeps,
   GgufDownloadError,
