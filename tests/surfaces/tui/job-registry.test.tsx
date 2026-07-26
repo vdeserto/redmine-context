@@ -16,6 +16,7 @@ import {
   type Job,
   type JobStatus,
 } from '../../../src/surfaces/tui/job-registry.js';
+import { Catch } from './catch-boundary.js';
 
 /** Sonda que expõe `jobs` como texto plano, uma linha por job (`id:status`). */
 function Probe() {
@@ -35,7 +36,11 @@ describe('TUI: useJobRegistry — unitário', () => {
     // Reason (mesma observação de home-selection.test.tsx): Ink tem seu
     // próprio error boundary interno — o erro aparece no frame, não escapa
     // como exceção síncrona de `render()`.
-    const { lastFrame } = render(<Bare />);
+    const { lastFrame } = render(
+      <Catch>
+        <Bare />
+      </Catch>,
+    );
     expect(lastFrame()).toContain('useJobRegistry() usado fora de <JobRegistryProvider>.');
   });
 
