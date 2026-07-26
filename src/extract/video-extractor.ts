@@ -29,11 +29,15 @@ const EXTRACTOR_ID = 'video-transcribe';
 
 /**
  * Overrides injetáveis do pipeline de vídeo — tudo de {@link ExtractVideoTranscriptOptions}
- * exceto o que é resolvido por chamada (`transcriber`/`mime`/`logger`). Em produção
- * fica vazio (o pipeline usa ffmpeg/ffprobe reais por default); nos testes carrega
- * conversão/keyframe/sonda falsos para hermetismo.
+ * exceto o que é resolvido por chamada (`transcriber`/`mime`/`logger`/`signal`). Em
+ * produção fica vazio (o pipeline usa ffmpeg/ffprobe reais por default); nos testes
+ * carrega conversão/keyframe/sonda falsos para hermetismo. `signal` é omitido porque
+ * vem do `ExtractOptions` da chamada (cancelamento, #73), não do pipeline estático.
  */
-export type VideoPipelineOverrides = Omit<ExtractVideoTranscriptOptions, 'transcriber' | 'mime' | 'logger'>;
+export type VideoPipelineOverrides = Omit<
+  ExtractVideoTranscriptOptions,
+  'transcriber' | 'mime' | 'logger' | 'signal'
+>;
 
 /** Opções de construção do {@link VideoExtractor}. */
 export interface VideoExtractorOptions {
@@ -72,6 +76,11 @@ export class VideoExtractor implements Extractor {
     // Reason (ADR-004): identidade de cache = a do whisper (trocar GGUF reprocessa).
     this.model = options.transcriber.model ?? EXTRACTOR_ID;
     this.params = options.transcriber.params ?? {};
+    // NOTA (gap #73, MINOR-1): o limite de duração (`maxDurationSeconds`, #65) NÃO
+    // entra na chave de cache. Hoje é um default constante sem superfície de config,
+    // então mudá-lo não é alcançável pelo usuário. Se o limite virar configurável,
+    // inclua-o aqui nos `params` (ou invalide o cache ao alterá-lo) — senão um vídeo
+    // antes `skipped` por exceder o limite permaneceria `skipped` no cache.
     this.pipeline = options.pipeline ?? {};
   }
 
