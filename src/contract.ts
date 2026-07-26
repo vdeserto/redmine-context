@@ -112,6 +112,8 @@ export interface Issue {
  * - `processing` — extração em andamento (job assíncrono).
  * - `done` — extração concluída; `text` (e/ou `artifacts`) disponível(is).
  * - `failed` — extração tentada e falhou (ver `metadata.reason`).
+ * - `cancelled` — extração cancelada via `AbortSignal` (o subprocesso foi morto
+ *   ou o job pendente não chegou a iniciar) (#69, ADR-005).
  * - `unsupported` — não há extrator registrado para o MIME REAL do arquivo.
  * - `skipped` — pulado deliberadamente (ex.: excede o limite de tamanho, ADR-002).
  */
@@ -121,6 +123,7 @@ export type ExtractionStatus =
   | 'processing'
   | 'done'
   | 'failed'
+  | 'cancelled'
   | 'unsupported'
   | 'skipped';
 

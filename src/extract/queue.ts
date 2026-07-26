@@ -12,16 +12,25 @@
  * `AsyncIterable<ProgressEvent | Result>` que as superfícies já usam: cada
  * transição de um job é um item da sequência, e o iterável termina quando a fila
  * drena. O status REUSA o vocabulário canônico {@link ExtractionStatus}
- * (`pending → processing → done | failed`) — sem status paralelo.
+ * (`pending → processing → done | failed | cancelled`) — sem status paralelo.
+ *
+ * ## Cancelamento (#69)
+ *
+ * A fila aceita um `AbortSignal` opcional ({@link RunQueueOptions.signal}) e o
+ * propaga a cada job via {@link JobContext.signal}. Ao abortar: os jobs em
+ * execução recebem o signal (o extrator o repassa ao `runWithWatchdog`, que MATA
+ * o subprocesso) e são observados como `cancelled`; os jobs `pending` que ainda
+ * não iniciaram são marcados `cancelled` sem iniciar. Cada transição emite UM
+ * evento — as superfícies consomem só o `AsyncIterable`, sem API de cancelamento
+ * acoplada.
  *
  * ## Fronteira e escopo
  *
  * Módulo de core (pipeline de extração): não importa de `src/surfaces/**` e não
- * usa `console.*` — falhas são reportadas via {@link Logger} injetado. O escopo
- * do #67 é SÓ o núcleo (concorrência + estados + isolamento de falha). O
- * timeout/kill de subprocesso (#68) e o cancelamento via `AbortSignal` (#69)
- * NÃO são implementados aqui — o {@link JobContext} passado a cada job é o ponto
- * de extensão previsto para ambos, sem quebrar a assinatura de {@link QueueJob}.
+ * usa `console.*` — falhas são reportadas via {@link Logger} injetado. O
+ * {@link JobContext} passado a cada job é o ponto de extensão do timeout/kill de
+ * subprocesso (#68, `timeoutMs`) e do cancelamento (#69, `signal`), sem quebrar a
+ * assinatura de {@link QueueJob}.
  */
 
 import os from 'node:os';
@@ -36,7 +45,7 @@ import type { ExtractionStatus } from '../contract.js';
  */
 export type QueueJobStatus = Extract<
   ExtractionStatus,
-  'pending' | 'processing' | 'done' | 'failed'
+  'pending' | 'processing' | 'done' | 'failed' | 'cancelled'
 >;
 
 /**
@@ -59,6 +68,14 @@ export interface JobContext {
    * próprio default. Respeita `exactOptionalPropertyTypes` (nunca `undefined`).
    */
   readonly timeoutMs?: number;
+  /**
+   * Sinal de CANCELAMENTO (#69, ADR-005) propagado a cada job em execução quando
+   * a fila é criada com {@link RunQueueOptions.signal}. O job de extração o repassa
+   * ao `runWithWatchdog`, que MATA o subprocesso (`SIGTERM`→`SIGKILL`) ao abortar;
+   * a fila então observa o job como `cancelled`. Ausente = a fila não é cancelável.
+   * Presente só quando a fila recebe um signal (respeita `exactOptionalPropertyTypes`).
+   */
+  readonly signal?: AbortSignal;
 }
 
 /**
@@ -117,6 +134,14 @@ export interface RunQueueOptions {
    * cada job usa seu próprio default. A fila NÃO cancela o job por conta própria.
    */
   readonly jobTimeoutMs?: number;
+  /**
+   * Sinal de CANCELAMENTO da fila inteira (#69, ADR-005). Ao disparar: os jobs em
+   * execução recebem o signal via {@link JobContext.signal} (matam o subprocesso e
+   * rejeitam) e são observados como `cancelled`; os jobs `pending` que ainda NÃO
+   * iniciaram são marcados `cancelled` sem iniciar. Cada transição emite UM evento.
+   * Omitido = a fila não é cancelável (comportamento #67/#68 inalterado).
+   */
+  readonly signal?: AbortSignal;
 }
 
 /**
@@ -214,6 +239,7 @@ export function runQueue<T>(
   const concurrency = Math.max(1, options.concurrency ?? defaultConcurrency());
   const logger = options.logger;
   const jobTimeoutMs = options.jobTimeoutMs;
+  const signal = options.signal;
   const channel = createChannel<QueueEvent<T>>();
   const pending = [...jobs];
 
@@ -225,15 +251,50 @@ export function runQueue<T>(
   let active = 0;
   let next = 0;
 
+  // Reason: fecha o canal E remove o listener de abort — evita vazar a inscrição
+  // num `AbortSignal` de vida longa quando a fila drena sem cancelamento.
+  const closeChannel = (): void => {
+    signal?.removeEventListener('abort', onAbort);
+    channel.close();
+  };
+
+  /**
+   * Marca como `cancelled` todo job `pending` que ainda NÃO iniciou (índice a
+   * partir de `next`), impedindo que o `pump` os inicie, e fecha o canal se não há
+   * mais nada em execução. Os jobs em execução NÃO são tocados aqui: eles recebem
+   * o `signal` (matam o subprocesso) e viram `cancelled` no `catch` de {@link settle}.
+   */
+  const cancelRemaining = (): void => {
+    while (next < pending.length) {
+      const job = pending[next];
+      next += 1;
+      if (job === undefined) {
+        continue; // Inalcançável dado o bound; satisfaz noUncheckedIndexedAccess.
+      }
+      channel.emit({ id: job.id, status: 'cancelled' });
+    }
+    if (active === 0) {
+      closeChannel();
+    }
+  };
+
+  // Reason: função (hoisted) para que `closeChannel` possa desinscrevê-la.
+  function onAbort(): void {
+    cancelRemaining();
+  }
+
   const settle = async (job: QueueJob<T>): Promise<void> => {
     try {
       // `processing` dentro do try: se a emissão falhar, o finally ainda roda e o
       // slot é liberado (sem leak). Cobre também `job.run` que lança SÍNCRONO.
       channel.emit({ id: job.id, status: 'processing' });
-      // Reason: só inclui `timeoutMs` quando a fila tem orçamento — nunca injeta
+      // Reason: só inclui `timeoutMs`/`signal` quando a fila os tem — nunca injeta
       // `undefined` (exactOptionalPropertyTypes) no contexto do job.
-      const context: JobContext =
-        jobTimeoutMs !== undefined ? { jobId: job.id, timeoutMs: jobTimeoutMs } : { jobId: job.id };
+      const context: JobContext = {
+        jobId: job.id,
+        ...(jobTimeoutMs !== undefined ? { timeoutMs: jobTimeoutMs } : {}),
+        ...(signal !== undefined ? { signal } : {}),
+      };
       const result = await job.run(context);
       channel.emit({
         id: job.id,
@@ -241,10 +302,16 @@ export function runQueue<T>(
         ...(result !== undefined ? { result } : {}),
       });
     } catch (error) {
-      // Isolamento de falha: reporta, mas a fila segue com os demais jobs.
-      const reason = describeError(error);
-      logger?.warn(`queue: job "${job.id}" falhou — ${reason}`);
-      channel.emit({ id: job.id, status: 'failed', reason, ...(error !== undefined ? { error } : {}) });
+      // Cancelamento vence a falha: uma vez abortada, a rejeição do job (subprocesso
+      // morto) é uma transição `cancelled`, não `failed` — um evento por transição.
+      if (signal?.aborted === true) {
+        channel.emit({ id: job.id, status: 'cancelled' });
+      } else {
+        // Isolamento de falha: reporta, mas a fila segue com os demais jobs.
+        const reason = describeError(error);
+        logger?.warn(`queue: job "${job.id}" falhou — ${reason}`);
+        channel.emit({ id: job.id, status: 'failed', reason, ...(error !== undefined ? { error } : {}) });
+      }
     } finally {
       active -= 1;
       // Fora da pilha do `pump`: um job que lança SÍNCRONO rodaria o finally de
@@ -256,6 +323,11 @@ export function runQueue<T>(
 
   /** Preenche slots livres respeitando o limite; fecha o canal quando drena. */
   function pump(): void {
+    // Após um abort, não inicia novos jobs: drena os pendentes como `cancelled`.
+    if (signal?.aborted === true) {
+      cancelRemaining();
+      return;
+    }
     while (active < concurrency && next < pending.length) {
       const job = pending[next];
       next += 1;
@@ -266,8 +338,14 @@ export function runQueue<T>(
       void settle(job);
     }
     if (active === 0 && next >= pending.length) {
-      channel.close();
+      closeChannel();
     }
+  }
+
+  // O cancelamento é observado por evento (contrato AsyncIterable) — sem API
+  // especial acoplada às superfícies (TUI/CLI consomem só o iterável).
+  if (signal !== undefined && !signal.aborted) {
+    signal.addEventListener('abort', onAbort);
   }
 
   pump();

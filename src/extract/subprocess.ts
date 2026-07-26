@@ -123,6 +123,15 @@ export interface WatchdogInvocation {
   readonly killGraceMs: number;
   /** Teto do stdout/stderr capturado (bytes). */
   readonly maxBuffer: number;
+  /**
+   * Sinal de CANCELAMENTO (#69, ADR-005). Quando dispara, o subprocesso é MORTO
+   * com o mesmo escalonamento do timeout (`SIGTERM`→ graça →`SIGKILL`) e a
+   * Promise rejeita com {@link SubprocessAbortedError} (ou o erro de
+   * {@link WatchdogDeps.makeAbortError}). Se já estiver `aborted` na chamada, o
+   * processo é morto de imediato. Campo OPCIONAL e ADITIVO — extratores que não
+   * o passam mantêm exatamente o comportamento anterior (#68).
+   */
+  readonly signal?: AbortSignal;
 }
 
 /** Dependências injetáveis de {@link runWithWatchdog} — defaults de produção. */
@@ -135,6 +144,12 @@ export interface WatchdogDeps {
    * a classificação de falha existente sem reimplementar o watchdog.
    */
   readonly makeTimeoutError?: (timeoutMs: number) => Error;
+  /**
+   * Fábrica do erro rejeitado no cancelamento via `AbortSignal` (#69). Default:
+   * {@link SubprocessAbortedError}. Injetável para que um extrator preserve seu
+   * tipo de erro canônico ao ser cancelado, sem reimplementar o watchdog.
+   */
+  readonly makeAbortError?: () => Error;
 }
 
 /** Erro default do watchdog: o subprocesso estourou o timeout e foi encerrado. */
@@ -142,6 +157,14 @@ export class SubprocessTimeoutError extends Error {
   constructor(public readonly timeoutMs: number) {
     super(`subprocesso excedeu o timeout de ${timeoutMs}ms e foi encerrado`);
     this.name = 'SubprocessTimeoutError';
+  }
+}
+
+/** Erro default do watchdog quando o subprocesso é MORTO por cancelamento (#69). */
+export class SubprocessAbortedError extends Error {
+  constructor() {
+    super('subprocesso cancelado via AbortSignal e foi encerrado');
+    this.name = 'SubprocessAbortedError';
   }
 }
 
@@ -165,20 +188,23 @@ export class SubprocessTimeoutError extends Error {
  * });
  */
 export function runWithWatchdog(invocation: WatchdogInvocation, deps: WatchdogDeps = {}): Promise<string> {
-  const { bin, args, env, timeoutMs, killGraceMs, maxBuffer } = invocation;
+  const { bin, args, env, timeoutMs, killGraceMs, maxBuffer, signal } = invocation;
   // Reason: as sobrecargas de `execFile` não colapsam na forma estrutural mínima
   // que usamos (encoding fixo 'utf8'); o cast documentado é seguro — a chamada
   // abaixo respeita exatamente a assinatura real.
   const exec = deps.execFile ?? (nodeExecFile as unknown as ExecFileLike);
   const makeTimeoutError = deps.makeTimeoutError ?? ((ms: number): Error => new SubprocessTimeoutError(ms));
+  const makeAbortError = deps.makeAbortError ?? ((): Error => new SubprocessAbortedError());
 
   return new Promise<string>((resolve, reject) => {
     let settled = false;
     let timedOut = false;
+    let aborted = false;
     const timers: NodeJS.Timeout[] = [];
 
     const cleanup = (): void => {
       for (const timer of timers) clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
     };
     const settle = (fn: () => void): void => {
       if (settled) return;
@@ -187,11 +213,42 @@ export function runWithWatchdog(invocation: WatchdogInvocation, deps: WatchdogDe
       fn();
     };
 
+    /**
+     * Mata o child com o escalonamento `SIGTERM`→ graça →`SIGKILL` e, se o
+     * processo não responder na graça, resolve a Promise via `onKilled`. Um
+     * processo que responde ao SIGTERM (callback do execFile) faz `settle`
+     * primeiro, e o `cleanup` limpa o timer do SIGKILL (anti-pid-reciclado).
+     */
+    const killEscalating = (onKilled: () => void): void => {
+      child.kill('SIGTERM');
+      // Reason: após a graça, força SIGKILL e desiste — um processo que ignora
+      // SIGTERM não pode segurar a fila de jobs indefinidamente (ADR-002).
+      timers.push(
+        setTimeout(() => {
+          child.kill('SIGKILL');
+          onKilled();
+        }, killGraceMs),
+      );
+    };
+
+    // Reason: declaração de função (hoisted) para que `cleanup` possa referenciá-la
+    // e para que o listener seja registrado só após o child existir.
+    function onAbort(): void {
+      aborted = true;
+      killEscalating(() => settle(() => reject(makeAbortError())));
+    }
+
     const child = exec(
       bin,
       [...args],
       { env, encoding: 'utf8', maxBuffer, windowsHide: true },
       (error, stdout) => {
+        // Ordem: um cancelamento/timeout em curso vence o resultado tardio do
+        // processo (que respondeu ao SIGTERM) — nunca vira sucesso/erro comum.
+        if (aborted) {
+          settle(() => reject(makeAbortError()));
+          return;
+        }
         if (timedOut) {
           settle(() => reject(makeTimeoutError(timeoutMs)));
           return;
@@ -207,16 +264,16 @@ export function runWithWatchdog(invocation: WatchdogInvocation, deps: WatchdogDe
     timers.push(
       setTimeout(() => {
         timedOut = true;
-        child.kill('SIGTERM');
-        // Reason: após a graça, força SIGKILL e desiste — um processo que ignora
-        // SIGTERM não pode segurar a fila de jobs indefinidamente (ADR-002).
-        timers.push(
-          setTimeout(() => {
-            child.kill('SIGKILL');
-            settle(() => reject(makeTimeoutError(timeoutMs)));
-          }, killGraceMs),
-        );
+        killEscalating(() => settle(() => reject(makeTimeoutError(timeoutMs))));
       }, timeoutMs),
     );
+
+    if (signal !== undefined) {
+      if (signal.aborted) {
+        onAbort();
+      } else {
+        signal.addEventListener('abort', onAbort);
+      }
+    }
   });
 }

@@ -275,6 +275,180 @@ describe('runQueue — núcleo da fila de jobs (#67)', () => {
   });
 });
 
+describe('runQueue — cancelamento via AbortSignal (#69)', () => {
+  /**
+   * Job FAKE que simula um extrator ligado ao subprocesso: começa a "processar"
+   * e só termina quando o `AbortSignal` do contexto dispara — nesse momento
+   * rejeita (como o `runWithWatchdog` faz ao matar o child). Sem signal, pendura.
+   */
+  function abortableJob(id: string, started: string[]): QueueJob<string> {
+    return {
+      id,
+      run: (context) =>
+        new Promise<string>((_resolve, reject) => {
+          started.push(id);
+          const signal = context.signal;
+          if (signal === undefined) return; // pendura (não deveria ocorrer neste teste)
+          if (signal.aborted) {
+            reject(new Error('subprocesso morto (abort)'));
+            return;
+          }
+          signal.addEventListener(
+            'abort',
+            () => reject(new Error('subprocesso morto (abort)')),
+            { once: true },
+          );
+        }),
+    };
+  }
+
+  it('entrega o mesmo AbortSignal a cada job via context.signal', async () => {
+    const controller = new AbortController();
+    const seen: Array<AbortSignal | undefined> = [];
+    const jobs: QueueJob<void>[] = [
+      {
+        id: 'sig',
+        run: (context) => {
+          seen.push(context.signal);
+          return Promise.resolve();
+        },
+      },
+    ];
+
+    await drain(runQueue(jobs, { concurrency: 1, signal: controller.signal }));
+    expect(seen).toEqual([controller.signal]);
+  });
+
+  it('sem signal, o context NÃO carrega signal (exactOptionalPropertyTypes)', async () => {
+    const seen: Array<Record<string, unknown>> = [];
+    const jobs: QueueJob<void>[] = [
+      {
+        id: 'no-sig',
+        run: (context) => {
+          seen.push({ ...context });
+          return Promise.resolve();
+        },
+      },
+    ];
+
+    await drain(runQueue(jobs, { concurrency: 1 }));
+    expect('signal' in (seen[0] ?? {})).toBe(false);
+  });
+
+  it('abortar durante a execução: job em processing vira cancelled (subprocesso morto)', async () => {
+    const controller = new AbortController();
+    const started: string[] = [];
+    const jobs: QueueJob<string>[] = [abortableJob('running', started)];
+
+    const events: QueueEvent<string>[] = [];
+    const consumed = (async () => {
+      for await (const event of runQueue(jobs, { concurrency: 1, signal: controller.signal })) {
+        events.push(event);
+      }
+    })();
+
+    await flush();
+    expect(idsWithStatus(events, 'processing')).toEqual(['running']);
+
+    controller.abort();
+    await consumed;
+
+    // Uma transição por estado, terminando em cancelled (nunca failed).
+    expect(events.map((event) => [event.id, event.status])).toEqual([
+      ['running', 'pending'],
+      ['running', 'processing'],
+      ['running', 'cancelled'],
+    ]);
+    expect(idsWithStatus(events, 'failed')).toEqual([]);
+  });
+
+  it('abortar cancela jobs pending que ainda NÃO iniciaram, sem processing', async () => {
+    const controller = new AbortController();
+    const started: string[] = [];
+    // Concorrência 1: 'a' roda; 'b' e 'c' ficam pending.
+    const jobs: QueueJob<string>[] = [
+      abortableJob('a', started),
+      abortableJob('b', started),
+      abortableJob('c', started),
+    ];
+
+    const events: QueueEvent<string>[] = [];
+    const consumed = (async () => {
+      for await (const event of runQueue(jobs, { concurrency: 1, signal: controller.signal })) {
+        events.push(event);
+      }
+    })();
+
+    await flush();
+    // Só 'a' iniciou; 'b' e 'c' ainda não.
+    expect(started).toEqual(['a']);
+    expect(idsWithStatus(events, 'processing')).toEqual(['a']);
+
+    controller.abort();
+    await consumed;
+
+    // 'a' cancelado (estava rodando); 'b' e 'c' cancelados SEM nunca iniciar.
+    expect(started).toEqual(['a']);
+    expect(idsWithStatus(events, 'cancelled').sort()).toEqual(['a', 'b', 'c']);
+    // Nenhum 'processing' de b/c e nenhum done/failed.
+    expect(idsWithStatus(events, 'processing')).toEqual(['a']);
+    expect(idsWithStatus(events, 'done')).toEqual([]);
+    expect(idsWithStatus(events, 'failed')).toEqual([]);
+  });
+
+  it('um evento por transição: cada job cancelado emite cancelled UMA vez', async () => {
+    const controller = new AbortController();
+    const started: string[] = [];
+    const jobs: QueueJob<string>[] = [
+      abortableJob('x', started),
+      abortableJob('y', started),
+    ];
+
+    const events: QueueEvent<string>[] = [];
+    const consumed = (async () => {
+      for await (const event of runQueue(jobs, { concurrency: 2, signal: controller.signal })) {
+        events.push(event);
+      }
+    })();
+
+    await flush();
+    controller.abort();
+    await consumed;
+
+    expect(idsWithStatus(events, 'cancelled').sort()).toEqual(['x', 'y']);
+    // Exatamente um cancelled por id (sem dupla emissão).
+    expect(idsWithStatus(events, 'cancelled')).toHaveLength(2);
+  });
+
+  it('signal JÁ aborted antes de iniciar: todos cancelados, nenhum processa', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const started: string[] = [];
+    const jobs: QueueJob<string>[] = [
+      abortableJob('p', started),
+      abortableJob('q', started),
+    ];
+
+    const events = await drain(runQueue(jobs, { concurrency: 2, signal: controller.signal }));
+
+    expect(started).toEqual([]);
+    expect(idsWithStatus(events, 'cancelled').sort()).toEqual(['p', 'q']);
+    expect(idsWithStatus(events, 'processing')).toEqual([]);
+    expect(idsWithStatus(events, 'done')).toEqual([]);
+  });
+
+  it('sem abort, a fila com signal drena normalmente (nenhum cancelamento)', async () => {
+    const controller = new AbortController();
+    const jobs: QueueJob<string>[] = [
+      { id: 'ok', run: () => Promise.resolve('feito') },
+    ];
+
+    const events = await drain(runQueue(jobs, { concurrency: 1, signal: controller.signal }));
+    expect(idsWithStatus(events, 'done')).toEqual(['ok']);
+    expect(idsWithStatus(events, 'cancelled')).toEqual([]);
+  });
+});
+
 describe('defaultConcurrency', () => {
   it('usa núcleos − 1 com piso de 1', () => {
     const expected = Math.max(1, os.cpus().length - 1);
