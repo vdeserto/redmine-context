@@ -20,15 +20,22 @@ import type { ExtractionResult } from '../contract.js';
 import { detectMimeFromFile, mimeForExtension } from './magic.js';
 
 /**
- * Opções passadas ao extrator em {@link Extractor.extract}. Propositalmente
- * enxuta hoje (só o MIME real e um logger opcional); campos como timeout/signal
- * de cancelamento entram com a fila de jobs (issues seguintes do M3).
+ * Opções passadas ao extrator em {@link Extractor.extract}: o MIME real, um logger
+ * opcional e o `signal` de CANCELAMENTO (#69/#73).
  */
 export interface ExtractOptions {
   /** MIME REAL do arquivo (detectado por magic bytes) que roteou este extrator. */
   readonly mime: string;
   /** Logger para avisos do extrator; sem default de lib de logging (ADR-003). */
   readonly logger?: Logger;
+  /**
+   * Sinal de CANCELAMENTO (#69/#73, ADR-005) propagado do topo (fila → dispatch)
+   * até o `runWithWatchdog` de cada extrator de mídia, que MATA o subprocesso
+   * (`SIGTERM`→`SIGKILL`) ao abortar. Campo OPCIONAL e ADITIVO — extratores que não
+   * o repassam mantêm o comportamento anterior. Presente só quando um signal é dado
+   * (respeita `exactOptionalPropertyTypes` — nunca injetado como `undefined`).
+   */
+  readonly signal?: AbortSignal;
 }
 
 /**
@@ -106,6 +113,12 @@ export interface DispatchOptions {
   readonly filename?: string;
   /** Logger para o aviso de mismatch; sem default de lib de logging (ADR-003). */
   readonly logger?: Logger;
+  /**
+   * Sinal de CANCELAMENTO (#69/#73) repassado ao {@link Extractor.extract} via
+   * {@link ExtractOptions.signal} — fecha a fronteira do dispatch para que o abort
+   * alcance o subprocesso. Opcional/aditivo (respeita `exactOptionalPropertyTypes`).
+   */
+  readonly signal?: AbortSignal;
 }
 
 /**
@@ -141,7 +154,7 @@ function unsupported(mime: string | undefined, filename: string | undefined): Ex
  *    emite `logger.warn` — e segue com o MIME real (o magic byte VENCE).
  * 3. Busca o extrator no registry. Ausente → `unsupported` com
  *    `reason: 'sem-extrator-registrado'` (sem erro fatal).
- * 4. Presente → delega para `extractor.extract(filePath, { mime, logger })`.
+ * 4. Presente → delega para `extractor.extract(filePath, { mime, logger, signal })`.
  *
  * @param filePath - Caminho absoluto do arquivo baixado.
  * @param options - Registry, filename (opcional) e logger — ver {@link DispatchOptions}.
@@ -159,7 +172,7 @@ export async function dispatchExtraction(
   filePath: string,
   options: DispatchOptions,
 ): Promise<ExtractionResult> {
-  const { registry, filename, logger } = options;
+  const { registry, filename, logger, signal } = options;
 
   const mime = await detectMimeFromFile(filePath);
   if (mime === undefined) {
@@ -185,5 +198,6 @@ export async function dispatchExtraction(
   return extractor.extract(filePath, {
     mime,
     ...(logger !== undefined ? { logger } : {}),
+    ...(signal !== undefined ? { signal } : {}),
   });
 }

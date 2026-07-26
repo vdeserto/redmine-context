@@ -47,6 +47,10 @@ describe('TUI: attachmentStatusLabel', () => {
     expect(attachmentStatusLabel('done')).toBe('concluído');
     expect(attachmentStatusLabel('failed')).toBe('falhou');
   });
+
+  it('rotula o estado "cancelled" (cancelamento via AbortSignal, #69)', () => {
+    expect(attachmentStatusLabel('cancelled')).toBe('cancelado');
+  });
 });
 
 describe('TUI: attachmentStatusColor', () => {
@@ -60,5 +64,9 @@ describe('TUI: attachmentStatusColor', () => {
     expect(attachmentStatusColor(DEFAULT_THEME, 'done')).toBe(DEFAULT_THEME.success);
     expect(attachmentStatusColor(DEFAULT_THEME, 'failed')).toBe(DEFAULT_THEME.danger);
     expect(attachmentStatusColor(DEFAULT_THEME, 'processing')).toBe(DEFAULT_THEME.muted);
+  });
+
+  it('mapeia "cancelled" para muted (terminal neutro, #69)', () => {
+    expect(attachmentStatusColor(DEFAULT_THEME, 'cancelled')).toBe(DEFAULT_THEME.muted);
   });
 });

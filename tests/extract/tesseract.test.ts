@@ -246,11 +246,20 @@ describe('createTesseractExtractor / createDefaultRegistry', () => {
     expect(extractor.version).toBe('tesseract-5.5.2');
   });
 
-  it('createDefaultRegistry registra o tesseract para os MIMEs de imagem', async () => {
+  it('createDefaultRegistry registra tesseract (imagem), pdftotext (PDF), áudio e vídeo', async () => {
     const registry = await createDefaultRegistry();
     for (const mime of ['image/png', 'image/jpeg', 'image/gif', 'image/webp']) {
       expect(registry.find(mime)?.id).toBe('tesseract-ocr');
     }
-    expect(registry.find('application/pdf')).toBeUndefined();
+    expect(registry.find('application/pdf')?.id).toBe('pdftotext');
+    // Áudio cru roteia para o extrator de áudio (ffmpeg→whisper), NÃO o whisper direto
+    // (MINOR-2: o whisper só consome WAV; a conversão precede a transcrição).
+    for (const mime of ['audio/wav', 'audio/mpeg', 'audio/mp4', 'audio/ogg']) {
+      expect(registry.find(mime)?.id).toBe('audio-transcribe');
+    }
+    // Vídeo roteia para o pipeline de vídeo (ffmpeg→áudio→whisper + keyframe).
+    for (const mime of ['video/mp4', 'video/webm', 'video/x-msvideo', 'video/quicktime']) {
+      expect(registry.find(mime)?.id).toBe('video-transcribe');
+    }
   });
 });

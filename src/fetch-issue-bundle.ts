@@ -12,6 +12,12 @@
 
 import { buildJsonBundle } from './bundle/index.js';
 import { buildMarkdownBundle } from './bundle/index.js';
+import {
+  extractIssueAttachmentsCacheFirst,
+  makeQueueBackgroundExtractor,
+  processingResult,
+  type BackgroundExtractor,
+} from './cache-first.js';
 import { DiskCacheStore } from './cache/index.js';
 import { createHttpClient, getIssue } from './client/index.js';
 import type { CoreEvent, ExtractionResult, ProgressEvent, Result } from './contract.js';
@@ -48,6 +54,20 @@ export interface FetchIssueBundleOptions {
    * {@link DiskCacheStore}. Só usado quando `extractAttachments` é `true`.
    */
   cacheDir?: string;
+  /**
+   * Modo CACHE-FIRST não-bloqueante (M4-11, #70). Quando `true` (e
+   * `extractAttachments` `true`), NÃO computa extração no caminho da resposta:
+   * embute o texto já cacheado e marca os anexos ainda não processados como
+   * `processing`, disparando a extração em background. Default: `false`
+   * (comportamento síncrono do M3, usado pela CLI de exportação em disco).
+   */
+  cacheFirst?: boolean;
+  /**
+   * Dispatcher do job em background do modo cache-first (seam de teste). Default:
+   * fila (`runQueue`) que roda a extração real detached. Injetável para provar o
+   * não-bloqueio de forma determinística. Só usado quando `cacheFirst` é `true`.
+   */
+  background?: BackgroundExtractor;
 }
 
 /** Resultado final: conteúdo serializado pronto para stdout/arquivo. */
@@ -101,12 +121,38 @@ export async function* fetchIssueBundle(
     const store = new DiskCacheStore<ExtractionResult>(
       options.cacheDir !== undefined ? { cacheDir: options.cacheDir } : {},
     );
-    extractions = await extractIssueAttachments(http, issue, {
-      instanceUrl: baseUrl,
-      registry,
-      store,
-      ...(options.cacheDir !== undefined ? { cacheDir: options.cacheDir } : {}),
-    });
+    if (options.cacheFirst === true) {
+      // Cache-first (#70): lê o que está pronto e marca o resto como `processing`,
+      // sem bloquear na extração cara; a computação real corre em background.
+      const background =
+        options.background ??
+        makeQueueBackgroundExtractor(async (target, signal): Promise<ExtractionResult> => {
+          const single = { ...issue, attachments: [target.attachment] };
+          // Repassa o `signal` da fila (#69/#73): o abort chega ao `runWithWatchdog`
+          // e MATA o ffmpeg/whisper ponta a ponta. Só inclui quando dado.
+          const computed = await extractIssueAttachments(http, single, {
+            instanceUrl: baseUrl,
+            registry,
+            store,
+            ...(options.cacheDir !== undefined ? { cacheDir: options.cacheDir } : {}),
+            ...(signal !== undefined ? { signal } : {}),
+          });
+          return computed.get(target.attachment.id) ?? processingResult();
+        }, { store });
+      extractions = await extractIssueAttachmentsCacheFirst(issue, {
+        instanceUrl: baseUrl,
+        registry,
+        store,
+        background,
+      });
+    } else {
+      extractions = await extractIssueAttachments(http, issue, {
+        instanceUrl: baseUrl,
+        registry,
+        store,
+        ...(options.cacheDir !== undefined ? { cacheDir: options.cacheDir } : {}),
+      });
+    }
   }
 
   yield progress('bundle', `Empacotando bundle (${format})`);

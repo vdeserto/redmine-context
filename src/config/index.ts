@@ -38,6 +38,8 @@ export {
 export {
   diagnoseBinaries,
   tesseractInstallHint,
-  type BinaryDiagnosis,
+  pdftotextInstallHint,
+  ffmpegInstallHint,
+  whisperInstallHint,  type BinaryDiagnosis,
   type DiagnoseBinariesOptions,
 } from './doctor.js';

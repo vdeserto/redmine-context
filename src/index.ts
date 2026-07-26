@@ -27,10 +27,26 @@ export {
 // `get_attachment_text` (#55). Devolve o ExtractionResult do anexo pedido.
 export {
   fetchAttachmentText,
+  fetchAttachmentTextCacheFirst,
   AttachmentNotFoundError,
   type FetchAttachmentTextOptions,
+  type FetchAttachmentTextCacheFirstOptions,
   type AttachmentTextResult,
 } from './fetch-attachment-text.js';
+
+// Leitura cache-first não-bloqueante das extrações (M4-11 #70): lê o que está
+// pronto e sinaliza `processing` para o resto, disparando a extração cara em
+// background pela fila — a superfície MCP responde na hora (< 5s), sem bloquear.
+export {
+  extractIssueAttachmentsCacheFirst,
+  makeQueueBackgroundExtractor,
+  processingResult,
+  type BackgroundExtractionTarget,
+  type BackgroundExtractor,
+  type BackgroundCompute,
+  type CacheFirstExtractionOptions,
+  type QueueBackgroundOptions,
+} from './cache-first.js';
 
 // Orquestração de busca (filtros + full-text best-effort) para a tool MCP (#19).
 export {
@@ -114,12 +130,39 @@ export {
   type CredentialSourceKind,
 } from './config/index.js';
 
-// Diagnóstico de binários de mídia (M3-11, #53) — núcleo do comando `doctor`
-// (CLI) e da seção "Binários de mídia" da TUI. Detecção do tesseract + hint de
-// instalação por SO (ADR-002).
+// Diagnóstico de binários de mídia (M3-11 #53, M4-01 #57) — núcleo do comando
+// `doctor` (CLI) e da seção "Binários de mídia" da TUI. Detecção de tesseract,
+// ffmpeg e whisper.cpp + status do modelo GGUF, com hint de instalação por SO
+// (ADR-002).
 export {
   diagnoseBinaries,
   tesseractInstallHint,
-  type BinaryDiagnosis,
+  pdftotextInstallHint,
+  ffmpegInstallHint,
+  whisperInstallHint,  type BinaryDiagnosis,
   type DiagnoseBinariesOptions,
 } from './config/index.js';
+
+// Localização de binários de mídia e path canônico do modelo GGUF (M4-01, #57).
+// `whisperModelDir` é o ponto único de verdade do cache de modelos, consumido
+// pelo `doctor` e pelo download do modelo (#58) (ADR-002).
+export {
+  findFfmpeg,
+  detectFfmpegVersion,
+  findWhisper,
+  whisperModelDir,
+  type FfmpegLocation,
+  type WhisperLocation,
+} from './extract/index.js';
+
+// Download do modelo GGUF com SHA-256 pinado e guard headless (M4-02, #58).
+// Opt-in interativo (ADR-002): recusa em MCP/headless; consome `whisperModelDir`.
+export {
+  downloadGgufModel,
+  GgufDownloadError,
+  GGUF_MODEL_NAME,
+  GGUF_MODEL_URL,
+  GGUF_MODEL_SHA256,
+  type DownloadGgufOptions,
+  type GgufDownloadFailure,
+} from './extract/index.js';

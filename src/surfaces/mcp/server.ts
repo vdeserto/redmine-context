@@ -18,7 +18,13 @@ import { z } from 'zod';
 
 import * as core from '../../index.js';
 import { fenceBlock } from '../../index.js';
-import type { AttachmentTextResult, BundleFormat, IssueSearchFilters, resolveApiKey } from '../../index.js';
+import type {
+  AttachmentTextResult,
+  BundleFormat,
+  FetchAttachmentTextOptions,
+  IssueSearchFilters,
+  resolveApiKey,
+} from '../../index.js';
 
 /** Formato aceito pela tool MCP (nomes amigáveis expostos ao cliente). */
 export type McpFormat = 'markdown' | 'json';
@@ -71,8 +77,14 @@ export interface McpServerDeps {
   fetchIssueBundle: typeof core.fetchIssueBundle;
   /** Orquestração de busca (filtros + full-text best-effort) do core. */
   searchIssues: typeof core.fetchIssueSearch;
-  /** Orquestração get → normalize → extração de UM anexo (M3-13, cache-hit). */
-  fetchAttachmentText: typeof core.fetchAttachmentText;
+  /**
+   * Orquestração get → normalize → extração CACHE-FIRST de UM anexo (M4-11 #70):
+   * devolve o texto já cacheado na hora e `processing` (sem bloquear) para mídia
+   * ainda não processada. Default: {@link core.fetchAttachmentTextCacheFirst}.
+   * Tipada pela assinatura base para aceitar tanto a variante cache-first quanto
+   * a síncrona (M3) nos testes.
+   */
+  fetchAttachmentText: (options: FetchAttachmentTextOptions) => Promise<AttachmentTextResult>;
   /** Resolução de credencial pela cascata (arquivo → env). */
   resolveApiKey: typeof resolveApiKey;
   /** Ambiente consultado para `REDMINE_URL` e pela cascata de credencial. */
@@ -275,6 +287,9 @@ export function createGetIssueContextHandler(
         toolVersion: deps.toolVersion,
         insecure: deps.insecure ?? false,
         extractAttachments: args.extract_attachments ?? false,
+        // Cache-first (#70): embute o texto já pronto e marca o restante como
+        // `processing` sem bloquear na extração cara (a computação corre em background).
+        cacheFirst: true,
       })) {
         if (event.kind === 'progress') {
           deps.log?.(event.message);
@@ -405,10 +420,11 @@ function renderAttachmentText(result: AttachmentTextResult): CallToolResult {
  * Cria o handler da tool `get_attachment_text`, testável isoladamente.
  *
  * Resolve a instância/credencial da env (nunca de argumentos), delega à
- * orquestração `fetchAttachmentText` (pipeline com cache; `getOrCompute` garante
- * o cache-hit) e devolve o texto extraído dentro da fence untrusted. Anexo não
- * processável vira status legível (não `isError`); 403/404 do Redmine e anexo
- * inexistente viram `isError` tipado.
+ * orquestração cache-first `fetchAttachmentText` (texto já cacheado volta na
+ * hora; mídia pesada ainda não processada volta como `processing` SEM bloquear —
+ * M4-11 #70) e devolve o texto extraído dentro da fence untrusted. Anexo não
+ * processável / `processing` vira status legível (não `isError`); 403/404 do
+ * Redmine e anexo inexistente viram `isError` tipado.
  *
  * @param deps - Ver {@link McpServerDeps}.
  * @returns Função assíncrona que recebe os argumentos e devolve um CallToolResult.
@@ -497,7 +513,7 @@ export function defaultMcpDeps(): McpServerDeps {
   return {
     fetchIssueBundle: core.fetchIssueBundle,
     searchIssues: core.fetchIssueSearch,
-    fetchAttachmentText: core.fetchAttachmentText,
+    fetchAttachmentText: core.fetchAttachmentTextCacheFirst,
     resolveApiKey: core.resolveApiKey,
     env: process.env,
     toolVersion: core.TOOL_VERSION,

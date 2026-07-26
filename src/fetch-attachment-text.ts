@@ -12,11 +12,17 @@
  * do ADR-005: encapsula `client`, `normalize`, `extract` e `cache`.
  */
 
-import { DiskCacheStore } from './cache/index.js';
-import { createHttpClient, getIssue } from './client/index.js';
+import {
+  extractIssueAttachmentsCacheFirst,
+  makeQueueBackgroundExtractor,
+  processingResult,
+  type BackgroundExtractor,
+} from './cache-first.js';
+import { DiskCacheStore, type CacheStore } from './cache/index.js';
+import { createHttpClient, getIssue, type Logger } from './client/index.js';
 import type { ExtractionResult, Issue } from './contract.js';
 import { extractIssueAttachments } from './extract-issue-attachments.js';
-import { createDefaultRegistry } from './extract/index.js';
+import { createDefaultRegistry, type ExtractorRegistry } from './extract/index.js';
 import { normalizeIssue } from './normalize/index.js';
 
 /**
@@ -117,6 +123,105 @@ export async function fetchAttachmentText(
     registry,
     store,
     ...(cacheDir !== undefined ? { cacheDir } : {}),
+  });
+
+  // Ausente no mapa = nenhum extrator para o MIME provável → unsupported legível.
+  const extraction = map.get(attachmentId) ?? unsupportedResult();
+  return { attachmentId, extraction };
+}
+
+/**
+ * Opções de {@link fetchAttachmentTextCacheFirst}: as de {@link fetchAttachmentText}
+ * mais seams INJETÁVEIS (registry/store/background/logger) com defaults reais —
+ * usados pelos testes para simular a extração lenta de forma determinística, sem
+ * tocar a rede/disco/subprocesso reais.
+ */
+export interface FetchAttachmentTextCacheFirstOptions extends FetchAttachmentTextOptions {
+  /** Registry de extratores; default: {@link createDefaultRegistry}. */
+  registry?: ExtractorRegistry;
+  /** Store attachment-level; default: {@link DiskCacheStore} sobre `cacheDir`. */
+  store?: CacheStore<ExtractionResult>;
+  /**
+   * Dispatcher do job em background (#71); default: fila (`runQueue`) que roda a
+   * extração real detached. Injetável para provar o não-bloqueio (< 5s) sem esperar.
+   */
+  background?: BackgroundExtractor;
+  /** Logger para avisos; default no-op. Nunca `console.*`. */
+  logger?: Logger;
+}
+
+/**
+ * Variante CACHE-FIRST e NÃO-BLOQUEANTE de {@link fetchAttachmentText} (M4-11, #70).
+ *
+ * Busca a issue (rápido), isola o anexo pedido e LÊ o cache: se a extração já está
+ * pronta, devolve o texto IMEDIATAMENTE; se ainda não (anexo pesado), devolve
+ * `processing` na hora — SEM aguardar a extração — e dispara o job em segundo
+ * plano pela fila (fire-and-forget, forward-compatible com a continuação #71).
+ * Nenhuma chamada bloqueia aguardando mídia.
+ *
+ * @param options - Ver {@link FetchAttachmentTextCacheFirstOptions}.
+ * @returns O {@link AttachmentTextResult} do anexo (texto pronto, `processing` ou
+ *   `unsupported`), sempre sem bloquear na extração cara.
+ * @throws {RedmineAuthError} Em 401 (propagado do client).
+ * @throws {RedmineForbiddenError} Em 403 — sem permissão para a issue.
+ * @throws {RedmineNotFoundError} Em 404 — issue inexistente.
+ * @throws {AttachmentNotFoundError} Quando o anexo não existe na issue.
+ * @example
+ * const { extraction } = await fetchAttachmentTextCacheFirst({
+ *   baseUrl, apiKey, issueId: 42, attachmentId: 77,
+ * });
+ */
+export async function fetchAttachmentTextCacheFirst(
+  options: FetchAttachmentTextCacheFirstOptions,
+): Promise<AttachmentTextResult> {
+  const { baseUrl, apiKey, issueId, attachmentId, insecure = false, cacheDir, logger } = options;
+
+  const http = createHttpClient({ baseUrl, apiKey, insecure });
+  const payload = await getIssue(http, issueId);
+  const issue = normalizeIssue(payload);
+
+  const attachment = issue.attachments.find((a) => a.id === attachmentId);
+  if (attachment === undefined) {
+    throw new AttachmentNotFoundError(issueId, attachmentId);
+  }
+
+  const registry = options.registry ?? (await createDefaultRegistry());
+  const store =
+    options.store ?? new DiskCacheStore<ExtractionResult>(cacheDir !== undefined ? { cacheDir } : {});
+  const single: Issue = { ...issue, attachments: [attachment] };
+
+  // Default: a extração cara roda em background pela fila; o compute reusa o
+  // pipeline testado `extractIssueAttachments` (mesma chave/store → o resultado
+  // fica pronto para a 2ª chamada, #71). Injetável nos testes por determinismo.
+  const background =
+    options.background ??
+    makeQueueBackgroundExtractor(
+      async (_target, signal): Promise<ExtractionResult> => {
+        // Repassa o `signal` da fila (#69/#73) ao pipeline: quando a fila abortar, o
+        // abort chega ao `runWithWatchdog` e MATA o ffmpeg/whisper ponta a ponta. Só
+        // inclui quando dado (exactOptionalPropertyTypes).
+        const computed = await extractIssueAttachments(http, single, {
+          instanceUrl: baseUrl,
+          registry,
+          store,
+          ...(cacheDir !== undefined ? { cacheDir } : {}),
+          ...(signal !== undefined ? { signal } : {}),
+          ...(logger !== undefined ? { logger } : {}),
+        });
+        return computed.get(attachmentId) ?? processingResult();
+      },
+      // Passa o `store` para o dispatcher PERSISTIR o resultado de fechamento
+      // (done/failed) sob a mesma chave lida no cache-first (#71): a 2ª chamada
+      // acerta o cache e uma falha vira `failed` — nunca `processing` eterno.
+      { store, ...(logger !== undefined ? { logger } : {}) },
+    );
+
+  const map = await extractIssueAttachmentsCacheFirst(single, {
+    instanceUrl: baseUrl,
+    registry,
+    store,
+    background,
+    ...(logger !== undefined ? { logger } : {}),
   });
 
   // Ausente no mapa = nenhum extrator para o MIME provável → unsupported legível.

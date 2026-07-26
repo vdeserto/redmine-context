@@ -52,6 +52,13 @@ export interface ExtractIssueAttachmentsOptions {
   cacheDir?: string;
   /** Limite (bytes) por anexo; acima disso o download é pulado. Default do downloader. */
   maxBytes?: number;
+  /**
+   * Sinal de CANCELAMENTO (#69/#73) fiado ao `dispatchExtraction` de cada anexo e,
+   * dali, ao `runWithWatchdog` dos extratores de mídia — ao abortar, o subprocesso
+   * (ffmpeg/whisper) é MORTO. Repassado pela fila de background do MCP via
+   * {@link JobContext.signal}. Opcional/aditivo (respeita `exactOptionalPropertyTypes`).
+   */
+  signal?: AbortSignal;
   /** Logger para avisos (falha de anexo, mismatch); default no-op. Nunca `console.*`. */
   logger?: Logger;
 }
@@ -64,7 +71,7 @@ export interface ExtractIssueAttachmentsOptions {
  * @param attachment - Anexo do contrato.
  * @returns MIME provável, ou `undefined` se indeterminável.
  */
-function probableMime(attachment: Attachment): string | undefined {
+export function probableMime(attachment: Attachment): string | undefined {
   return mimeForExtension(attachment.filename) ?? attachment.content_type;
 }
 
@@ -75,7 +82,7 @@ function probableMime(attachment: Attachment): string | undefined {
  * @param extractor - Extrator resolvido pelo registry.
  * @returns Config `(version, model, params)` para {@link buildAttachmentKey}.
  */
-function toExtractorConfig(extractor: Extractor): ExtractorConfig {
+export function toExtractorConfig(extractor: Extractor): ExtractorConfig {
   return {
     version: extractor.version,
     model: extractor.model ?? extractor.id,
@@ -104,6 +111,7 @@ interface ExtractOneContext {
   store: CacheStore<ExtractionResult>;
   registry: ExtractorRegistry;
   maxBytes: number | undefined;
+  signal: AbortSignal | undefined;
   logger: Logger | undefined;
 }
 
@@ -116,7 +124,7 @@ interface ExtractOneContext {
  * @returns O {@link ExtractionResult} (cacheado ou recém-computado).
  */
 function extractOne(ctx: ExtractOneContext): Promise<ExtractionResult> {
-  const { http, attachment, extractor, instanceUrl, cacheDir, store, registry, maxBytes, logger } = ctx;
+  const { http, attachment, extractor, instanceUrl, cacheDir, store, registry, maxBytes, signal, logger } = ctx;
   const key = buildAttachmentKey({ instanceUrl, attachment, extractor: toExtractorConfig(extractor) });
 
   return getOrCompute(store, key, async () => {
@@ -132,6 +140,7 @@ function extractOne(ctx: ExtractOneContext): Promise<ExtractionResult> {
       registry,
       filename: attachment.filename,
       ...(logger !== undefined ? { logger } : {}),
+      ...(signal !== undefined ? { signal } : {}),
     });
   });
 }
@@ -157,11 +166,19 @@ export async function extractIssueAttachments(
   issue: Issue,
   options: ExtractIssueAttachmentsOptions,
 ): Promise<Map<number, ExtractionResult>> {
-  const { instanceUrl, registry, store, maxBytes, logger } = options;
+  const { instanceUrl, registry, store, maxBytes, signal, logger } = options;
   const cacheDir = options.cacheDir ?? defaultCacheDir();
 
   // Pré-filtro: só anexos cujo MIME provável tem extrator registrado. Os demais
   // (PDFs, textos, tipos sem extrator) não geram trabalho nem entram no mapa.
+  //
+  // INVARIANTE DE CACHE (NIT-1 do BLOCKER-1, ADR-004): a chave attachment-level é
+  // consistente entre o caminho síncrono (aqui) e o de background porque áudio e
+  // vídeo DELEGAM `version`/`model`/`params` ao MESMO {@link WhisperExtractor}
+  // compartilhado (ver `createDefaultRegistry`). Se um dia áudio/vídeo passarem a
+  // ter model/params PRÓPRIOS (divergindo do transcritor), a chave deixaria de
+  // bater e o cache-first re-dispararia em loop — manter a delegação é o que evita
+  // essa regressão.
   const targets: { attachment: Attachment; extractor: Extractor }[] = [];
   for (const attachment of issue.attachments) {
     const mime = probableMime(attachment);
@@ -183,6 +200,7 @@ export async function extractIssueAttachments(
           store,
           registry,
           maxBytes,
+          signal,
           logger,
         });
         return [attachment.id, result] as const;

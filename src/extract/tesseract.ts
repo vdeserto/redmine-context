@@ -31,7 +31,12 @@ import type { ExtractorParams } from '../cache/contract.js';
 import type { ExtractorConfig } from '../cache/keys.js';
 import type { ExtractionResult } from '../contract.js';
 
+import { createAudioExtractor } from './audio-extractor.js';
 import { ExtractorRegistry, type ExtractOptions, type Extractor } from './dispatcher.js';
+import { createPdfExtractor } from './pdf.js';
+import { runWithWatchdog, sanitizedEnv } from './subprocess.js';
+import { createVideoExtractor } from './video-extractor.js';
+import { createWhisperExtractor } from './whisper-extract.js';
 
 /** Identificador estável do extrator (entra em metadados). */
 const EXTRACTOR_ID = 'tesseract-ocr';
@@ -118,18 +123,15 @@ export function findTesseract(): TesseractLocation | undefined {
 }
 
 /**
- * Monta o env MÍNIMO e EXPLÍCITO do subprocesso (ADR-002). Só repassa `PATH` (o
- * tesseract pode invocar sub-ferramentas) e `TESSDATA_PREFIX` quando definido
- * (localização dos `traineddata`). NENHUM outro segredo do pai é herdado.
+ * Env sanitizado do tesseract: o env MÍNIMO compartilhado ({@link sanitizedEnv})
+ * mais `TESSDATA_PREFIX` (localização dos `traineddata`) quando definido — o
+ * tesseract precisa dele para achar os modelos de idioma. Nenhum segredo do pai é
+ * herdado (allowlist explícita, ADR-002).
  *
  * @returns Env sanitizado para o subprocesso tesseract.
  */
-function sanitizedEnv(): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { PATH: process.env.PATH ?? '/usr/bin:/bin' };
-  if (process.env.TESSDATA_PREFIX !== undefined) {
-    env.TESSDATA_PREFIX = process.env.TESSDATA_PREFIX;
-  }
-  return env;
+function tesseractEnv(): NodeJS.ProcessEnv {
+  return sanitizedEnv({ allow: ['TESSDATA_PREFIX'] });
 }
 
 /** Erro interno: o watchdog matou o tesseract por estourar o timeout. */
@@ -148,6 +150,11 @@ interface RunOptions {
   readonly psm: number;
   readonly timeoutMs: number;
   readonly killGraceMs: number;
+  /**
+   * Sinal de CANCELAMENTO (#69/#73) repassado ao {@link runWithWatchdog}, que MATA
+   * o tesseract ao abortar. Opcional/aditivo (respeita `exactOptionalPropertyTypes`).
+   */
+  readonly signal?: AbortSignal;
 }
 
 /**
@@ -160,56 +167,24 @@ interface RunOptions {
  * @throws {Error} Se o binário falhar (exit != 0, não encontrado em runtime, etc.).
  */
 function runTesseract(options: RunOptions): Promise<string> {
-  const { bin, filePath, lang, psm, timeoutMs, killGraceMs } = options;
+  const { bin, filePath, lang, psm, timeoutMs, killGraceMs, signal } = options;
   const args = [filePath, 'stdout', '-l', lang, '--psm', String(psm)];
-
-  return new Promise<string>((resolve, reject) => {
-    let settled = false;
-    let timedOut = false;
-    const timers: NodeJS.Timeout[] = [];
-
-    const cleanup = (): void => {
-      for (const timer of timers) clearTimeout(timer);
-    };
-    const settle = (fn: () => void): void => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      fn();
-    };
-
-    const child = execFile(
+  // Delega ao watchdog compartilhado (SEM shell, env sanitizado, SIGTERM → graça →
+  // SIGKILL); o estouro de timeout preserva o {@link TesseractTimeoutError} para a
+  // classificação de falha (`reason: 'timeout'`). O `signal` (#69/#73) faz o abort
+  // MATAR o subprocesso — incluído só quando dado (exactOptionalPropertyTypes).
+  return runWithWatchdog(
+    {
       bin,
       args,
-      { env: sanitizedEnv(), encoding: 'utf8', maxBuffer: MAX_BUFFER_BYTES, windowsHide: true },
-      (error, stdout) => {
-        if (timedOut) {
-          settle(() => reject(new TesseractTimeoutError(timeoutMs)));
-          return;
-        }
-        if (error !== null) {
-          settle(() => reject(error));
-          return;
-        }
-        settle(() => resolve(stdout));
-      },
-    );
-
-    timers.push(
-      setTimeout(() => {
-        timedOut = true;
-        child.kill('SIGTERM');
-        // Reason: após a graça, força SIGKILL e desiste — um processo que ignora
-        // SIGTERM não pode segurar a fila de jobs indefinidamente (ADR-002).
-        timers.push(
-          setTimeout(() => {
-            child.kill('SIGKILL');
-            settle(() => reject(new TesseractTimeoutError(timeoutMs)));
-          }, killGraceMs),
-        );
-      }, timeoutMs),
-    );
-  });
+      env: tesseractEnv(),
+      timeoutMs,
+      killGraceMs,
+      maxBuffer: MAX_BUFFER_BYTES,
+      ...(signal !== undefined ? { signal } : {}),
+    },
+    { makeTimeoutError: (ms) => new TesseractTimeoutError(ms) },
+  );
 }
 
 /** Opções de construção do {@link TesseractExtractor}. */
@@ -301,6 +276,7 @@ export class TesseractExtractor implements Extractor {
         psm: this.psm,
         timeoutMs: this.timeoutMs,
         killGraceMs: this.killGraceMs,
+        ...(options.signal !== undefined ? { signal: options.signal } : {}),
       });
       return {
         status: 'done',
@@ -347,7 +323,7 @@ export function detectTesseractVersion(bin: string): Promise<string | undefined>
     execFile(
       bin,
       ['--version'],
-      { env: sanitizedEnv(), encoding: 'utf8', windowsHide: true, timeout: DEFAULT_KILL_GRACE_MS },
+      { env: tesseractEnv(), encoding: 'utf8', windowsHide: true, timeout: DEFAULT_KILL_GRACE_MS },
       (error, stdout) => {
         if (error !== null) {
           resolve(undefined);
@@ -385,10 +361,18 @@ export async function createTesseractExtractor(
 
 /**
  * Cria o registry DEFAULT do pipeline de extração com os extratores de produção
- * registrados (hoje: {@link TesseractExtractor} para imagens). Ponto único de
- * composição consumido pela fila de jobs.
+ * registrados: {@link TesseractExtractor} para imagens (OCR), {@link PdfExtractor}
+ * para PDF (poppler/pdftotext), {@link AudioExtractor} para áudio (ffmpeg→whisper) e
+ * {@link VideoExtractor} para vídeo (ffmpeg→áudio→whisper + keyframe). Ponto único de
+ * composição consumido pela fila de jobs e por {@link extractIssueAttachments}.
  *
- * @param config - Config repassada ao {@link createTesseractExtractor}.
+ * O whisper (#61) NÃO é mais registrado diretamente para áudio cru (era código morto/
+ * armadilha — MINOR-2 do gap analysis): ele consome WAV, então áudio e vídeo passam
+ * pelos extratores acima, que fazem a conversão ffmpeg → WAV antes da transcrição.
+ * Um único {@link WhisperExtractor} é compartilhado como transcritor de ambos, de
+ * modo que a identidade de cache (modelo GGUF) seja consistente (ADR-004).
+ *
+ * @param config - Config repassada ao {@link createTesseractExtractor} (OCR).
  * @returns Um {@link ExtractorRegistry} com os extratores default registrados.
  * @example
  * const registry = await createDefaultRegistry();
@@ -398,6 +382,17 @@ export async function createDefaultRegistry(
   config: Omit<TesseractExtractorOptions, 'version' | 'binaryPath'> = {},
 ): Promise<ExtractorRegistry> {
   const registry = new ExtractorRegistry();
-  registry.register(await createTesseractExtractor(config));
+  const [tesseract, pdf, whisper] = await Promise.all([
+    createTesseractExtractor(config),
+    createPdfExtractor(),
+    createWhisperExtractor(),
+  ]);
+  // Áudio e vídeo compartilham o MESMO transcritor whisper: a chave de cache reflete
+  // o modelo GGUF por ambos os caminhos (ADR-004). O ffmpeg é resolvido internamente
+  // pelos pipelines de conversão (defaults reais; degradam graciosamente se ausente).
+  registry.register(tesseract);
+  registry.register(pdf);
+  registry.register(createAudioExtractor({ transcriber: whisper }));
+  registry.register(createVideoExtractor({ transcriber: whisper }));
   return registry;
 }
