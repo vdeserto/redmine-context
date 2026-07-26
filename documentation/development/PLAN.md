@@ -32,5 +32,27 @@ idioma auto-detect + override (`por+eng` no tesseract) · limites 100 MB/20 min 
 ## Pré-requisitos
 `git init` (passo zero); Node ≥ 20; Redmine docker seedado (fixture E2E); binários de mídia na máquina dev; GitHub + CI 3 SOs a partir do M2.
 
+## CI base — 3 SOs (#77 / M5-04)
+- Workflow: `.github/workflows/ci.yml` — `push`/`pull_request` em `main` e `milestone/**`.
+- Matriz `os: [ubuntu-latest, macos-latest, windows-latest]`, Node 20, cache npm (`actions/setup-node@v4`).
+- Steps: `npm ci` → `npm run typecheck` → `npm run lint` → `npm test` (coverage, gate 80%). `shell: bash` nos 3 SOs; `fail-fast: false` (cada SO reporta status próprio); `timeout-minutes: 25`; `concurrency` cancela runs redundantes do mesmo ref.
+- Escopo: só CI base (typecheck/lint/unit). E2E real contra Redmine (docker, só Linux) fica em #78–#80. Binários de mídia (ffmpeg/whisper/tesseract) permanecem opt-in — não exigidos no unit CI.
+- Checks gerados: `ci (ubuntu-latest)` · `ci (macos-latest)` · `ci (windows-latest)`.
+- **Proteção de branch (config do repo, NÃO no workflow — executar quando o dono decidir):**
+
+  ```sh
+  gh api -X PUT repos/vdeserto/redmine-context/branches/main/protection \
+    -H "Accept: application/vnd.github+json" \
+    -f 'required_status_checks[strict]=true' \
+    -f 'required_status_checks[checks][][context]=ci (ubuntu-latest)' \
+    -f 'required_status_checks[checks][][context]=ci (macos-latest)' \
+    -f 'required_status_checks[checks][][context]=ci (windows-latest)' \
+    -F 'enforce_admins=true' \
+    -F 'required_pull_request_reviews=null' \
+    -F 'restrictions=null'
+  ```
+
+  (Repetir trocando `main` por `milestone/M5` para proteger a branch de milestone.)
+
 ## Próximo passo
 **/plan:breakdown** — quebrar M1–M5 em 15–30 issues granulares.
