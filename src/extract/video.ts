@@ -51,8 +51,27 @@ import {
   type WavConversionResult,
 } from './audio.js';
 import type { ExtractOptions, Extractor } from './dispatcher.js';
+import {
+  probeVideoDuration,
+  type DurationProbeResult,
+  type ProbeVideoDurationOptions,
+} from './duration.js';
 import { findFfmpeg } from './ffmpeg.js';
 import { runWithWatchdog, sanitizedEnv } from './subprocess.js';
+
+// Reason: a sonda de duração vive em `duration.js` (Rule #24, módulo único-propósito),
+// mas é reexportada aqui para preservar a superfície pública do pipeline de vídeo —
+// chamadores e testes continuam importando tudo de `video.js`.
+export {
+  parseFfprobeDuration,
+  probeVideoDuration,
+  type DurationProbeOk,
+  type DurationProbeResult,
+  type DurationProbeUnavailable,
+  type FfprobeInvocation,
+  type FfprobeRunner,
+  type ProbeVideoDurationOptions,
+} from './duration.js';
 
 /** Identificador do pipeline (entra em metadados de resultados de falha da conversão). */
 const PIPELINE_EXTRACTOR_ID = 'video-transcribe';
@@ -77,6 +96,16 @@ const KEYFRAME_MAX_BUFFER_BYTES = 2 * 1024 * 1024;
 
 /** MIME default passado ao whisper quando o mime real do vídeo não é informado. */
 const DEFAULT_TRANSCRIBE_MIME = 'audio/wav';
+
+/**
+ * Limite default de duração de vídeo em SEGUNDOS (20 min, ADR-002): acima disso a
+ * transcrição é PULADA com aviso (o keyframe segue sendo extraído). Configurável
+ * via {@link ExtractVideoTranscriptOptions.maxDurationSeconds}.
+ */
+const DEFAULT_MAX_DURATION_SECONDS = 1200;
+
+/** Motivo canônico do skip por exceder o limite de duração (entra em `metadata.reason`). */
+const DURATION_LIMIT_REASON = 'video-excede-limite-duracao';
 
 /**
  * MIMEs de contêiner de vídeo cuja faixa de áudio este pipeline sabe extrair. Não
@@ -334,6 +363,29 @@ function attachKeyframe(result: ExtractionResult, keyframe: KeyframeResult): Ext
   };
 }
 
+/**
+ * Monta o {@link ExtractionResult} `skipped` de uma transcrição PULADA por exceder o
+ * limite de duração (ADR-002). Registra o motivo canônico + a duração medida e o
+ * limite aplicado nos metadados, para o bundle explicar por que não há transcrição.
+ *
+ * @param mime - MIME real do vídeo.
+ * @param durationSeconds - Duração medida pelo ffprobe (segundos).
+ * @param limitSeconds - Limite configurado (segundos).
+ * @returns Resultado `skipped` com metadados diagnósticos.
+ */
+function durationLimitSkip(mime: string, durationSeconds: number, limitSeconds: number): ExtractionResult {
+  return {
+    status: 'skipped',
+    mime,
+    metadata: {
+      extractorId: PIPELINE_EXTRACTOR_ID,
+      reason: DURATION_LIMIT_REASON,
+      durationSeconds,
+      limitSeconds,
+    },
+  };
+}
+
 /** Opções de orquestração do pipeline {@link extractVideoTranscript}. */
 export interface ExtractVideoTranscriptOptions {
   /**
@@ -359,6 +411,19 @@ export interface ExtractVideoTranscriptOptions {
   readonly extractKeyframe?: (inputPath: string) => Promise<KeyframeResult>;
   /** Opções repassadas à extração default do keyframe (binário, timeouts, outputPath). */
   readonly keyframeOptions?: ExtractKeyframeOptions;
+  /**
+   * Limite de duração do vídeo em SEGUNDOS (M4-09, #65): acima dele a transcrição é
+   * PULADA (`skipped`) com aviso; o keyframe segue sendo extraído. Default: 20 min
+   * ({@link DEFAULT_MAX_DURATION_SECONDS}).
+   */
+  readonly maxDurationSeconds?: number;
+  /**
+   * Sonda de duração (ffprobe); default: {@link probeVideoDuration} (com o `logger`
+   * repassado). Injetável para testes herméticos, sem ffprobe real.
+   */
+  readonly probeDuration?: (inputPath: string) => Promise<DurationProbeResult>;
+  /** Opções repassadas à sonda default de duração (binário, timeouts). */
+  readonly probeOptions?: ProbeVideoDurationOptions;
   /** Logger para avisos das etapas; sem default de lib (ADR-003). */
   readonly logger?: Logger;
 }
@@ -432,6 +497,34 @@ export async function extractVideoTranscript(
       error: error instanceof Error ? error.message : String(error),
     }),
   );
+
+  // LIMITE DE DURAÇÃO (M4-09, #65, ADR-002): mede a duração via ffprobe ANTES de
+  // gastar CPU convertendo/transcrevendo. Acima do limite → PULA a transcrição com
+  // aviso + metadados (o keyframe já extraído acima é preservado — AC explícito).
+  // Duração INDISPONÍVEL (ffprobe ausente/erro) ou sonda que lance NÃO bloqueia: o
+  // pipeline prossegue (a medição é um guard, não um pré-requisito).
+  const maxDurationSeconds = options.maxDurationSeconds ?? DEFAULT_MAX_DURATION_SECONDS;
+  const probeDuration =
+    options.probeDuration ??
+    ((path: string): Promise<DurationProbeResult> =>
+      probeVideoDuration(path, {
+        ...(options.probeOptions ?? {}),
+        ...(options.logger !== undefined ? { logger: options.logger } : {}),
+      }));
+  const duration = await probeDuration(inputPath).catch(
+    (error: unknown): DurationProbeResult => ({
+      status: 'unavailable',
+      reason: 'erro-ffprobe',
+      error: error instanceof Error ? error.message : String(error),
+    }),
+  );
+  if (duration.status === 'ok' && duration.seconds > maxDurationSeconds) {
+    options.logger?.warn(
+      `vídeo excede o limite de duração (${duration.seconds}s > ${maxDurationSeconds}s); ` +
+        'transcrição pulada (o keyframe é preservado)',
+    );
+    return attachKeyframe(durationLimitSkip(mime, duration.seconds, maxDurationSeconds), keyframe);
+  }
 
   const conversion = await convert(inputPath);
   if (conversion.status === 'failed') {

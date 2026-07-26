@@ -38,6 +38,7 @@ import {
   extractVideoKeyframe,
   extractVideoTranscript,
   VIDEO_MIMES,
+  type DurationProbeResult,
   type KeyframeResult,
 } from '../../src/extract/video.js';
 
@@ -47,6 +48,14 @@ import {
  * provando que a transcrição segue mesmo com o keyframe ausente.
  */
 const noKeyframe = async (): Promise<KeyframeResult> => ({ status: 'failed', reason: 'sem-keyframe' });
+
+/**
+ * Sonda de duração stub DENTRO do limite (M4-09, #65) — injetada nos testes do
+ * pipeline que não exercitam o limite de duração, mantendo-os herméticos (sem
+ * ffprobe real) e representando o caso normal do vídeo curto, que prossegue para a
+ * transcrição. Os testes do LIMITE em si vivem em `video-duration.test.ts`.
+ */
+const withinLimit = async (): Promise<DurationProbeResult> => ({ status: 'ok', seconds: 5 });
 
 /** Captura a invocação passada ao runner ffmpeg injetado para asserção de args/env. */
 interface Captured {
@@ -220,6 +229,7 @@ describe('extractVideoTranscript: pipeline vídeo→áudio→transcrição num j
       mime: 'video/mp4',
       convert: async () => ({ status: 'done', wavPath: '/cache/tmp/abc.wav' }),
       transcriber: fakeTranscriber(call, transcript),
+      probeDuration: withinLimit,
       extractKeyframe: noKeyframe,
       rm,
     });
@@ -239,6 +249,7 @@ describe('extractVideoTranscript: pipeline vídeo→áudio→transcrição num j
     await extractVideoTranscript('/cache/att/clip.mp4', {
       convert: async () => ({ status: 'done', wavPath: '/cache/tmp/x.wav' }),
       transcriber: fakeTranscriber(call, { status: 'done', text: '' }),
+      probeDuration: withinLimit,
       extractKeyframe: noKeyframe,
       rm: async () => undefined,
     });
@@ -259,6 +270,7 @@ describe('extractVideoTranscript: pipeline vídeo→áudio→transcrição num j
         hint: 'sem faixa de áudio',
       }),
       transcriber,
+      probeDuration: withinLimit,
       extractKeyframe: noKeyframe,
       rm,
     });
@@ -278,6 +290,7 @@ describe('extractVideoTranscript: pipeline vídeo→áudio→transcrição num j
         hint: 'instale o ffmpeg',
       }),
       transcriber: fakeTranscriber({}, { status: 'done', text: '' }),
+      probeDuration: withinLimit,
       extractKeyframe: noKeyframe,
       rm: async () => undefined,
     });
@@ -294,6 +307,7 @@ describe('extractVideoTranscript: pipeline vídeo→áudio→transcrição num j
       mime: 'video/mp4',
       convertOptions: { findFfmpegBinary: () => undefined, mkdir: async () => undefined },
       transcriber: fakeTranscriber(call, { status: 'done', text: 'nunca' }),
+      probeDuration: withinLimit,
       extractKeyframe: noKeyframe,
       rm: async () => undefined,
     });
@@ -316,6 +330,7 @@ describe('extractVideoTranscript: pipeline vídeo→áudio→transcrição num j
       mime: 'video/mp4',
       convert: async () => ({ status: 'done', wavPath: '/cache/tmp/y.wav' }),
       transcriber: fakeTranscriber(call, whisperFailed),
+      probeDuration: withinLimit,
       extractKeyframe: noKeyframe,
       rm,
     });
@@ -336,6 +351,7 @@ describe('extractVideoTranscript: pipeline vídeo→áudio→transcrição num j
           throw new Error('whisper crashou');
         },
       },
+      probeDuration: withinLimit,
       extractKeyframe: noKeyframe,
       rm,
     });
@@ -353,6 +369,7 @@ describe('extractVideoTranscript: pipeline vídeo→áudio→transcrição num j
     const result = await extractVideoTranscript('/cache/att/clip.mp4', {
       convert: async () => ({ status: 'done', wavPath: '/cache/tmp/w.wav' }),
       transcriber: fakeTranscriber({}, { status: 'done', text: 'ok' }),
+      probeDuration: withinLimit,
       extractKeyframe: noKeyframe,
       rm,
     });
@@ -472,6 +489,7 @@ describe('extractVideoTranscript: keyframe é um EXTRA que não afeta a transcri
     const call: TranscribeCall = {};
     const result = await extractVideoTranscript('/cache/att/12-ab/original.mp4', {
       mime: 'video/mp4',
+      probeDuration: withinLimit,
       convert: async () => ({ status: 'done', wavPath: '/cache/tmp/a.wav' }),
       transcriber: fakeTranscriber(call, { status: 'done', text: 'olá', mime: 'video/mp4' }),
       extractKeyframe: async () => ({ status: 'done', keyframePath: '/cache/att/12-ab/keyframe.jpg' }),
@@ -491,6 +509,7 @@ describe('extractVideoTranscript: keyframe é um EXTRA que não afeta a transcri
     const call: TranscribeCall = {};
     const result = await extractVideoTranscript('/cache/att/12-ab/original.mp4', {
       mime: 'video/mp4',
+      probeDuration: withinLimit,
       convert: async () => ({ status: 'done', wavPath: '/cache/tmp/b.wav' }),
       transcriber: fakeTranscriber(call, { status: 'done', text: 'transcrição ok' }),
       extractKeyframe: async () => ({ status: 'failed', reason: 'erro-keyframe' }),
@@ -506,6 +525,7 @@ describe('extractVideoTranscript: keyframe é um EXTRA que não afeta a transcri
   it('extrator de keyframe que LANÇA não derruba o pipeline (transcrição segue)', async () => {
     const result = await extractVideoTranscript('/cache/att/12-ab/original.mp4', {
       mime: 'video/mp4',
+      probeDuration: withinLimit,
       convert: async () => ({ status: 'done', wavPath: '/cache/tmp/c.wav' }),
       transcriber: fakeTranscriber({}, { status: 'done', text: 'resiliente' }),
       extractKeyframe: async () => {
@@ -522,6 +542,7 @@ describe('extractVideoTranscript: keyframe é um EXTRA que não afeta a transcri
   it('keyframe é anexado mesmo quando o vídeo não tem áudio (conversão falha, frame ainda vale)', async () => {
     const result = await extractVideoTranscript('/cache/att/12-ab/original.mp4', {
       mime: 'video/mp4',
+      probeDuration: withinLimit,
       convert: async () => ({ status: 'failed', reason: 'video-sem-audio', hint: 'sem áudio' }),
       transcriber: fakeTranscriber({}, { status: 'done', text: 'nunca' }),
       extractKeyframe: async () => ({ status: 'done', keyframePath: '/cache/att/12-ab/keyframe.jpg' }),
@@ -538,6 +559,7 @@ describe('extractVideoTranscript: keyframe é um EXTRA que não afeta a transcri
     const call: TranscribeCall = {};
     const result = await extractVideoTranscript('/cache/att/12-ab/original.mp4', {
       mime: 'video/mp4',
+      probeDuration: withinLimit,
       convert: async () => ({ status: 'done', wavPath: '/cache/tmp/d.wav' }),
       transcriber: fakeTranscriber(call, { status: 'done', text: 'ok' }),
       keyframeOptions: { findFfmpegBinary: () => undefined, mkdir: async () => undefined },
