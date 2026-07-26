@@ -16,6 +16,7 @@ import { runDoctor, runIssue, runLogin } from './commands.js';
 import { createPromptSession } from './prompts.js';
 import { shouldRenderTui } from './tty.js';
 import type { ParsedArgs, RunDeps } from './types.js';
+import { TOOL_VERSION } from '../../index.js';
 import { runStdioServer } from '../mcp/server.js';
 import { runTui } from '../tui/index.js';
 
@@ -30,6 +31,8 @@ Uso:
   redmine-context login [opções]
   redmine-context doctor
   redmine-context mcp
+  redmine-context --version    (imprime a versão e sai)
+  redmine-context --help       (imprime esta ajuda e sai)
 
 Comando issue:
   Busca a issue, normaliza e imprime o bundle em stdout (Markdown por padrão).
@@ -96,6 +99,10 @@ export function parseArgs(argv: string[]): ParsedArgs {
       flags.set('help', true);
       continue;
     }
+    if (token === '-v') {
+      flags.set('version', true);
+      continue;
+    }
     if (token.startsWith('--')) {
       const name = token.slice(2);
       if (VALUE_FLAGS.has(name)) {
@@ -159,6 +166,10 @@ async function dispatch(argv: string[], deps: RunDeps): Promise<number> {
   const parsed = parseArgs(argv);
   const command = parsed.positionals[0];
 
+  if (parsed.flags.get('version') === true || command === 'version') {
+    deps.stdout(`${TOOL_VERSION}\n`);
+    return 0;
+  }
   if (parsed.flags.get('help') === true || command === 'help') {
     deps.stdout(HELP);
     return 0;

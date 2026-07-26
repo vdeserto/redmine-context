@@ -8,6 +8,25 @@ Consumidor de Redmine que entrega contexto completo de issues — texto e mídia
 
 - Node.js ≥ 20
 
+## Instalação
+
+O pacote é publicado no npm e roda direto via `npx`, sem toolchain de compilação:
+
+```bash
+# uso pontual (sempre a última versão), sem instalar nada global:
+npx redmine-context --help
+npx redmine-context issue 42 --url https://redmine.example
+
+# ou instale o comando globalmente:
+npm install -g redmine-context
+redmine-context --version
+```
+
+> Os binários de mídia (`tesseract`, `ffmpeg`, `whisper.cpp`) **não** são
+> embutidos no pacote npm (ADR-002): são opcionais e instalados pelo próprio
+> usuário quando quiser OCR/transcrição. Rode `redmine-context doctor` para o
+> diagnóstico. Sem eles, o bundle de texto é gerado normalmente.
+
 ## Quickstart
 
 Do login ao contexto da issue no seu LLM, em três passos:
