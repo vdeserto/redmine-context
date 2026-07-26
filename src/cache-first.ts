@@ -250,7 +250,9 @@ async function drainDetached(
   try {
     for await (const event of events) {
       if (event.status === 'done') {
-        if (store !== undefined && event.result !== undefined) {
+        // Nunca persistir um `processing` (invariante do #71): cachear `processing`
+        // faria a 2ª chamada acertar o cache em `processing` e nunca re-disparar.
+        if (store !== undefined && event.result !== undefined && event.result.status !== 'processing') {
           await persistIfAbsent(store, target.key, event.result, attachmentId, logger);
         }
       } else if (event.status === 'failed') {
