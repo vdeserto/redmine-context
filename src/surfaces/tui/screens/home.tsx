@@ -239,7 +239,7 @@ export function HomeScreen() {
             <TextInput
               value={query}
               onChange={setQuery}
-              placeholder="digite para buscar…"
+              placeholder={`digite para buscar${glyphs.ellipsis}`}
               isActive={isSearching}
             />
             <Text color={theme.muted}> [{STATUS_FILTER_LABELS[statusFilter]}]</Text>

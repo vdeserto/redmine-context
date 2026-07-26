@@ -159,6 +159,20 @@ describe('Windows legado — HomeScreen (lista) em 80 colunas, glyphs ASCII', ()
     expectNoLineOverflow(lastFrame(), WIDTH);
     cleanup();
   });
+
+  it('a caixa de busca ABERTA não mostra reticência Unicode no placeholder (sem mojibake)', async () => {
+    const { lastFrame, stdin, cleanup } = renderHome();
+    // '/' abre a busca inline — o placeholder "digite para buscar…" só existe nesse
+    // estado. Sem abri-lo, o smoke não cobriria o glyph mais central da issue (#84).
+    stdin.write('/');
+    await vi.waitFor(() => expect(lastFrame()).toContain('digite para buscar'));
+    const frame = lastFrame() ?? '';
+    expectNoUnicodeGlyphs(frame);
+    // A reticência do placeholder degradou para ASCII sob o mock de glyphs.
+    expect(frame).toContain('digite para buscar...');
+    expectNoLineOverflow(frame, WIDTH);
+    cleanup();
+  });
 });
 
 describe('Windows legado — IssueDetailScreen em 80 colunas, glyphs ASCII', () => {
