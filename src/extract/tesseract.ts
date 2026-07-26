@@ -150,6 +150,11 @@ interface RunOptions {
   readonly psm: number;
   readonly timeoutMs: number;
   readonly killGraceMs: number;
+  /**
+   * Sinal de CANCELAMENTO (#69/#73) repassado ao {@link runWithWatchdog}, que MATA
+   * o tesseract ao abortar. Opcional/aditivo (respeita `exactOptionalPropertyTypes`).
+   */
+  readonly signal?: AbortSignal;
 }
 
 /**
@@ -162,13 +167,22 @@ interface RunOptions {
  * @throws {Error} Se o binário falhar (exit != 0, não encontrado em runtime, etc.).
  */
 function runTesseract(options: RunOptions): Promise<string> {
-  const { bin, filePath, lang, psm, timeoutMs, killGraceMs } = options;
+  const { bin, filePath, lang, psm, timeoutMs, killGraceMs, signal } = options;
   const args = [filePath, 'stdout', '-l', lang, '--psm', String(psm)];
   // Delega ao watchdog compartilhado (SEM shell, env sanitizado, SIGTERM → graça →
   // SIGKILL); o estouro de timeout preserva o {@link TesseractTimeoutError} para a
-  // classificação de falha (`reason: 'timeout'`).
+  // classificação de falha (`reason: 'timeout'`). O `signal` (#69/#73) faz o abort
+  // MATAR o subprocesso — incluído só quando dado (exactOptionalPropertyTypes).
   return runWithWatchdog(
-    { bin, args, env: tesseractEnv(), timeoutMs, killGraceMs, maxBuffer: MAX_BUFFER_BYTES },
+    {
+      bin,
+      args,
+      env: tesseractEnv(),
+      timeoutMs,
+      killGraceMs,
+      maxBuffer: MAX_BUFFER_BYTES,
+      ...(signal !== undefined ? { signal } : {}),
+    },
     { makeTimeoutError: (ms) => new TesseractTimeoutError(ms) },
   );
 }
@@ -262,6 +276,7 @@ export class TesseractExtractor implements Extractor {
         psm: this.psm,
         timeoutMs: this.timeoutMs,
         killGraceMs: this.killGraceMs,
+        ...(options.signal !== undefined ? { signal: options.signal } : {}),
       });
       return {
         status: 'done',

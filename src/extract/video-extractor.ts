@@ -92,6 +92,9 @@ export class VideoExtractor implements Extractor {
       mime: options.mime,
       ...this.pipeline,
       ...(options.logger !== undefined ? { logger: options.logger } : {}),
+      // Cancelamento (#69/#73): o abort do dispatch alcança conversão/whisper/keyframe
+      // do pipeline. Só inclui quando dado (exactOptionalPropertyTypes).
+      ...(options.signal !== undefined ? { signal: options.signal } : {}),
     });
   }
 }

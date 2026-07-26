@@ -142,6 +142,12 @@ export interface WhisperInvocation {
   readonly timeoutMs: number;
   /** Graça `SIGTERM` → `SIGKILL` (ms). */
   readonly killGraceMs: number;
+  /**
+   * Sinal de CANCELAMENTO (#69/#73) repassado ao {@link runWithWatchdog}, que MATA
+   * o whisper (`SIGTERM`→`SIGKILL`) ao abortar. Opcional/aditivo (respeita
+   * `exactOptionalPropertyTypes` — nunca injetado como `undefined`).
+   */
+  readonly signal?: AbortSignal;
 }
 
 /**
@@ -196,9 +202,17 @@ function isTimeoutError(error: unknown): boolean {
  * @returns O stdout (transcrição) do whisper.
  */
 function defaultRun(invocation: WhisperInvocation): Promise<string> {
-  const { bin, args, env, timeoutMs, killGraceMs } = invocation;
+  const { bin, args, env, timeoutMs, killGraceMs, signal } = invocation;
   return runWithWatchdog(
-    { bin, args, env, timeoutMs, killGraceMs, maxBuffer: MAX_BUFFER_BYTES },
+    {
+      bin,
+      args,
+      env,
+      timeoutMs,
+      killGraceMs,
+      maxBuffer: MAX_BUFFER_BYTES,
+      ...(signal !== undefined ? { signal } : {}),
+    },
     { makeTimeoutError: (ms) => new WhisperTimeoutError(ms) },
   );
 }
@@ -328,6 +342,9 @@ export class WhisperExtractor implements Extractor {
         env: sanitizedEnv(),
         timeoutMs: this.timeoutMs,
         killGraceMs: this.killGraceMs,
+        // Cancelamento (#69/#73): repassa o signal do dispatch até o watchdog, que
+        // MATA o whisper ao abortar. Só inclui quando dado (exactOptionalPropertyTypes).
+        ...(options.signal !== undefined ? { signal: options.signal } : {}),
       });
       return {
         status: 'done',

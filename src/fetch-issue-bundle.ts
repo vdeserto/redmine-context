@@ -126,13 +126,16 @@ export async function* fetchIssueBundle(
       // sem bloquear na extração cara; a computação real corre em background.
       const background =
         options.background ??
-        makeQueueBackgroundExtractor(async (target): Promise<ExtractionResult> => {
+        makeQueueBackgroundExtractor(async (target, signal): Promise<ExtractionResult> => {
           const single = { ...issue, attachments: [target.attachment] };
+          // Repassa o `signal` da fila (#69/#73): o abort chega ao `runWithWatchdog`
+          // e MATA o ffmpeg/whisper ponta a ponta. Só inclui quando dado.
           const computed = await extractIssueAttachments(http, single, {
             instanceUrl: baseUrl,
             registry,
             store,
             ...(options.cacheDir !== undefined ? { cacheDir: options.cacheDir } : {}),
+            ...(signal !== undefined ? { signal } : {}),
           });
           return computed.get(target.attachment.id) ?? processingResult();
         }, { store });

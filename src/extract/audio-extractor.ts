@@ -112,13 +112,15 @@ export class AudioExtractor implements Extractor {
    * @returns `done` com `text` no sucesso; `failed` com motivo claro na falha.
    */
   async extract(filePath: string, options: ExtractOptions): Promise<ExtractionResult> {
-    const conversion = await this.runConvert(filePath, options.logger);
+    const conversion = await this.runConvert(filePath, options.logger, options.signal);
     if (conversion.status === 'failed') {
       return conversionFailure(this.id, options.mime, conversion);
     }
 
     const wavPath = conversion.wavPath;
     try {
+      // `options` (com o `signal` de #69/#73) é repassado ao transcritor: o abort
+      // alcança o whisper e MATA o subprocesso via `runWithWatchdog`.
       return await this.transcriber.extract(wavPath, options);
     } catch (error) {
       // Reason: o whisper é gracioso por contrato, mas um transcritor injetado
@@ -144,15 +146,21 @@ export class AudioExtractor implements Extractor {
    *
    * @param filePath - Caminho do áudio cru.
    * @param logger - Logger repassado à conversão default.
+   * @param signal - Sinal de cancelamento (#69/#73) fiado ao ffmpeg da conversão default.
    * @returns Resultado da conversão (`done` com `wavPath` ou `failed` com motivo).
    */
-  private runConvert(filePath: string, logger: Logger | undefined): Promise<WavConversionResult> {
+  private runConvert(
+    filePath: string,
+    logger: Logger | undefined,
+    signal: AbortSignal | undefined,
+  ): Promise<WavConversionResult> {
     if (this.convert !== undefined) {
       return this.convert(filePath);
     }
     return convertAudioToWav(filePath, {
       ...(this.convertOptions ?? {}),
       ...(logger !== undefined ? { logger } : {}),
+      ...(signal !== undefined ? { signal } : {}),
     });
   }
 }
