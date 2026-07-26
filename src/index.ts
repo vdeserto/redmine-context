@@ -27,10 +27,26 @@ export {
 // `get_attachment_text` (#55). Devolve o ExtractionResult do anexo pedido.
 export {
   fetchAttachmentText,
+  fetchAttachmentTextCacheFirst,
   AttachmentNotFoundError,
   type FetchAttachmentTextOptions,
+  type FetchAttachmentTextCacheFirstOptions,
   type AttachmentTextResult,
 } from './fetch-attachment-text.js';
+
+// Leitura cache-first não-bloqueante das extrações (M4-11 #70): lê o que está
+// pronto e sinaliza `processing` para o resto, disparando a extração cara em
+// background pela fila — a superfície MCP responde na hora (< 5s), sem bloquear.
+export {
+  extractIssueAttachmentsCacheFirst,
+  makeQueueBackgroundExtractor,
+  processingResult,
+  type BackgroundExtractionTarget,
+  type BackgroundExtractor,
+  type BackgroundCompute,
+  type CacheFirstExtractionOptions,
+  type QueueBackgroundOptions,
+} from './cache-first.js';
 
 // Orquestração de busca (filtros + full-text best-effort) para a tool MCP (#19).
 export {

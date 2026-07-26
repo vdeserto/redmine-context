@@ -156,6 +156,16 @@ describe('MCP: get_issue_context handler', () => {
     expect(core.fetchIssueBundle).toHaveBeenCalledWith(expect.objectContaining({ insecure: false }));
   });
 
+  it('cache-first (#70): liga cacheFirst=true no core (resposta não-bloqueante)', async () => {
+    vi.mocked(core.resolveApiKey).mockResolvedValue('key');
+    vi.mocked(core.fetchIssueBundle).mockReturnValue(bundleStream('MD'));
+    const handler = createGetIssueContextHandler(makeDeps());
+
+    await handler({ issue_id: 7, extract_attachments: true });
+
+    expect(core.fetchIssueBundle).toHaveBeenCalledWith(expect.objectContaining({ cacheFirst: true }));
+  });
+
   it('insecure habilitado: repassa insecure=true ao core (http local)', async () => {
     vi.mocked(core.resolveApiKey).mockResolvedValue('key');
     vi.mocked(core.fetchIssueBundle).mockReturnValue(bundleStream('MD'));
@@ -395,6 +405,38 @@ describe('MCP: get_attachment_text handler', () => {
     expect(textOf(result)).toContain('sem-extrator-registrado');
     expect(textOf(result)).toContain('o OCR cobre apenas imagens');
     expect(textOf(result)).not.toContain('<untrusted-content>');
+  });
+
+  it('processing (#70): anexo pesado pendente vira status legível, sem bloquear nem isError', async () => {
+    vi.mocked(core.resolveApiKey).mockResolvedValue('key');
+    vi.mocked(core.fetchAttachmentText).mockResolvedValue(
+      attachmentResult({
+        status: 'processing',
+        metadata: { reason: 'extracao-em-andamento', hint: 'consulte novamente em instantes' },
+      }),
+    );
+    const handler = createGetAttachmentTextHandler(makeDeps());
+
+    const result = await handler({ issue_id: 42, attachment_id: 77 });
+
+    expect(result.isError).toBeFalsy();
+    expect(textOf(result)).toContain('processing');
+    expect(textOf(result)).toContain('consulte novamente em instantes');
+    expect(textOf(result)).not.toContain('<untrusted-content>');
+  });
+
+  it('TIMER (#70): retorna em < 5s mesmo quando a extração está pendente (processing)', async () => {
+    vi.mocked(core.resolveApiKey).mockResolvedValue('key');
+    vi.mocked(core.fetchAttachmentText).mockResolvedValue(attachmentResult({ status: 'processing' }));
+    const handler = createGetAttachmentTextHandler(makeDeps());
+
+    const started = performance.now();
+    const result = await handler({ issue_id: 42, attachment_id: 77 });
+    const elapsedMs = performance.now() - started;
+
+    expect(elapsedMs).toBeLessThan(5000);
+    expect(result.isError).toBeFalsy();
+    expect(textOf(result)).toContain('processing');
   });
 
   it('pending: status legível sem texto, sem isError (M4 processing)', async () => {

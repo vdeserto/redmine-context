@@ -158,3 +158,62 @@ describe('fetchIssueBundle (orquestração get → normalize → bundle)', () =>
     });
   });
 });
+
+describe('fetchIssueBundle cache-first (M4-11 #70: não-bloqueante, status processing)', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  /** Issue com um anexo de áudio pesado (whisper) e SEM digest exposto. */
+  const audioIssue = {
+    issue: {
+      ...payload.issue,
+      attachments: [
+        {
+          id: 77,
+          filename: 'reuniao',
+          filesize: 999_999,
+          content_type: 'audio/mpeg',
+          created_on: '2024-01-01T00:00:00Z',
+          content_url: 'https://redmine.example/attachments/download/77/reuniao',
+        },
+      ],
+    },
+  };
+
+  it('anexo pesado não cacheado: embute processing sem baixar nem bloquear (< 5s)', async () => {
+    const cacheDir = mkdtempSync(join(tmpdir(), 'rc-fib-cf-'));
+    const fetchMock = vi.fn(async () => jsonResponse(audioIssue));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const started = performance.now();
+    const { stages, result } = await drain(
+      // background no-op mantém o teste determinístico (a computação real é a #71).
+      fetchIssueBundle({
+        ...baseOpts,
+        format: 'md',
+        extractAttachments: true,
+        cacheFirst: true,
+        cacheDir,
+        background: () => undefined,
+      }),
+    );
+    const elapsedMs = performance.now() - started;
+
+    expect(elapsedMs).toBeLessThan(5000);
+    expect(stages).toContain('extract');
+    expect(result?.content).toContain('Anexo #77');
+    expect(result?.content).toContain('processing');
+    // Cache-first NÃO baixa o binário do anexo: só o JSON da issue foi buscado.
+    const downloads = fetchMock.mock.calls.filter((c) => String(c[0]).includes('/attachments/download/'));
+    expect(downloads).toHaveLength(0);
+
+    await rm(cacheDir, { recursive: true, force: true });
+  });
+
+  it('cacheFirst=false (default) mantém o caminho síncrono do M3 (sem regressão)', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse(payload)));
+
+    const { stages } = await drain(fetchIssueBundle({ ...baseOpts, format: 'md' }));
+
+    expect(stages).not.toContain('extract');
+  });
+});
