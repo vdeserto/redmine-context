@@ -45,6 +45,7 @@ import {
 } from '../../../../src/surfaces/tui/screens/home-selection.js';
 import { HomeScreen } from '../../../../src/surfaces/tui/screens/home.js';
 import { IssueDetailScreen } from '../../../../src/surfaces/tui/screens/issue-detail.js';
+import { Catch } from '../catch-boundary.js';
 import { LoadedIssueProvider } from '../../../../src/surfaces/tui/screens/loaded-issue-context.js';
 import { symbols } from '../../../../src/surfaces/tui/symbols.js';
 import { ThemeProvider } from '../../../../src/surfaces/tui/theme.js';
@@ -72,7 +73,13 @@ describe('TUI: useHomeSelection — unitário', () => {
     // Reason: Ink tem seu próprio error boundary interno — o erro não escapa
     // como uma exceção síncrona de `render()` (ver `navigation.test.tsx`/
     // `theme.test.tsx`), mas aparece no frame renderizado.
-    const { lastFrame } = render(<Bare />);
+    // Error boundary (CI-independente): sob CI=true o ink não renderiza o erro no
+    // frame; o boundary captura o throw do hook e o expõe como Text.
+    const { lastFrame } = render(
+      <Catch>
+        <Bare />
+      </Catch>,
+    );
     expect(lastFrame()).toContain('useHomeSelection() usado fora de <HomeSelectionProvider>.');
   });
 

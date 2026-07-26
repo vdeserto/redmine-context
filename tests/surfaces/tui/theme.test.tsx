@@ -9,6 +9,7 @@ import { Text } from 'ink';
 import { describe, expect, it } from 'vitest';
 
 import { DEFAULT_THEME, ThemeProvider, useTheme, type Theme } from '../../../src/surfaces/tui/theme.js';
+import { Catch } from './catch-boundary.js';
 
 /** Componente de teste: renderiza um token do tema para inspecionar o frame. */
 function ThemeConsumer({ token }: { token: keyof Theme }) {
@@ -66,7 +67,11 @@ describe('TUI: tema (ThemeProvider/useTheme)', () => {
     // Ink envolve a árvore num ErrorBoundary interno (componentDidCatch): o
     // erro não escapa síncrono de render(), mas é exibido no frame (mesmo
     // padrão adotado no teste de useNavigation()).
-    const { lastFrame } = render(<ConsumerWithoutProvider />);
+    const { lastFrame } = render(
+      <Catch>
+        <ConsumerWithoutProvider />
+      </Catch>,
+    );
     expect(lastFrame()).toContain('useTheme() usado fora de <ThemeProvider>.');
   });
 });

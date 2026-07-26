@@ -8,6 +8,8 @@ import { Text, useInput } from 'ink';
 import { render } from 'ink-testing-library';
 import { describe, expect, it, vi } from 'vitest';
 
+import { Catch } from '../catch-boundary.js';
+
 import type { Issue } from '../../../../src/index.js';
 import {
   LoadedIssueProvider,
@@ -37,7 +39,13 @@ describe('TUI: useLoadedIssue — unitário', () => {
       useLoadedIssue();
       return null;
     }
-    const { lastFrame } = render(<Bare />);
+    // Captura o erro de render via error boundary (CI-independente): o hook lança
+    // fora do provider e a mensagem é exposta como Text normal.
+    const { lastFrame } = render(
+      <Catch>
+        <Bare />
+      </Catch>,
+    );
     expect(lastFrame()).toContain('useLoadedIssue() usado fora de <LoadedIssueProvider>.');
   });
 
