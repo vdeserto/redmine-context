@@ -93,6 +93,7 @@ export function attachmentStatusColor(theme: Theme, status: AttachmentExtraction
     case 'pending':
     case 'processing':
     case 'skipped':
+    case 'cancelled':
       return theme.muted;
     default: {
       // Exaustividade: se a união ganhar um novo membro sem atualizar este
@@ -126,6 +127,8 @@ export function attachmentStatusLabel(status: AttachmentExtractionStatus): strin
       return 'falhou';
     case 'skipped':
       return 'pulado';
+    case 'cancelled':
+      return 'cancelado';
     default: {
       const exhaustiveCheck: never = status;
       return exhaustiveCheck;

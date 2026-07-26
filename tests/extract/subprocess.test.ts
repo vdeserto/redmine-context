@@ -16,6 +16,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   runWithWatchdog,
   sanitizedEnv,
+  SubprocessAbortedError,
   SubprocessTimeoutError,
   type ExecFileLike,
   type WatchdogChild,
@@ -230,5 +231,94 @@ describe('runWithWatchdog: timeout → SIGTERM → (graça) → SIGKILL, sem zum
     expect(capture.child?.signals).toEqual(['SIGTERM']);
     const error = await settled;
     expect(error).toBeInstanceOf(SubprocessTimeoutError);
+  });
+});
+
+describe('runWithWatchdog: cancelamento via AbortSignal (#69), matando o subprocesso', () => {
+  it('ao abortar: SIGTERM → (graça) → SIGKILL, rejeita com SubprocessAbortedError, sem zumbi', async () => {
+    vi.useFakeTimers();
+    const capture: ExecCapture = {};
+    // Nunca chama o callback: simula um binário longo que precisa ser morto.
+    const exec = fakeExec(capture, () => undefined);
+    const controller = new AbortController();
+
+    const promise = runWithWatchdog(
+      { bin: '/opt/bin', args: [], env: { PATH: '/bin' }, ...BASE, signal: controller.signal },
+      { execFile: exec },
+    );
+    const settled = promise.catch((error: unknown) => error);
+
+    controller.abort();
+    // O abort mata o processo imediatamente com SIGTERM.
+    expect(capture.child?.signals).toEqual(['SIGTERM']);
+
+    await vi.advanceTimersByTimeAsync(500);
+    // Escalonamento igual ao timeout: SIGKILL após a graça.
+    expect(capture.child?.signals).toEqual(['SIGTERM', 'SIGKILL']);
+    // ANTI-ZUMBI: o child foi efetivamente encerrado.
+    expect(capture.child?.killed).toBe(true);
+
+    const error = await settled;
+    expect(error).toBeInstanceOf(SubprocessAbortedError);
+  });
+
+  it('se o signal JÁ está aborted na chamada, mata o processo de imediato', async () => {
+    vi.useFakeTimers();
+    const capture: ExecCapture = {};
+    const exec = fakeExec(capture, () => undefined);
+    const controller = new AbortController();
+    controller.abort();
+
+    const promise = runWithWatchdog(
+      { bin: '/opt/bin', args: [], env: { PATH: '/bin' }, ...BASE, signal: controller.signal },
+      { execFile: exec },
+    );
+    const settled = promise.catch((error: unknown) => error);
+
+    expect(capture.child?.signals).toEqual(['SIGTERM']);
+    await vi.advanceTimersByTimeAsync(500);
+    const error = await settled;
+    expect(error).toBeInstanceOf(SubprocessAbortedError);
+  });
+
+  it('se o processo responde ao SIGTERM durante a graça pós-abort, uma única settle (sem SIGKILL)', async () => {
+    vi.useFakeTimers();
+    const capture: ExecCapture = {};
+    let late: ExecCb | undefined;
+    const exec = fakeExec(capture, (cb) => {
+      late = cb;
+    });
+    const controller = new AbortController();
+
+    const promise = runWithWatchdog(
+      { bin: '/opt/bin', args: [], env: { PATH: '/bin' }, ...BASE, signal: controller.signal },
+      { execFile: exec },
+    );
+    const settled = promise.catch((error: unknown) => error);
+
+    controller.abort();
+    expect(capture.child?.signals).toEqual(['SIGTERM']);
+    // O processo responde ao SIGTERM: não deve virar sucesso, e o SIGKILL é cancelado.
+    late?.(null, 'tarde', '');
+
+    await vi.advanceTimersByTimeAsync(500);
+    expect(capture.child?.signals).toEqual(['SIGTERM']);
+    const error = await settled;
+    expect(error).toBeInstanceOf(SubprocessAbortedError);
+  });
+
+  it('sem abort, o listener não interfere no caminho feliz (exit 0 resolve o stdout)', async () => {
+    const capture: ExecCapture = {};
+    const exec = fakeExec(capture, (cb) => queueMicrotask(() => cb(null, 'ok', '')));
+    const controller = new AbortController();
+
+    const stdout = await runWithWatchdog(
+      { bin: '/opt/bin', args: [], env: { PATH: '/bin' }, ...BASE, signal: controller.signal },
+      { execFile: exec },
+    );
+
+    expect(stdout).toBe('ok');
+    expect(capture.child?.signals).toEqual([]);
+    expect(capture.child?.killed).toBe(false);
   });
 });
