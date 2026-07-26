@@ -21,6 +21,7 @@
 import type {
   Attachment,
   CustomField,
+  ExtractionArtifact,
   ExtractionResult,
   Issue,
   IssueChild,
@@ -144,12 +145,28 @@ function renderCustomField(field: CustomField): JsonValue {
 }
 
 /**
+ * Renderiza um artefato derivado da extração (M4-08) — ex.: o keyframe de vídeo.
+ * Emite APENAS a REFERÊNCIA (tipo + caminho no cache + mime); o binário NUNCA é
+ * embutido (ADR-002: o MCP é read-only e textual). O `path`/`kind`/`mime` são dados
+ * NOSSOS (não derivados do Redmine), logo sem marcação `untrusted`.
+ *
+ * @param artifact - Artefato produzido pela extração.
+ * @returns Objeto JSON `{ kind, path, mime? }`.
+ */
+function renderArtifact(artifact: ExtractionArtifact): JsonValue {
+  const out: { [key: string]: JsonValue } = { kind: artifact.kind, path: artifact.path };
+  if (artifact.mime !== undefined) out.mime = artifact.mime;
+  return out;
+}
+
+/**
  * Renderiza o resultado da extração de um anexo (M3-10). `status` sempre presente;
  * `text` só quando há texto, marcado `untrusted` (conteúdo derivado do anexo);
- * `reason` só quando o resultado (skip/falha/unsupported) o carrega em metadata.
+ * `reason` só quando o resultado (skip/falha/unsupported) o carrega em metadata;
+ * `artifacts` (M4-08) referencia derivados no cache (ex.: keyframe), sem embutir.
  *
  * @param result - Resultado de uma extração de anexo.
- * @returns Objeto JSON `{ status, text?, reason? }`.
+ * @returns Objeto JSON `{ status, text?, reason?, hint?, artifacts? }`.
  */
 function renderExtraction(result: ExtractionResult): JsonValue {
   const out: { [key: string]: JsonValue } = { status: result.status };
@@ -162,6 +179,9 @@ function renderExtraction(result: ExtractionResult): JsonValue {
   // instalação) é a parte acionável para o consumidor do JSON (MCP/LLM).
   const hint = result.metadata?.['hint'];
   if (typeof hint === 'string') out.hint = hint;
+  if (result.artifacts !== undefined && result.artifacts.length > 0) {
+    out.artifacts = result.artifacts.map(renderArtifact);
+  }
   return out;
 }
 

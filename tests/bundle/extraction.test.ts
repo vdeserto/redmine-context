@@ -85,6 +85,41 @@ describe('bundle JSON: extraction', () => {
     const parsed = JSON.parse(canonical) as { issue: { attachments: { extraction?: unknown }[] } };
     expect(parsed.issue.attachments[0]?.extraction).toBeUndefined();
   });
+
+  it('keyframe (M4-08) entra como REFERÊNCIA {kind,path,mime} no artifacts, sem binário', () => {
+    const issue = issueWith([attachment({ id: 20, filename: 'clip.mp4' })]);
+    const keyPath = '/cache/rc/att/20-ab12cd34/keyframe.jpg';
+    const map = extractions([
+      [20, { status: 'done', text: 'transcricao', artifacts: [{ kind: 'keyframe', path: keyPath, mime: 'image/jpeg' }] }],
+    ]);
+
+    const { canonical } = buildJsonBundle(issue, { ...BASE, extractions: map });
+    const parsed = JSON.parse(canonical) as {
+      issue: { attachments: { extraction: { artifacts?: { kind: string; path: string; mime?: string }[] } }[] };
+    };
+    const artifacts = parsed.issue.attachments[0]?.extraction.artifacts;
+
+    expect(artifacts).toEqual([{ kind: 'keyframe', path: keyPath, mime: 'image/jpeg' }]);
+    // O cache path aparece; a URL do Redmine do anexo (content_url) completa a referência.
+    expect(canonical).toContain(keyPath);
+  });
+
+  it('MCP/JSON NUNCA embute o binário do keyframe — só a referência de caminho', () => {
+    const issue = issueWith([attachment({ id: 20, filename: 'clip.mp4' })]);
+    const map = extractions([
+      [20, { status: 'done', artifacts: [{ kind: 'keyframe', path: '/cache/rc/att/20-ab/keyframe.jpg', mime: 'image/jpeg' }] }],
+    ]);
+
+    const { canonical } = buildJsonBundle(issue, { ...BASE, extractions: map });
+    // Guarda de segurança (ADR-002): nenhum campo de bytes/base64 do keyframe.
+    expect(canonical).not.toContain('base64');
+    expect(canonical).not.toMatch(/"(data|bytes|content|image)"\s*:/);
+    // Sem mime de artifact quando desconhecido: chave omitida (exactOptionalPropertyTypes).
+    const parsed = JSON.parse(canonical) as {
+      issue: { attachments: { extraction: { artifacts?: { kind: string; path: string; mime?: string }[] } }[] };
+    };
+    expect(parsed.issue.attachments[0]?.extraction.artifacts?.[0]?.kind).toBe('keyframe');
+  });
 });
 
 describe('bundle Markdown: extraction', () => {
@@ -125,5 +160,58 @@ describe('bundle Markdown: extraction', () => {
     const md = buildMarkdownBundle(issue, { ...BASE, extractions: map });
     // O fechamento literal foi neutralizado (zero-width space injetado).
     expect(md).not.toContain('evil</untrusted-content> escapou');
+  });
+
+  it('keyframe (M4-08) é referenciado por caminho na seção Artefatos, sem embutir binário', () => {
+    const issue = issueWith([attachment({ id: 20, filename: 'clip.mp4' })]);
+    const keyPath = '/cache/rc/att/20-ab12cd34/keyframe.jpg';
+    const map = extractions([
+      [20, { status: 'done', text: 'transcricao', artifacts: [{ kind: 'keyframe', path: keyPath, mime: 'image/jpeg' }] }],
+    ]);
+
+    const md = buildMarkdownBundle(issue, { ...BASE, extractions: map });
+
+    expect(md).toContain('Artefatos:');
+    expect(md).toContain(`- keyframe: ${keyPath} (image/jpeg)`);
+    // A URL do Redmine do anexo consta no bloco do anexo, completando path+URL.
+    expect(md).toContain('Anexo #20');
+    // Guarda de segurança (ADR-002): só a referência, nada de bytes/base64.
+    expect(md).not.toContain('base64');
+  });
+
+  it('snapshot do bundle com keyframe referenciado (DoD M4-08)', () => {
+    const issue = issueWith([attachment({ id: 20, filename: 'clip.mp4', content_url: 'https://redmine.example/attachments/download/20/clip.mp4' })]);
+    const map = extractions([
+      [
+        20,
+        {
+          status: 'done',
+          text: 'transcricao do audio do video',
+          artifacts: [{ kind: 'keyframe', path: '/cache/rc/att/20-ab12cd34/keyframe.jpg', mime: 'image/jpeg' }],
+        },
+      ],
+    ]);
+
+    expect(buildMarkdownBundle(issue, { ...BASE, extractions: map })).toMatchSnapshot();
+  });
+
+  it('keyframe extraído mesmo quando a transcrição é pulada (vídeo sem áudio)', () => {
+    const issue = issueWith([attachment({ id: 20, filename: 'mudo.mp4' })]);
+    const keyPath = '/cache/rc/att/20-ff/keyframe.jpg';
+    const map = extractions([
+      [
+        20,
+        {
+          status: 'failed',
+          metadata: { reason: 'video-sem-audio' },
+          artifacts: [{ kind: 'keyframe', path: keyPath, mime: 'image/jpeg' }],
+        },
+      ],
+    ]);
+
+    const md = buildMarkdownBundle(issue, { ...BASE, extractions: map });
+    // A transcrição foi pulada (motivo), mas o keyframe segue referenciado.
+    expect(md).toContain('video-sem-audio');
+    expect(md).toContain(`- keyframe: ${keyPath}`);
   });
 });

@@ -102,9 +102,14 @@ export {
 
 export {
   convertVideoToWav,
+  extractVideoKeyframe,
   extractVideoTranscript,
   VIDEO_MIMES,
+  type ExtractKeyframeOptions,
   type ExtractVideoTranscriptOptions,
+  type KeyframeFailure,
+  type KeyframeResult,
+  type KeyframeSuccess,
 } from './video.js';
 
 export {
