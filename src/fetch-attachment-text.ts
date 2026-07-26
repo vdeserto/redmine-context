@@ -196,12 +196,16 @@ export async function fetchAttachmentTextCacheFirst(
   const background =
     options.background ??
     makeQueueBackgroundExtractor(
-      async (): Promise<ExtractionResult> => {
+      async (_target, signal): Promise<ExtractionResult> => {
+        // Repassa o `signal` da fila (#69/#73) ao pipeline: quando a fila abortar, o
+        // abort chega ao `runWithWatchdog` e MATA o ffmpeg/whisper ponta a ponta. Só
+        // inclui quando dado (exactOptionalPropertyTypes).
         const computed = await extractIssueAttachments(http, single, {
           instanceUrl: baseUrl,
           registry,
           store,
           ...(cacheDir !== undefined ? { cacheDir } : {}),
+          ...(signal !== undefined ? { signal } : {}),
           ...(logger !== undefined ? { logger } : {}),
         });
         return computed.get(attachmentId) ?? processingResult();

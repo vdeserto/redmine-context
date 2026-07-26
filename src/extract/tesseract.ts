@@ -31,9 +31,11 @@ import type { ExtractorParams } from '../cache/contract.js';
 import type { ExtractorConfig } from '../cache/keys.js';
 import type { ExtractionResult } from '../contract.js';
 
+import { createAudioExtractor } from './audio-extractor.js';
 import { ExtractorRegistry, type ExtractOptions, type Extractor } from './dispatcher.js';
 import { createPdfExtractor } from './pdf.js';
 import { runWithWatchdog, sanitizedEnv } from './subprocess.js';
+import { createVideoExtractor } from './video-extractor.js';
 import { createWhisperExtractor } from './whisper-extract.js';
 
 /** Identificador estável do extrator (entra em metadados). */
@@ -148,6 +150,11 @@ interface RunOptions {
   readonly psm: number;
   readonly timeoutMs: number;
   readonly killGraceMs: number;
+  /**
+   * Sinal de CANCELAMENTO (#69/#73) repassado ao {@link runWithWatchdog}, que MATA
+   * o tesseract ao abortar. Opcional/aditivo (respeita `exactOptionalPropertyTypes`).
+   */
+  readonly signal?: AbortSignal;
 }
 
 /**
@@ -160,13 +167,22 @@ interface RunOptions {
  * @throws {Error} Se o binário falhar (exit != 0, não encontrado em runtime, etc.).
  */
 function runTesseract(options: RunOptions): Promise<string> {
-  const { bin, filePath, lang, psm, timeoutMs, killGraceMs } = options;
+  const { bin, filePath, lang, psm, timeoutMs, killGraceMs, signal } = options;
   const args = [filePath, 'stdout', '-l', lang, '--psm', String(psm)];
   // Delega ao watchdog compartilhado (SEM shell, env sanitizado, SIGTERM → graça →
   // SIGKILL); o estouro de timeout preserva o {@link TesseractTimeoutError} para a
-  // classificação de falha (`reason: 'timeout'`).
+  // classificação de falha (`reason: 'timeout'`). O `signal` (#69/#73) faz o abort
+  // MATAR o subprocesso — incluído só quando dado (exactOptionalPropertyTypes).
   return runWithWatchdog(
-    { bin, args, env: tesseractEnv(), timeoutMs, killGraceMs, maxBuffer: MAX_BUFFER_BYTES },
+    {
+      bin,
+      args,
+      env: tesseractEnv(),
+      timeoutMs,
+      killGraceMs,
+      maxBuffer: MAX_BUFFER_BYTES,
+      ...(signal !== undefined ? { signal } : {}),
+    },
     { makeTimeoutError: (ms) => new TesseractTimeoutError(ms) },
   );
 }
@@ -260,6 +276,7 @@ export class TesseractExtractor implements Extractor {
         psm: this.psm,
         timeoutMs: this.timeoutMs,
         killGraceMs: this.killGraceMs,
+        ...(options.signal !== undefined ? { signal: options.signal } : {}),
       });
       return {
         status: 'done',
@@ -344,9 +361,16 @@ export async function createTesseractExtractor(
 
 /**
  * Cria o registry DEFAULT do pipeline de extração com os extratores de produção
- * registrados: {@link TesseractExtractor} para imagens (OCR) e {@link PdfExtractor}
- * para PDF (poppler/pdftotext). Ponto único de composição consumido pela fila de
- * jobs.
+ * registrados: {@link TesseractExtractor} para imagens (OCR), {@link PdfExtractor}
+ * para PDF (poppler/pdftotext), {@link AudioExtractor} para áudio (ffmpeg→whisper) e
+ * {@link VideoExtractor} para vídeo (ffmpeg→áudio→whisper + keyframe). Ponto único de
+ * composição consumido pela fila de jobs e por {@link extractIssueAttachments}.
+ *
+ * O whisper (#61) NÃO é mais registrado diretamente para áudio cru (era código morto/
+ * armadilha — MINOR-2 do gap analysis): ele consome WAV, então áudio e vídeo passam
+ * pelos extratores acima, que fazem a conversão ffmpeg → WAV antes da transcrição.
+ * Um único {@link WhisperExtractor} é compartilhado como transcritor de ambos, de
+ * modo que a identidade de cache (modelo GGUF) seja consistente (ADR-004).
  *
  * @param config - Config repassada ao {@link createTesseractExtractor} (OCR).
  * @returns Um {@link ExtractorRegistry} com os extratores default registrados.
@@ -363,8 +387,12 @@ export async function createDefaultRegistry(
     createPdfExtractor(),
     createWhisperExtractor(),
   ]);
+  // Áudio e vídeo compartilham o MESMO transcritor whisper: a chave de cache reflete
+  // o modelo GGUF por ambos os caminhos (ADR-004). O ffmpeg é resolvido internamente
+  // pelos pipelines de conversão (defaults reais; degradam graciosamente se ausente).
   registry.register(tesseract);
   registry.register(pdf);
-  registry.register(whisper);
+  registry.register(createAudioExtractor({ transcriber: whisper }));
+  registry.register(createVideoExtractor({ transcriber: whisper }));
   return registry;
 }

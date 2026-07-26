@@ -213,6 +213,11 @@ export interface ExtractKeyframeOptions {
   readonly timeoutMs?: number;
   /** Graça `SIGTERM` → `SIGKILL` (ms); default {@link KEYFRAME_KILL_GRACE_MS}. */
   readonly killGraceMs?: number;
+  /**
+   * Sinal de CANCELAMENTO (#69/#73) repassado ao `runWithWatchdog` do keyframe, que
+   * MATA o ffmpeg ao abortar. Opcional/aditivo (respeita `exactOptionalPropertyTypes`).
+   */
+  readonly signal?: AbortSignal;
   /** Logger para o aviso de binário ausente; sem default de lib (ADR-003). */
   readonly logger?: Logger;
 }
@@ -267,9 +272,17 @@ function buildKeyframeArgs(inputPath: string, outputPath: string): readonly stri
  * @returns Promessa resolvida no sucesso do ffmpeg.
  */
 function defaultKeyframeRun(invocation: FfmpegInvocation): Promise<void> {
-  const { bin, args, env, timeoutMs, killGraceMs } = invocation;
+  const { bin, args, env, timeoutMs, killGraceMs, signal } = invocation;
   return runWithWatchdog(
-    { bin, args, env, timeoutMs, killGraceMs, maxBuffer: KEYFRAME_MAX_BUFFER_BYTES },
+    {
+      bin,
+      args,
+      env,
+      timeoutMs,
+      killGraceMs,
+      maxBuffer: KEYFRAME_MAX_BUFFER_BYTES,
+      ...(signal !== undefined ? { signal } : {}),
+    },
     { makeTimeoutError: (ms) => new KeyframeTimeoutError(ms) },
   ).then(() => undefined);
 }
@@ -319,11 +332,19 @@ export async function extractVideoKeyframe(
   const rm = options.rm ?? ((path: string): Promise<void> => fsRm(path, { force: true }));
   const timeoutMs = options.timeoutMs ?? DEFAULT_KEYFRAME_TIMEOUT_MS;
   const killGraceMs = options.killGraceMs ?? KEYFRAME_KILL_GRACE_MS;
+  const signal = options.signal;
   const args = buildKeyframeArgs(inputPath, outputPath);
 
   try {
     await mkdir(dirname(outputPath));
-    await run({ bin, args, env: sanitizedEnv(), timeoutMs, killGraceMs });
+    await run({
+      bin,
+      args,
+      env: sanitizedEnv(),
+      timeoutMs,
+      killGraceMs,
+      ...(signal !== undefined ? { signal } : {}),
+    });
     return { status: 'done', keyframePath: outputPath };
   } catch (error) {
     // O ffmpeg com `-y` pode ter criado um JPEG parcial; descarta-o (best-effort).
@@ -424,6 +445,14 @@ export interface ExtractVideoTranscriptOptions {
   readonly probeDuration?: (inputPath: string) => Promise<DurationProbeResult>;
   /** Opções repassadas à sonda default de duração (binário, timeouts). */
   readonly probeOptions?: ProbeVideoDurationOptions;
+  /**
+   * Sinal de CANCELAMENTO (#69/#73) fiado às ETAPAS de subprocesso do pipeline —
+   * conversão (ffmpeg), transcrição (whisper) e keyframe (ffmpeg) — para que o abort
+   * MATE o subprocesso em curso (`SIGTERM`→`SIGKILL`). Opcional/aditivo (respeita
+   * `exactOptionalPropertyTypes`). Repassado apenas às deps DEFAULT; deps injetadas
+   * nos testes controlam seu próprio ciclo de vida.
+   */
+  readonly signal?: AbortSignal;
   /** Logger para avisos das etapas; sem default de lib (ADR-003). */
   readonly logger?: Logger;
 }
@@ -471,12 +500,14 @@ export async function extractVideoTranscript(
   options: ExtractVideoTranscriptOptions,
 ): Promise<ExtractionResult> {
   const mime = options.mime ?? DEFAULT_TRANSCRIBE_MIME;
+  const signal = options.signal;
   const convert =
     options.convert ??
     ((path: string): Promise<WavConversionResult> =>
       convertVideoToWav(path, {
         ...(options.convertOptions ?? {}),
         ...(options.logger !== undefined ? { logger: options.logger } : {}),
+        ...(signal !== undefined ? { signal } : {}),
       }));
 
   // O keyframe é um EXTRA independente da transcrição (ADR-002): é extraído mesmo
@@ -489,6 +520,7 @@ export async function extractVideoTranscript(
       extractVideoKeyframe(path, {
         ...(options.keyframeOptions ?? {}),
         ...(options.logger !== undefined ? { logger: options.logger } : {}),
+        ...(signal !== undefined ? { signal } : {}),
       }));
   const keyframe = await extractKeyframe(inputPath).catch(
     (error: unknown): KeyframeResult => ({
@@ -536,6 +568,7 @@ export async function extractVideoTranscript(
   const extractOptions: ExtractOptions = {
     mime,
     ...(options.logger !== undefined ? { logger: options.logger } : {}),
+    ...(signal !== undefined ? { signal } : {}),
   };
 
   try {

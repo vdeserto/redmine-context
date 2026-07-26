@@ -107,6 +107,20 @@ export {
 } from './whisper-extract.js';
 
 export {
+  AudioExtractor,
+  AUDIO_MIMES,
+  createAudioExtractor,
+  type AudioExtractorOptions,
+} from './audio-extractor.js';
+
+export {
+  createVideoExtractor,
+  VideoExtractor,
+  type VideoExtractorOptions,
+  type VideoPipelineOverrides,
+} from './video-extractor.js';
+
+export {
   convertVideoToWav,
   extractVideoKeyframe,
   extractVideoTranscript,

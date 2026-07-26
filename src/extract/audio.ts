@@ -84,6 +84,12 @@ export interface FfmpegInvocation {
   readonly timeoutMs: number;
   /** Graça `SIGTERM` → `SIGKILL` (ms). */
   readonly killGraceMs: number;
+  /**
+   * Sinal de CANCELAMENTO (#69/#73) repassado ao {@link runWithWatchdog}, que MATA
+   * o ffmpeg (`SIGTERM`→`SIGKILL`) ao abortar. Opcional/aditivo (respeita
+   * `exactOptionalPropertyTypes` — nunca injetado como `undefined`).
+   */
+  readonly signal?: AbortSignal;
 }
 
 /**
@@ -136,6 +142,11 @@ export interface ConvertAudioToWavOptions {
   readonly timeoutMs?: number;
   /** Graça `SIGTERM` → `SIGKILL` (ms); default {@link DEFAULT_KILL_GRACE_MS}. */
   readonly killGraceMs?: number;
+  /**
+   * Sinal de CANCELAMENTO (#69/#73) repassado à invocação/`runWithWatchdog`, que
+   * MATA o ffmpeg ao abortar. Opcional/aditivo (respeita `exactOptionalPropertyTypes`).
+   */
+  readonly signal?: AbortSignal;
   /** Logger para o aviso de binário ausente; sem default de lib (ADR-003). */
   readonly logger?: Logger;
 }
@@ -191,9 +202,17 @@ function buildFfmpegArgs(inputPath: string, outputPath: string): readonly string
  * @returns Promessa resolvida no sucesso do ffmpeg.
  */
 function defaultRun(invocation: FfmpegInvocation): Promise<void> {
-  const { bin, args, env, timeoutMs, killGraceMs } = invocation;
+  const { bin, args, env, timeoutMs, killGraceMs, signal } = invocation;
   return runWithWatchdog(
-    { bin, args, env, timeoutMs, killGraceMs, maxBuffer: MAX_BUFFER_BYTES },
+    {
+      bin,
+      args,
+      env,
+      timeoutMs,
+      killGraceMs,
+      maxBuffer: MAX_BUFFER_BYTES,
+      ...(signal !== undefined ? { signal } : {}),
+    },
     { makeTimeoutError: (ms) => new FfmpegTimeoutError(ms) },
   ).then(() => undefined);
 }
@@ -240,6 +259,7 @@ export async function convertAudioToWav(
   const rm = options.rm ?? ((path: string): Promise<void> => fsRm(path, { force: true }));
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const killGraceMs = options.killGraceMs ?? DEFAULT_KILL_GRACE_MS;
+  const signal = options.signal;
 
   // Nome único evita colisão entre conversões concorrentes no mesmo dir temp.
   const outputPath = join(tempDir, `${randomUUID()}.wav`);
@@ -247,7 +267,14 @@ export async function convertAudioToWav(
 
   try {
     await mkdir(tempDir);
-    await run({ bin, args, env: sanitizedEnv(), timeoutMs, killGraceMs });
+    await run({
+      bin,
+      args,
+      env: sanitizedEnv(),
+      timeoutMs,
+      killGraceMs,
+      ...(signal !== undefined ? { signal } : {}),
+    });
     return { status: 'done', wavPath: outputPath };
   } catch (error) {
     // O ffmpeg com `-y` pode ter criado um WAV parcial/zerado; descarta-o para não
