@@ -74,6 +74,21 @@ describe('keychain nativo: prebuilds via optionalDependencies (#74)', () => {
       expect(scripts[hook], `script "${hook}" não deve existir (evita node-gyp)`).toBeUndefined();
     }
   });
+
+  it('cada plataforma alvo existe nas optionalDependencies REAIS do @napi-rs/keyring (pega typo)', () => {
+    // Um typo no triple (ex.: `-linux-x64-glibc`) passaria nos testes acima mas
+    // cairia em always-fallback silencioso. Valida contra o pacote instalado: as
+    // 4 alvo DEVEM ser um subconjunto das optionalDependencies do upstream.
+    const upstream = JSON.parse(
+      readFileSync(join(ROOT, 'node_modules', '@napi-rs', 'keyring', 'package.json'), 'utf8'),
+    ) as Manifest;
+    const upstreamPlatforms = Object.keys(upstream.optionalDependencies ?? {});
+    for (const pkg of TARGET_PREBUILDS) {
+      expect(upstreamPlatforms, `${pkg} deve ser um pacote de plataforma real do @napi-rs/keyring`).toContain(
+        pkg,
+      );
+    }
+  });
 });
 
 describe('keychain nativo: instalação sem node-gyp (#74)', () => {
