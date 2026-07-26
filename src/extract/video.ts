@@ -1,6 +1,13 @@
 /**
  * Extração da faixa de áudio de VÍDEO + pipeline vídeo→áudio→transcrição
- * (M4-07, #63, ADR-002).
+ * (M4-07, #63, ADR-002) + keyframe representativo (M4-08, #64).
+ *
+ * KEYFRAME (M4-08, #64): {@link extractVideoKeyframe} grava 1 frame JPEG no DIR DO
+ * ANEXO (ao lado do `original`, ADR-004), reusando o MESMO subprocesso seguro
+ * (sem shell, `-protocol_whitelist file`, env sanitizado, watchdog) — o keyframe é
+ * um EXTRA: sua falha (ffmpeg ausente/erro/timeout) NUNCA afeta a transcrição
+ * (degradação graciosa). O bundle apenas REFERENCIA o keyframe pelo cache path (via
+ * {@link ExtractionArtifact}); o binário jamais é embutido (o MCP é read-only/texto).
  *
  * REUSO (não reimplementação): a extração de áudio de um container de vídeo é a
  * MESMA operação ffmpeg da #60 — o ffmpeg já lida com mp4/mkv/webm e `-vn`
@@ -29,21 +36,44 @@
  * `exactOptionalPropertyTypes` respeitado (nenhuma chave opcional recebe `undefined`).
  */
 
-import { rm as fsRm } from 'node:fs/promises';
+import { mkdir as fsMkdir, rm as fsRm } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 
 import type { Logger } from '../client/index.js';
-import type { ExtractionResult } from '../contract.js';
+import type { ExtractionArtifact, ExtractionResult } from '../contract.js';
 
 import {
   convertAudioToWav,
   type ConvertAudioToWavOptions,
+  type FfmpegInvocation,
+  type FfmpegRunner,
   type WavConversionFailure,
   type WavConversionResult,
 } from './audio.js';
 import type { ExtractOptions, Extractor } from './dispatcher.js';
+import { findFfmpeg } from './ffmpeg.js';
+import { runWithWatchdog, sanitizedEnv } from './subprocess.js';
 
 /** Identificador do pipeline (entra em metadados de resultados de falha da conversão). */
 const PIPELINE_EXTRACTOR_ID = 'video-transcribe';
+
+/** Nome-base fixo do keyframe gravado no dir do anexo (ADR-004: 1 por id+digest). */
+const KEYFRAME_BASENAME = 'keyframe.jpg';
+
+/** MIME do keyframe extraído (JPEG) — vira o `mime` do artefato no bundle. */
+const KEYFRAME_MIME = 'image/jpeg';
+
+/** Tipo do artefato de keyframe no {@link ExtractionArtifact} (referência no bundle). */
+const KEYFRAME_ARTIFACT_KIND = 'keyframe';
+
+/** Timeout default da extração do keyframe (ms) — 1 frame é rápido. */
+const DEFAULT_KEYFRAME_TIMEOUT_MS = 30_000;
+
+/** Graça entre `SIGTERM` e `SIGKILL` do keyframe (ms). */
+const KEYFRAME_KILL_GRACE_MS = 2_000;
+
+/** Teto do stdout/stderr do ffmpeg do keyframe (2 MiB) — conciso em `-loglevel error`. */
+const KEYFRAME_MAX_BUFFER_BYTES = 2 * 1024 * 1024;
 
 /** MIME default passado ao whisper quando o mime real do vídeo não é informado. */
 const DEFAULT_TRANSCRIBE_MIME = 'audio/wav';
@@ -114,6 +144,196 @@ export async function convertVideoToWav(
   return result;
 }
 
+/** Sucesso da extração do keyframe: caminho da imagem gravada no dir do anexo. */
+export interface KeyframeSuccess {
+  readonly status: 'done';
+  /** Caminho absoluto do keyframe (`.../attachments/<id>-<digest8>/keyframe.jpg`). */
+  readonly keyframePath: string;
+}
+
+/** Falha graciosa da extração do keyframe (ADR-002) — nunca lança, sempre traz motivo. */
+export interface KeyframeFailure {
+  readonly status: 'failed';
+  /** Motivo canônico (`ffmpeg-nao-instalado` | `erro-keyframe` | `timeout`). */
+  readonly reason: string;
+  /** Mensagem de erro subjacente, quando houver. */
+  readonly error?: string;
+  /** Dica de remediação (ex.: como instalar o ffmpeg). */
+  readonly hint?: string;
+}
+
+/** Resultado tipado da extração do keyframe. */
+export type KeyframeResult = KeyframeSuccess | KeyframeFailure;
+
+/** Opções (todas injetáveis para testes herméticos) de {@link extractVideoKeyframe}. */
+export interface ExtractKeyframeOptions {
+  /** Localizador do `ffmpeg`; default {@link findFfmpeg}. */
+  readonly findFfmpegBinary?: () => string | undefined;
+  /** Executor do subprocesso; default: watchdog real com `execFile`. */
+  readonly run?: FfmpegRunner;
+  /**
+   * Caminho de saída do keyframe; default: `keyframe.jpg` no MESMO dir do anexo de
+   * entrada (`dirname(inputPath)`), coexistindo com o `original` do anexo (ADR-004).
+   */
+  readonly outputPath?: string;
+  /** Criador de diretório (recursivo); default: `fs/promises.mkdir`. */
+  readonly mkdir?: (dir: string) => Promise<void>;
+  /** Remove o `.jpg` parcial na falha (best-effort); default: `fs/promises.rm` com `force`. */
+  readonly rm?: (path: string) => Promise<void>;
+  /** Timeout antes do `SIGTERM` (ms); default {@link DEFAULT_KEYFRAME_TIMEOUT_MS}. */
+  readonly timeoutMs?: number;
+  /** Graça `SIGTERM` → `SIGKILL` (ms); default {@link KEYFRAME_KILL_GRACE_MS}. */
+  readonly killGraceMs?: number;
+  /** Logger para o aviso de binário ausente; sem default de lib (ADR-003). */
+  readonly logger?: Logger;
+}
+
+/** Erro interno: o watchdog matou o ffmpeg do keyframe por estourar o timeout. */
+class KeyframeTimeoutError extends Error {
+  constructor(public readonly timeoutMs: number) {
+    super(`ffmpeg (keyframe) excedeu o timeout de ${timeoutMs}ms e foi encerrado`);
+    this.name = 'FfmpegTimeoutError';
+  }
+}
+
+/**
+ * Monta os argumentos do ffmpeg para extrair 1 frame representativo de `inputPath`
+ * como JPEG em `outputPath`. `-protocol_whitelist file` (opção de INPUT) precede o
+ * `-i` (ADR-002); `-frames:v 1` limita a saída a um único frame e `-q:v 2` fixa alta
+ * qualidade JPEG.
+ *
+ * Reason: extraímos o PRIMEIRO frame decodável (sem `-ss`) porque um seek a um ponto
+ * arbitrário falharia em vídeos muito curtos; 1 frame no início é suficiente como
+ * referência visual (MVP, ADR-002), sem sondar a duração (over-engineering).
+ *
+ * @param inputPath - Caminho absoluto do vídeo de entrada.
+ * @param outputPath - Caminho absoluto do keyframe JPEG de saída.
+ * @returns Lista de argumentos, na ordem exigida pelo ffmpeg.
+ */
+function buildKeyframeArgs(inputPath: string, outputPath: string): readonly string[] {
+  return [
+    '-nostdin', // não consome stdin (execução headless)
+    '-loglevel',
+    'error', // silencioso, exceto erros
+    '-protocol_whitelist',
+    'file', // ADR-002: só o arquivo local dado, nada remoto
+    '-i',
+    inputPath,
+    '-frames:v',
+    '1', // exatamente 1 frame
+    '-q:v',
+    '2', // alta qualidade JPEG
+    '-y', // sobrescreve o destino (nome fixo por anexo)
+    outputPath,
+  ];
+}
+
+/**
+ * Executor default do keyframe: delega ao watchdog compartilhado
+ * ({@link runWithWatchdog}) — ffmpeg SEM shell, env sanitizado e escalonamento
+ * `SIGTERM` → graça → `SIGKILL`. O estouro de timeout é sinalizado com
+ * {@link KeyframeTimeoutError} (nome `FfmpegTimeoutError`) para classificar a falha.
+ *
+ * @param invocation - Ver {@link FfmpegInvocation}.
+ * @returns Promessa resolvida no sucesso do ffmpeg.
+ */
+function defaultKeyframeRun(invocation: FfmpegInvocation): Promise<void> {
+  const { bin, args, env, timeoutMs, killGraceMs } = invocation;
+  return runWithWatchdog(
+    { bin, args, env, timeoutMs, killGraceMs, maxBuffer: KEYFRAME_MAX_BUFFER_BYTES },
+    { makeTimeoutError: (ms) => new KeyframeTimeoutError(ms) },
+  ).then(() => undefined);
+}
+
+/** `true` se o erro sinaliza estouro de timeout do watchdog (por nome, robusto a DI). */
+function isTimeoutError(error: unknown): boolean {
+  return error instanceof Error && error.name === 'FfmpegTimeoutError';
+}
+
+/**
+ * Extrai 1 keyframe representativo de um vídeo como JPEG no DIR DO ANEXO (ao lado do
+ * `original`, ADR-004), REUSANDO o subprocesso seguro compartilhado (sem shell,
+ * `-protocol_whitelist file`, env sanitizado, watchdog `SIGTERM`→`SIGKILL`). NUNCA
+ * lança (degradação graciosa, ADR-002): binário ausente, exit != 0 ou timeout viram
+ * `{ status: 'failed', reason }`. O keyframe é um EXTRA — sua falha jamais derruba o
+ * pipeline de transcrição (ver {@link extractVideoTranscript}).
+ *
+ * @param inputPath - Caminho absoluto do vídeo já baixado no cache (`.../original.mp4`).
+ * @param options - Deps injetáveis + timeouts + logger — ver {@link ExtractKeyframeOptions}.
+ * @returns `done` com `keyframePath` no sucesso; `failed` com motivo claro na falha.
+ * @example
+ * const kf = await extractVideoKeyframe('/cache/att/12-ab/original.mp4');
+ * if (kf.status === 'done') referenceInBundle(kf.keyframePath);
+ */
+export async function extractVideoKeyframe(
+  inputPath: string,
+  options: ExtractKeyframeOptions = {},
+): Promise<KeyframeResult> {
+  const findBinary = options.findFfmpegBinary ?? (() => findFfmpeg()?.path);
+  const bin = findBinary();
+  if (bin === undefined) {
+    options.logger?.warn(
+      'ffmpeg: binário não encontrado; keyframe do vídeo não será extraído ' +
+        '(a transcrição segue normalmente) — instale o ffmpeg (ver doctor)',
+    );
+    return {
+      status: 'failed',
+      reason: 'ffmpeg-nao-instalado',
+      hint: 'instale o ffmpeg; o keyframe é opcional e não bloqueia a transcrição',
+    };
+  }
+
+  const run = options.run ?? defaultKeyframeRun;
+  const outputPath = options.outputPath ?? join(dirname(inputPath), KEYFRAME_BASENAME);
+  const mkdir =
+    options.mkdir ?? ((dir: string): Promise<void> => fsMkdir(dir, { recursive: true }).then(() => undefined));
+  const rm = options.rm ?? ((path: string): Promise<void> => fsRm(path, { force: true }));
+  const timeoutMs = options.timeoutMs ?? DEFAULT_KEYFRAME_TIMEOUT_MS;
+  const killGraceMs = options.killGraceMs ?? KEYFRAME_KILL_GRACE_MS;
+  const args = buildKeyframeArgs(inputPath, outputPath);
+
+  try {
+    await mkdir(dirname(outputPath));
+    await run({ bin, args, env: sanitizedEnv(), timeoutMs, killGraceMs });
+    return { status: 'done', keyframePath: outputPath };
+  } catch (error) {
+    // O ffmpeg com `-y` pode ter criado um JPEG parcial; descarta-o (best-effort).
+    await rm(outputPath).catch(() => undefined);
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      status: 'failed',
+      reason: isTimeoutError(error) ? 'timeout' : 'erro-keyframe',
+      error: message,
+    };
+  }
+}
+
+/**
+ * Anexa o resultado do keyframe a um {@link ExtractionResult} da transcrição SEM
+ * jamais alterar seu `status`/`text` (o keyframe é um EXTRA, ADR-002). No sucesso,
+ * adiciona um {@link ExtractionArtifact} `keyframe` (cache path + mime) que o bundle
+ * REFERENCIA — o binário nunca é embutido. Na falha, registra `keyframeReason` em
+ * `metadata` como sinal diagnóstico, preservando o resultado da transcrição intacto.
+ *
+ * @param result - Resultado da transcrição (ou da falha de conversão) a enriquecer.
+ * @param keyframe - Desfecho da extração do keyframe.
+ * @returns Um novo {@link ExtractionResult} com o keyframe referenciado/anotado.
+ */
+function attachKeyframe(result: ExtractionResult, keyframe: KeyframeResult): ExtractionResult {
+  if (keyframe.status === 'done') {
+    const artifact: ExtractionArtifact = {
+      kind: KEYFRAME_ARTIFACT_KIND,
+      path: keyframe.keyframePath,
+      mime: KEYFRAME_MIME,
+    };
+    return { ...result, artifacts: [...(result.artifacts ?? []), artifact] };
+  }
+  return {
+    ...result,
+    metadata: { ...(result.metadata ?? {}), keyframeReason: keyframe.reason },
+  };
+}
+
 /** Opções de orquestração do pipeline {@link extractVideoTranscript}. */
 export interface ExtractVideoTranscriptOptions {
   /**
@@ -132,6 +352,13 @@ export interface ExtractVideoTranscriptOptions {
   readonly rm?: (path: string) => Promise<void>;
   /** MIME REAL do vídeo (para metadados do resultado); default {@link DEFAULT_TRANSCRIBE_MIME}. */
   readonly mime?: string;
+  /**
+   * Extração do keyframe (EXTRA do vídeo); default: {@link extractVideoKeyframe} com
+   * o `logger` repassado. Injetável para testes herméticos. Nunca afeta a transcrição.
+   */
+  readonly extractKeyframe?: (inputPath: string) => Promise<KeyframeResult>;
+  /** Opções repassadas à extração default do keyframe (binário, timeouts, outputPath). */
+  readonly keyframeOptions?: ExtractKeyframeOptions;
   /** Logger para avisos das etapas; sem default de lib (ADR-003). */
   readonly logger?: Logger;
 }
@@ -187,9 +414,28 @@ export async function extractVideoTranscript(
         ...(options.logger !== undefined ? { logger: options.logger } : {}),
       }));
 
+  // O keyframe é um EXTRA independente da transcrição (ADR-002): é extraído mesmo
+  // quando o vídeo não tem áudio (um frame ainda é uma referência visual útil) e
+  // JAMAIS derruba o pipeline — `extractVideoKeyframe` é gracioso e o `.catch`
+  // blinda contra um extrator injetado hostil que lance.
+  const extractKeyframe =
+    options.extractKeyframe ??
+    ((path: string): Promise<KeyframeResult> =>
+      extractVideoKeyframe(path, {
+        ...(options.keyframeOptions ?? {}),
+        ...(options.logger !== undefined ? { logger: options.logger } : {}),
+      }));
+  const keyframe = await extractKeyframe(inputPath).catch(
+    (error: unknown): KeyframeResult => ({
+      status: 'failed',
+      reason: 'erro-keyframe',
+      error: error instanceof Error ? error.message : String(error),
+    }),
+  );
+
   const conversion = await convert(inputPath);
   if (conversion.status === 'failed') {
-    return conversionFailure(mime, conversion);
+    return attachKeyframe(conversionFailure(mime, conversion), keyframe);
   }
 
   const rm = options.rm ?? ((path: string): Promise<void> => fsRm(path, { force: true }));
@@ -200,19 +446,23 @@ export async function extractVideoTranscript(
   };
 
   try {
-    return await options.transcriber.extract(wavPath, extractOptions);
+    const transcript = await options.transcriber.extract(wavPath, extractOptions);
+    return attachKeyframe(transcript, keyframe);
   } catch (error) {
     // Reason: o extrator whisper é gracioso por contrato, mas um transcritor
     // hostil/quebrado não pode derrubar o bundle — degrada para failed (ADR-002).
-    return {
-      status: 'failed',
-      mime,
-      metadata: {
-        extractorId: PIPELINE_EXTRACTOR_ID,
-        reason: 'erro-transcricao',
-        error: error instanceof Error ? error.message : String(error),
+    return attachKeyframe(
+      {
+        status: 'failed',
+        mime,
+        metadata: {
+          extractorId: PIPELINE_EXTRACTOR_ID,
+          reason: 'erro-transcricao',
+          error: error instanceof Error ? error.message : String(error),
+        },
       },
-    };
+      keyframe,
+    );
   } finally {
     // O WAV é um artefato intermediário do cache temp; descarta em qualquer
     // desfecho para não acumular lixo (convenção de `audio.ts`/`download.ts`).

@@ -35,9 +35,18 @@ import type { ExtractionResult } from '../../src/contract.js';
 
 import {
   convertVideoToWav,
+  extractVideoKeyframe,
   extractVideoTranscript,
   VIDEO_MIMES,
+  type KeyframeResult,
 } from '../../src/extract/video.js';
+
+/**
+ * Keyframe stub que FALHA graciosamente — injetado nos testes do pipeline que não
+ * exercitam o keyframe, mantendo-os herméticos (sem ffmpeg real do keyframe) e
+ * provando que a transcrição segue mesmo com o keyframe ausente.
+ */
+const noKeyframe = async (): Promise<KeyframeResult> => ({ status: 'failed', reason: 'sem-keyframe' });
 
 /** Captura a invocação passada ao runner ffmpeg injetado para asserção de args/env. */
 interface Captured {
@@ -211,6 +220,7 @@ describe('extractVideoTranscript: pipeline vídeo→áudio→transcrição num j
       mime: 'video/mp4',
       convert: async () => ({ status: 'done', wavPath: '/cache/tmp/abc.wav' }),
       transcriber: fakeTranscriber(call, transcript),
+      extractKeyframe: noKeyframe,
       rm,
     });
 
@@ -229,6 +239,7 @@ describe('extractVideoTranscript: pipeline vídeo→áudio→transcrição num j
     await extractVideoTranscript('/cache/att/clip.mp4', {
       convert: async () => ({ status: 'done', wavPath: '/cache/tmp/x.wav' }),
       transcriber: fakeTranscriber(call, { status: 'done', text: '' }),
+      extractKeyframe: noKeyframe,
       rm: async () => undefined,
     });
     expect(call.options?.mime).toBe('audio/wav');
@@ -248,6 +259,7 @@ describe('extractVideoTranscript: pipeline vídeo→áudio→transcrição num j
         hint: 'sem faixa de áudio',
       }),
       transcriber,
+      extractKeyframe: noKeyframe,
       rm,
     });
 
@@ -266,6 +278,7 @@ describe('extractVideoTranscript: pipeline vídeo→áudio→transcrição num j
         hint: 'instale o ffmpeg',
       }),
       transcriber: fakeTranscriber({}, { status: 'done', text: '' }),
+      extractKeyframe: noKeyframe,
       rm: async () => undefined,
     });
 
@@ -281,6 +294,7 @@ describe('extractVideoTranscript: pipeline vídeo→áudio→transcrição num j
       mime: 'video/mp4',
       convertOptions: { findFfmpegBinary: () => undefined, mkdir: async () => undefined },
       transcriber: fakeTranscriber(call, { status: 'done', text: 'nunca' }),
+      extractKeyframe: noKeyframe,
       rm: async () => undefined,
     });
 
@@ -302,6 +316,7 @@ describe('extractVideoTranscript: pipeline vídeo→áudio→transcrição num j
       mime: 'video/mp4',
       convert: async () => ({ status: 'done', wavPath: '/cache/tmp/y.wav' }),
       transcriber: fakeTranscriber(call, whisperFailed),
+      extractKeyframe: noKeyframe,
       rm,
     });
 
@@ -321,6 +336,7 @@ describe('extractVideoTranscript: pipeline vídeo→áudio→transcrição num j
           throw new Error('whisper crashou');
         },
       },
+      extractKeyframe: noKeyframe,
       rm,
     });
 
@@ -337,11 +353,201 @@ describe('extractVideoTranscript: pipeline vídeo→áudio→transcrição num j
     const result = await extractVideoTranscript('/cache/att/clip.mp4', {
       convert: async () => ({ status: 'done', wavPath: '/cache/tmp/w.wav' }),
       transcriber: fakeTranscriber({}, { status: 'done', text: 'ok' }),
+      extractKeyframe: noKeyframe,
       rm,
     });
 
     expect(result.status).toBe('done');
     expect(result.text).toBe('ok');
+  });
+});
+
+describe('extractVideoKeyframe: 1 frame representativo no dir do anexo (M4-08)', () => {
+  it('invoca ffmpeg SEM shell com -protocol_whitelist file (antes de -i), -frames:v 1 e -q:v 2', async () => {
+    const captured: Captured = {};
+    const result = await extractVideoKeyframe('/cache/att/12-ab/original.mp4', {
+      findFfmpegBinary: () => '/opt/homebrew/bin/ffmpeg',
+      mkdir: async () => undefined,
+      run: async (invocation) => {
+        captured.invocation = invocation;
+      },
+    });
+
+    expect(result.status).toBe('done');
+    if (result.status !== 'done') throw new Error('esperava done');
+
+    const args = captured.invocation?.args ?? [];
+    // ADR-002: whitelist de protocolo obrigatória e precedendo o `-i`.
+    expect(valueAfter(args, '-protocol_whitelist')).toBe('file');
+    expect(args.indexOf('-protocol_whitelist')).toBeLessThan(args.indexOf('-i'));
+    expect(valueAfter(args, '-i')).toBe('/cache/att/12-ab/original.mp4');
+    // Exatamente 1 frame, alta qualidade JPEG.
+    expect(valueAfter(args, '-frames:v')).toBe('1');
+    expect(valueAfter(args, '-q:v')).toBe('2');
+    // Env sanitizado é passado ao subprocesso (só PATH, sem segredos do pai).
+    expect(Object.keys(captured.invocation?.env ?? {})).toContain('PATH');
+  });
+
+  it('grava o keyframe no MESMO dir do anexo (keyframe.jpg ao lado do original)', async () => {
+    const result = await extractVideoKeyframe('/cache/att/12-ab/original.mp4', {
+      findFfmpegBinary: () => '/bin/ffmpeg',
+      mkdir: async () => undefined,
+      run: async () => undefined,
+    });
+
+    expect(result.status).toBe('done');
+    if (result.status !== 'done') throw new Error('esperava done');
+    // Referência no cache: dir do anexo + nome fixo do keyframe.
+    expect(result.keyframePath).toBe('/cache/att/12-ab/keyframe.jpg');
+  });
+
+  it('respeita outputPath injetado (para testes/caller que controla o destino)', async () => {
+    const captured: Captured = {};
+    const result = await extractVideoKeyframe('/cache/att/x/original.webm', {
+      findFfmpegBinary: () => '/bin/ffmpeg',
+      outputPath: '/custom/frame.jpg',
+      mkdir: async () => undefined,
+      run: async (invocation) => {
+        captured.invocation = invocation;
+      },
+    });
+
+    expect(result.status).toBe('done');
+    if (result.status !== 'done') throw new Error('esperava done');
+    expect(result.keyframePath).toBe('/custom/frame.jpg');
+    expect(captured.invocation?.args.at(-1)).toBe('/custom/frame.jpg');
+  });
+
+  it('binário ffmpeg ausente → failed/ffmpeg-nao-instalado com hint (degradação graciosa)', async () => {
+    const result = await extractVideoKeyframe('/cache/att/12-ab/original.mp4', {
+      findFfmpegBinary: () => undefined,
+      run: async () => undefined,
+      mkdir: async () => undefined,
+    });
+
+    expect(result.status).toBe('failed');
+    if (result.status !== 'failed') throw new Error('esperava failed');
+    expect(result.reason).toBe('ffmpeg-nao-instalado');
+    expect(result.hint).toBeDefined();
+  });
+
+  it('erro do ffmpeg → failed/erro-keyframe e remove o JPEG parcial (best-effort)', async () => {
+    const rm = vi.fn(async () => undefined);
+    const result = await extractVideoKeyframe('/cache/att/12-ab/original.mp4', {
+      findFfmpegBinary: () => '/bin/ffmpeg',
+      mkdir: async () => undefined,
+      rm,
+      run: async () => {
+        throw new Error('Invalid data found when processing input');
+      },
+    });
+
+    expect(result.status).toBe('failed');
+    if (result.status !== 'failed') throw new Error('esperava failed');
+    expect(result.reason).toBe('erro-keyframe');
+    expect(result.error).toContain('Invalid data');
+    expect(rm).toHaveBeenCalledWith('/cache/att/12-ab/keyframe.jpg');
+  });
+
+  it('timeout do runner → failed/timeout', async () => {
+    const result = await extractVideoKeyframe('/cache/att/12-ab/original.mp4', {
+      findFfmpegBinary: () => '/bin/ffmpeg',
+      mkdir: async () => undefined,
+      rm: async () => undefined,
+      run: async () => {
+        const err = new Error('ffmpeg (keyframe) excedeu o timeout de 1000ms e foi encerrado');
+        err.name = 'FfmpegTimeoutError';
+        throw err;
+      },
+    });
+
+    expect(result.status).toBe('failed');
+    if (result.status !== 'failed') throw new Error('esperava failed');
+    expect(result.reason).toBe('timeout');
+  });
+});
+
+describe('extractVideoTranscript: keyframe é um EXTRA que não afeta a transcrição', () => {
+  it('keyframe done → resultado ganha artifact keyframe (cache path + mime), transcrição intacta', async () => {
+    const call: TranscribeCall = {};
+    const result = await extractVideoTranscript('/cache/att/12-ab/original.mp4', {
+      mime: 'video/mp4',
+      convert: async () => ({ status: 'done', wavPath: '/cache/tmp/a.wav' }),
+      transcriber: fakeTranscriber(call, { status: 'done', text: 'olá', mime: 'video/mp4' }),
+      extractKeyframe: async () => ({ status: 'done', keyframePath: '/cache/att/12-ab/keyframe.jpg' }),
+      rm: async () => undefined,
+    });
+
+    // Transcrição preservada.
+    expect(result.status).toBe('done');
+    expect(result.text).toBe('olá');
+    // Keyframe REFERENCIADO como artefato (cache path), nunca o binário.
+    const keyframe = result.artifacts?.find((a) => a.kind === 'keyframe');
+    expect(keyframe?.path).toBe('/cache/att/12-ab/keyframe.jpg');
+    expect(keyframe?.mime).toBe('image/jpeg');
+  });
+
+  it('keyframe falho NÃO afeta a transcrição: status/texto preservados + keyframeReason em metadata', async () => {
+    const call: TranscribeCall = {};
+    const result = await extractVideoTranscript('/cache/att/12-ab/original.mp4', {
+      mime: 'video/mp4',
+      convert: async () => ({ status: 'done', wavPath: '/cache/tmp/b.wav' }),
+      transcriber: fakeTranscriber(call, { status: 'done', text: 'transcrição ok' }),
+      extractKeyframe: async () => ({ status: 'failed', reason: 'erro-keyframe' }),
+      rm: async () => undefined,
+    });
+
+    expect(result.status).toBe('done');
+    expect(result.text).toBe('transcrição ok');
+    expect(result.artifacts).toBeUndefined();
+    expect(result.metadata?.keyframeReason).toBe('erro-keyframe');
+  });
+
+  it('extrator de keyframe que LANÇA não derruba o pipeline (transcrição segue)', async () => {
+    const result = await extractVideoTranscript('/cache/att/12-ab/original.mp4', {
+      mime: 'video/mp4',
+      convert: async () => ({ status: 'done', wavPath: '/cache/tmp/c.wav' }),
+      transcriber: fakeTranscriber({}, { status: 'done', text: 'resiliente' }),
+      extractKeyframe: async () => {
+        throw new Error('ffmpeg do keyframe explodiu');
+      },
+      rm: async () => undefined,
+    });
+
+    expect(result.status).toBe('done');
+    expect(result.text).toBe('resiliente');
+    expect(result.metadata?.keyframeReason).toBe('erro-keyframe');
+  });
+
+  it('keyframe é anexado mesmo quando o vídeo não tem áudio (conversão falha, frame ainda vale)', async () => {
+    const result = await extractVideoTranscript('/cache/att/12-ab/original.mp4', {
+      mime: 'video/mp4',
+      convert: async () => ({ status: 'failed', reason: 'video-sem-audio', hint: 'sem áudio' }),
+      transcriber: fakeTranscriber({}, { status: 'done', text: 'nunca' }),
+      extractKeyframe: async () => ({ status: 'done', keyframePath: '/cache/att/12-ab/keyframe.jpg' }),
+      rm: async () => undefined,
+    });
+
+    expect(result.status).toBe('failed');
+    expect(result.metadata?.reason).toBe('video-sem-audio');
+    // Mesmo sem áudio, o keyframe (referência visual) é anexado.
+    expect(result.artifacts?.[0]?.path).toBe('/cache/att/12-ab/keyframe.jpg');
+  });
+
+  it('sem extractKeyframe injetado, o wiring default usa keyframeOptions (ffmpeg ausente → keyframeReason)', async () => {
+    const call: TranscribeCall = {};
+    const result = await extractVideoTranscript('/cache/att/12-ab/original.mp4', {
+      mime: 'video/mp4',
+      convert: async () => ({ status: 'done', wavPath: '/cache/tmp/d.wav' }),
+      transcriber: fakeTranscriber(call, { status: 'done', text: 'ok' }),
+      keyframeOptions: { findFfmpegBinary: () => undefined, mkdir: async () => undefined },
+      rm: async () => undefined,
+    });
+
+    // Transcrição segue normalmente; o keyframe ausente vira só um diagnóstico.
+    expect(result.status).toBe('done');
+    expect(result.text).toBe('ok');
+    expect(result.metadata?.keyframeReason).toBe('ffmpeg-nao-instalado');
   });
 });
 

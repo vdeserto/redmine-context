@@ -214,17 +214,39 @@ function renderChildren(issue: Issue): string {
 }
 
 /**
+ * Renderiza as linhas de "Artefatos" de uma extração (M4-08) — ex.: o keyframe de
+ * vídeo. Emite só a REFERÊNCIA (tipo + caminho no cache local); o binário NUNCA é
+ * embutido (ADR-002). O caminho é dado NOSSO (deriva de id/digest hex do anexo),
+ * portanto fora de `<untrusted-content>`. A URL do Redmine do anexo já consta no
+ * bloco do anexo (linha "URL"), completando a referência path-de-cache + URL.
+ *
+ * @param artifacts - Artefatos derivados da extração.
+ * @returns Linhas Markdown a concatenar ao bloco do anexo (vazio se não houver).
+ */
+function renderArtifacts(artifacts: ExtractionResult['artifacts']): string[] {
+  if (artifacts === undefined || artifacts.length === 0) return [];
+  const lines = ['  - Artefatos:'];
+  for (const art of artifacts) {
+    const mime = art.mime === undefined ? '' : ` (${art.mime})`;
+    lines.push(`    - ${art.kind}: ${art.path}${mime}`);
+  }
+  return lines;
+}
+
+/**
  * Renderiza a seção "Texto extraído" de um anexo (M3-10). O texto de OCR é
  * conteúdo DERIVADO do anexo, logo isolado dentro de `<untrusted-content>`. Quando
  * não há texto (skip/falha/unsupported), mostra `status` + `reason`/`hint` — assim
  * o bundle continua saindo e, no caso de tesseract ausente, DIZ como instalar.
+ * Artefatos derivados (keyframe, M4-08) são REFERENCIADOS ao final, sem embutir.
  *
  * @param result - Resultado da extração do anexo.
  * @returns Linhas Markdown da seção (para concatenar ao bloco do anexo).
  */
 function renderExtraction(result: ExtractionResult): string[] {
+  const artifacts = renderArtifacts(result.artifacts);
   if (typeof result.text === 'string' && result.text.trim() !== '') {
-    return [`  - Texto extraído (${result.status}):`, fenceBlock(result.text)];
+    return [`  - Texto extraído (${result.status}):`, fenceBlock(result.text), ...artifacts];
   }
   const lines = [`  - Texto extraído (${result.status}):`];
   const reason = result.metadata?.['reason'];
@@ -233,8 +255,10 @@ function renderExtraction(result: ExtractionResult): string[] {
   // `hint` é texto NOSSO (não do Redmine) — ex.: instruções de instalação; fica
   // fora da fence untrusted por ser confiável.
   if (typeof hint === 'string') lines.push(`    - ${hint}`);
-  if (typeof reason !== 'string' && typeof hint !== 'string') lines.push('    - _(sem texto)_');
-  return lines;
+  if (typeof reason !== 'string' && typeof hint !== 'string' && artifacts.length === 0) {
+    lines.push('    - _(sem texto)_');
+  }
+  return [...lines, ...artifacts];
 }
 
 /**
