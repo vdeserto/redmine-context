@@ -21,7 +21,12 @@
  * `src/surfaces/**` e nunca usa `console.*` — avisos vão pelo {@link Logger}.
  */
 
-import { buildAttachmentKey, type AttachmentCacheKey, type CacheStore } from './cache/index.js';
+import {
+  buildAttachmentKey,
+  serializeCacheKey,
+  type AttachmentCacheKey,
+  type CacheStore,
+} from './cache/index.js';
 import type { Logger } from './client/index.js';
 import type { Attachment, ExtractionResult, Issue } from './contract.js';
 import { probableMime, toExtractorConfig } from './extract-issue-attachments.js';
@@ -157,27 +162,104 @@ export interface QueueBackgroundOptions {
   logger?: Logger;
   /** Sinal de cancelamento propagado à fila e aos jobs (#69). */
   signal?: AbortSignal;
+  /**
+   * Store attachment-level onde o resultado do job de background é PERSISTIDO ao
+   * concluir (#71), sob a MESMA chave que a leitura cache-first busca. Fecha o
+   * loop do #70: a 2ª chamada (pós-conclusão) acerta o cache e devolve o resultado
+   * completo — e uma FALHA vira `failed` PERSISTIDO, nunca `processing` eterno.
+   * Ausente = comportamento #70 (fire-and-forget sem persistência de fechamento).
+   */
+  store?: CacheStore<ExtractionResult>;
 }
 
 /**
- * Consome, em segundo plano, as transições de uma fila de background — sem
- * bloquear o chamador. Falhas/cancelamentos viram avisos; nada é relançado.
+ * Constrói um {@link ExtractionResult} `failed` para PERSISTIR quando o job de
+ * background falha (compute lança/rejeita). É o que impede o `processing` eterno:
+ * sem um `failed` no cache, a próxima chamada re-dispararia o job em loop.
  *
- * @param events - Sequência de transições de {@link runQueue}.
- * @param attachmentId - Id do anexo (para compor a mensagem de log).
+ * @param reason - Motivo legível da falha (mensagem do erro/`reason` da fila).
+ * @returns Resultado `failed` com o motivo preservado no `metadata`.
+ */
+function backgroundFailedResult(reason: string | undefined): ExtractionResult {
+  return {
+    status: 'failed',
+    metadata: {
+      reason: 'background-extracao-falhou',
+      error: reason ?? 'motivo desconhecido',
+    },
+  };
+}
+
+/**
+ * Grava `value` no cache sob `key` APENAS se ainda não houver valor — idempotente
+ * e sem clobber. Uma falha de IO do próprio cache vira aviso (nunca derruba o job
+ * de background). É o ponto que fecha o loop do #71: garante que, após o job, a
+ * chave attachment-level NUNCA fique vazia (senão a próxima chamada re-dispara).
+ *
+ * @param store - Store attachment-level a persistir.
+ * @param key - Chave attachment-level (idêntica à lida no cache-first).
+ * @param value - Resultado a gravar quando a chave está ausente.
+ * @param attachmentId - Id do anexo (para compor a mensagem de aviso).
  * @param logger - Sink de avisos; ausente = silencioso.
  */
-async function drainDetached(
-  events: AsyncIterable<QueueEvent<ExtractionResult>>,
+async function persistIfAbsent(
+  store: CacheStore<ExtractionResult>,
+  key: AttachmentCacheKey,
+  value: ExtractionResult,
   attachmentId: number,
   logger: Logger | undefined,
 ): Promise<void> {
   try {
+    const existing = await store.get(key);
+    if (existing !== undefined) {
+      return;
+    }
+    await store.put(key, value);
+  } catch (error) {
+    logger?.warn(
+      `cache-first: falha ao persistir o resultado do anexo #${attachmentId}: ${messageOf(error)}`,
+    );
+  }
+}
+
+/**
+ * Consome, em segundo plano, as transições de uma fila de background — sem
+ * bloquear o chamador — e FECHA O LOOP do #71: quando `store` é dado, PERSISTE o
+ * resultado do job sob a chave do alvo para que a 2ª chamada acerte o cache.
+ *
+ * - `done`: grava o resultado (idempotente/if-absent). Cobre o caso em que o
+ *   pipeline devolveu `failed` capturado por anexo SEM persistir — sem isso a
+ *   chave ficaria vazia e a próxima chamada re-dispararia (processing eterno).
+ * - `failed`: avisa e PERSISTE um `failed`, garantindo que uma falha do job vire
+ *   `failed` no cache — NUNCA `processing` para sempre.
+ *
+ * Falhas/cancelamentos nunca são relançados (a resposta MCP já voltou).
+ *
+ * @param events - Sequência de transições de {@link runQueue}.
+ * @param target - Alvo do cache-miss (anexo + chave attachment-level).
+ * @param logger - Sink de avisos; ausente = silencioso.
+ * @param store - Store onde persistir o resultado de fechamento; ausente = não persiste.
+ */
+async function drainDetached(
+  events: AsyncIterable<QueueEvent<ExtractionResult>>,
+  target: BackgroundExtractionTarget,
+  logger: Logger | undefined,
+  store: CacheStore<ExtractionResult> | undefined,
+): Promise<void> {
+  const attachmentId = target.attachment.id;
+  try {
     for await (const event of events) {
-      if (event.status === 'failed') {
+      if (event.status === 'done') {
+        if (store !== undefined && event.result !== undefined) {
+          await persistIfAbsent(store, target.key, event.result, attachmentId, logger);
+        }
+      } else if (event.status === 'failed') {
         logger?.warn(
           `cache-first: extracao em background do anexo #${attachmentId} falhou: ${event.reason ?? 'motivo desconhecido'}`,
         );
+        if (store !== undefined) {
+          await persistIfAbsent(store, target.key, backgroundFailedResult(event.reason), attachmentId, logger);
+        }
       }
     }
   } catch (error) {
@@ -193,21 +275,36 @@ async function drainDetached(
  * resposta MCP. O `AbortSignal` da fila é propagado ao `compute` via
  * {@link JobContext.signal} (#69), pronto para o kill de subprocesso do #68.
  *
+ * DEDUP DE IN-FLIGHT (#71): o dispatcher mantém um registro dos jobs em andamento
+ * POR CHAVE attachment-level. Uma 2ª chamada para um anexo cujo job ainda processa
+ * NÃO dispara um job duplicado — reusa o que já corre. O registro é limpo quando o
+ * job conclui (via `finally`), liberando futuras re-extrações (ex.: cache invalidado).
+ *
  * @param compute - Executa a extração real do anexo — ver {@link BackgroundCompute}.
- * @param options - Logger e signal opcionais — ver {@link QueueBackgroundOptions}.
+ * @param options - Logger/signal/store opcionais — ver {@link QueueBackgroundOptions}.
  * @returns Um dispatcher fire-and-forget para injetar em {@link CacheFirstExtractionOptions.background}.
  * @example
  * const background = makeQueueBackgroundExtractor(async (target) => {
  *   const map = await extractIssueAttachments(http, single, { store, registry, instanceUrl });
  *   return map.get(target.attachment.id) ?? processingResult();
- * });
+ * }, { store });
  */
 export function makeQueueBackgroundExtractor(
   compute: BackgroundCompute,
   options: QueueBackgroundOptions = {},
 ): BackgroundExtractor {
-  const { logger, signal } = options;
+  const { logger, signal, store } = options;
+  // Registro de jobs em andamento por chave serializada: dedup de disparo (#71).
+  const inFlight = new Map<string, Promise<void>>();
+
   return (target: BackgroundExtractionTarget): void => {
+    const keyId = serializeCacheKey(target.key);
+    // Dedup: se já há um job em andamento para esta chave, não dispara outro —
+    // reusa o existente (evita reprocessar o mesmo anexo em chamadas concorrentes).
+    if (inFlight.has(keyId)) {
+      return;
+    }
+
     const job: QueueJob<ExtractionResult> = {
       id: `attachment:${target.attachment.id}`,
       run: (context) => compute(target, context.signal),
@@ -216,8 +313,13 @@ export function makeQueueBackgroundExtractor(
       ...(logger !== undefined ? { logger } : {}),
       ...(signal !== undefined ? { signal } : {}),
     };
-    // Fire-and-forget: consome as transições em segundo plano; NUNCA bloqueia
-    // nem relança (a resposta MCP já voltou com `processing`).
-    void drainDetached(runQueue([job], queueOptions), target.attachment.id, logger);
+    // Fire-and-forget: consome as transições em segundo plano (persistindo o
+    // resultado de fechamento no `store`, #71); NUNCA bloqueia nem relança (a
+    // resposta MCP já voltou com `processing`). Ao concluir, libera a chave.
+    const settled = drainDetached(runQueue([job], queueOptions), target, logger, store).finally(() => {
+      inFlight.delete(keyId);
+    });
+    inFlight.set(keyId, settled);
+    void settled;
   };
 }
