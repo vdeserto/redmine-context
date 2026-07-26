@@ -10,6 +10,7 @@
  * módulo interno é importado aqui (regra eslint `no-restricted-imports`).
  */
 
+import { realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
 import { runDoctor, runIssue, runLogin } from './commands.js';
@@ -204,8 +205,13 @@ async function dispatch(argv: string[], deps: RunDeps): Promise<number> {
 }
 
 /* c8 ignore start -- wire de execução; coberto pelo teste E2E real (#20). */
+// O npm expõe o `bin` como SYMLINK (node_modules/.bin/redmine-context) — é assim
+// que `npx` e `npm i -g` invocam. `import.meta.url` é o realpath do arquivo, mas
+// `process.argv[1]` é o caminho do symlink; sem resolver o realpath, o guard não
+// dispararia via npx e o CLI/MCP sairia vazio (#76). `realpathSync` alinha os dois.
 const invokedPath = process.argv[1];
-if (invokedPath !== undefined && import.meta.url === pathToFileURL(invokedPath).href) {
+const invokedRealPath = invokedPath !== undefined ? realpathSync(invokedPath) : undefined;
+if (invokedRealPath !== undefined && import.meta.url === pathToFileURL(invokedRealPath).href) {
   run(process.argv.slice(2)).then(
     (code) => process.exit(code),
     (error: unknown) => {

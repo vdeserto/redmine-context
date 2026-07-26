@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, realpathSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, readFileSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -32,6 +32,7 @@ interface PackResult {
 let tarballFiles: readonly string[] = [];
 /** Caminho do entrypoint do bin extraído do tarball. */
 let extractedBin = '';
+let binViaSymlink = '';
 
 beforeAll(() => {
   const tmp = mkdtempSync(join(tmpdir(), 'rc-pack-'));
@@ -56,11 +57,14 @@ beforeAll(() => {
   execFileSync('tar', ['-xf', join(tmp, meta.filename), '-C', tmp]);
   const pkgDir = join(tmp, 'package');
   symlinkSync(join(ROOT, 'node_modules'), join(pkgDir, 'node_modules'), 'dir');
-  // realpathSync: em macOS `tmpdir()` é /var → /private/var (symlink). O node
-  // resolve `import.meta.url` pelo realpath, mas `process.argv[1]` preserva o
-  // caminho passado — se divergirem, o guard de auto-invocação do bin não
-  // dispara. Passamos o realpath para que argv[1] case com import.meta.url.
-  extractedBin = realpathSync(join(pkgDir, 'dist', 'surfaces', 'cli', 'main.js'));
+  extractedBin = join(pkgDir, 'dist', 'surfaces', 'cli', 'main.js');
+  // CRÍTICO (#76): o npm expõe o bin como SYMLINK (node_modules/.bin/redmine-context)
+  // — é assim que `npx`/`npm i -g` invocam. Executamos o bin por um symlink análogo
+  // (NÃO pelo realpath) para reproduzir a divergência argv[1]=symlink vs.
+  // import.meta.url=realpath. Rodar o realpath direto MASCARARIA o bug do guard de
+  // auto-invocação (o CLI sairia vazio via npx). O guard resolve o realpath de argv[1].
+  binViaSymlink = join(tmp, 'redmine-context');
+  symlinkSync(extractedBin, binViaSymlink);
 }, 180_000);
 
 describe('empacotamento: conteúdo do tarball (files/exports)', () => {
@@ -102,7 +106,7 @@ describe('empacotamento: conteúdo do tarball (files/exports)', () => {
     const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')) as {
       readonly version: string;
     };
-    const version = execFileSync('node', [extractedBin, '--version'], { encoding: 'utf8' });
+    const version = execFileSync('node', [binViaSymlink, '--version'], { encoding: 'utf8' });
     expect(version.trim()).toBe(pkg.version);
   });
 });
@@ -115,13 +119,13 @@ describe('empacotamento: bin executável (npx)', () => {
 
   it('roda --help do tarball com exit 0', () => {
     // execFileSync lança se o exit code != 0; sucesso ⇒ exit 0.
-    const out = execFileSync('node', [extractedBin, '--help'], { encoding: 'utf8' });
+    const out = execFileSync('node', [binViaSymlink, '--help'], { encoding: 'utf8' });
     expect(out).toContain('Uso:');
     expect(out).not.toMatch(/claude|gpt|openai|copilot/i);
   }, 60_000);
 
   it('roda --version do tarball com exit 0 e imprime semver', () => {
-    const out = execFileSync('node', [extractedBin, '--version'], { encoding: 'utf8' });
+    const out = execFileSync('node', [binViaSymlink, '--version'], { encoding: 'utf8' });
     expect(out.trim()).toMatch(/^\d+\.\d+\.\d+$/);
   }, 60_000);
 });
