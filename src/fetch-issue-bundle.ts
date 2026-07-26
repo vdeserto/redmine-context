@@ -135,7 +135,7 @@ export async function* fetchIssueBundle(
             ...(options.cacheDir !== undefined ? { cacheDir: options.cacheDir } : {}),
           });
           return computed.get(target.attachment.id) ?? processingResult();
-        });
+        }, { store });
       extractions = await extractIssueAttachmentsCacheFirst(issue, {
         instanceUrl: baseUrl,
         registry,

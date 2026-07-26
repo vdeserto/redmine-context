@@ -206,7 +206,10 @@ export async function fetchAttachmentTextCacheFirst(
         });
         return computed.get(attachmentId) ?? processingResult();
       },
-      logger !== undefined ? { logger } : {},
+      // Passa o `store` para o dispatcher PERSISTIR o resultado de fechamento
+      // (done/failed) sob a mesma chave lida no cache-first (#71): a 2ª chamada
+      // acerta o cache e uma falha vira `failed` — nunca `processing` eterno.
+      { store, ...(logger !== undefined ? { logger } : {}) },
     );
 
   const map = await extractIssueAttachmentsCacheFirst(single, {
