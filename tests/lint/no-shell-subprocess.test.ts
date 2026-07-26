@@ -32,6 +32,14 @@ describe('lint: proíbe subprocesso com shell (ADR-002 / #83)', () => {
     expect(rules).toContain(RULE);
   });
 
+  it('pega `shell: "<caminho>"` (shell por string, ex.: /bin/bash) em child_process', async () => {
+    const rules = await lint(
+      "import { execFile } from 'node:child_process';\n" +
+        "execFile('ls', ['-la'], { shell: '/bin/bash' }, () => {});\n",
+    );
+    expect(rules).toContain(RULE);
+  });
+
   it('pega o import de `exec` de node:child_process', async () => {
     const rules = await lint("import { exec } from 'node:child_process';\nexec('ls -la');\n");
     expect(rules).toContain(RULE);

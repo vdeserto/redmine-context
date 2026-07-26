@@ -26,6 +26,7 @@
  */
 
 import { readdirSync } from 'node:fs';
+import { join } from 'node:path';
 
 import {
   detectFfmpegVersion as defaultDetectFfmpegVersion,
@@ -313,7 +314,7 @@ function diagnoseWhisperModel(
   if (gguf === undefined) {
     return makeDiagnosis('modelo whisper (GGUF)', hint, undefined);
   }
-  return makeDiagnosis('modelo whisper (GGUF)', hint, { path: `${modelDir}/${gguf}` });
+  return makeDiagnosis('modelo whisper (GGUF)', hint, { path: join(modelDir, gguf) });
 }
 
 /**
