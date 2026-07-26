@@ -1,0 +1,77 @@
+# CI base — matriz 3 SOs (typecheck + lint + unit tests) — issue #77 (M5-04)
+#
+# Cada entrada da matriz gera um status check separado no PR:
+#   ci (ubuntu-latest) · ci (macos-latest) · ci (windows-latest)
+#
+# Tornar os checks OBRIGATÓRIOS para merge (proteção de branch) é config do
+# repositório — NÃO é feito por este workflow. Documentado abaixo; o dono do
+# repo executa quando decidir. Exemplo (protege `main` exigindo os 3 checks):
+#
+#   gh api -X PUT repos/vdeserto/redmine-context/branches/main/protection \
+#     -H "Accept: application/vnd.github+json" \
+#     -f 'required_status_checks[strict]=true' \
+#     -f 'required_status_checks[checks][][context]=ci (ubuntu-latest)' \
+#     -f 'required_status_checks[checks][][context]=ci (macos-latest)' \
+#     -f 'required_status_checks[checks][][context]=ci (windows-latest)' \
+#     -F 'enforce_admins=true' \
+#     -F 'required_pull_request_reviews=null' \
+#     -F 'restrictions=null'
+#
+# (Repita trocando `main` por `milestone/M5` etc. para proteger as branches de milestone.)
+
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - 'milestone/**'
+  pull_request:
+    branches:
+      - main
+      - 'milestone/**'
+
+# Cancela runs redundantes do mesmo ref (economiza minutos de runner).
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: ci
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      # Não cancela os outros SOs se um falhar — cada SO reporta seu próprio status.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+        shell: bash
+
+      - name: Typecheck
+        run: npm run typecheck
+        shell: bash
+
+      - name: Lint
+        run: npm run lint
+        shell: bash
+
+      - name: Unit tests (with coverage)
+        run: npm test
+        shell: bash
