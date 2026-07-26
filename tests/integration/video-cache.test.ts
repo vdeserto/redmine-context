@@ -41,12 +41,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { buildMarkdownBundle } from '../../src/bundle/index.js';
-import {
-  buildAttachmentKey,
-  DiskCacheStore,
-  getOrCompute,
-  type ExtractorConfig,
-} from '../../src/cache/index.js';
+import { buildAttachmentKey, DiskCacheStore, getOrCompute } from '../../src/cache/index.js';
 import type { Attachment, ExtractionResult, Issue, Journal } from '../../src/contract.js';
 import {
   convertVideoToWav,
@@ -205,9 +200,14 @@ async function runVideoExtraction(
   spies: VideoSpies,
   ctx: RunContext,
 ): Promise<Map<number, ExtractionResult>> {
-  // Config do extrator na chave (ADR-004): trocar `model` invalida corretamente.
-  const config: ExtractorConfig = { version: WHISPER_VERSION, model: spies.model, params: {} };
-  const key = buildAttachmentKey({ instanceUrl: INSTANCE_URL, attachment, extractor: config });
+  // Chave attachment-level a partir do `extractorConfig` REAL do WhisperExtractor
+  // (ADR-004): o `model` deriva do `modelPath` de produção, então trocar o GGUF
+  // gera chave distinta pelo MESMO caminho que a produção usa — sem montar à mão.
+  const key = buildAttachmentKey({
+    instanceUrl: INSTANCE_URL,
+    attachment,
+    extractor: spies.transcriber.extractorConfig,
+  });
 
   const result = await getOrCompute(ctx.store, key, () =>
     extractVideoTranscript(ctx.videoPath, {

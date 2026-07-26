@@ -44,7 +44,7 @@
  */
 
 import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 
 import type { ExtractorParams } from '../cache/contract.js';
 import type { ExtractorConfig } from '../cache/keys.js';
@@ -241,8 +241,12 @@ export class WhisperExtractor implements Extractor {
   readonly id = EXTRACTOR_ID;
   readonly version: string;
   readonly supportedMimes = WHISPER_MIMES;
-  /** Modelo lógico (nome do GGUF) para a chave de cache (ADR-004). */
-  readonly model = EXTRACTOR_MODEL;
+  /**
+   * Modelo lógico (nome do GGUF) para a chave de cache (ADR-004). Derivado do
+   * `modelPath` (basename) quando dado, para que TROCAR o modelo gere chave
+   * attachment-level DISTINTA (#72); sem `modelPath`, cai no default pinado.
+   */
+  readonly model: string;
   /**
    * Parâmetros escalares da chave de cache (ADR-004). Vazio no auto-detect; com
    * idioma forçado (#62), `{ language }` — trocar o idioma gera chave distinta.
@@ -264,6 +268,10 @@ export class WhisperExtractor implements Extractor {
     this.version = options.version;
     this.binaryPath = options.binaryPath;
     this.modelPath = options.modelPath;
+    // O `model` da chave reflete o GGUF REAL em uso (basename do modelPath); assim
+    // trocar de modelo invalida a chave attachment-level (ADR-004, #72). Sem
+    // modelPath (modelo ausente), usa o nome pinado como rótulo estável.
+    this.model = options.modelPath !== undefined ? basename(options.modelPath) : EXTRACTOR_MODEL;
     this.language = options.language;
     // Idioma forçado entra no params da chave; auto-detect mantém params vazio (sem
     // injetar `undefined` — respeita `exactOptionalPropertyTypes`).
