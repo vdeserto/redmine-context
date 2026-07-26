@@ -27,6 +27,22 @@ redmine-context --version
 > usuário quando quiser OCR/transcrição. Rode `redmine-context doctor` para o
 > diagnóstico. Sem eles, o bundle de texto é gerado normalmente.
 
+### Keychain do sistema: prebuilds e fallback
+
+O keychain nativo (`@napi-rs/keyring`) é distribuído como **binários pré-compilados
+por plataforma**, publicados como `optionalDependencies`. Na instalação, o npm baixa
+apenas o prebuild da sua plataforma — **`node-gyp` nunca é acionado**, então não há
+toolchain de compilação (C/C++/Python) envolvida. As plataformas com prebuild
+declarado são `darwin-arm64`, `darwin-x64`, `linux-x64-gnu` e `win32-x64-msvc`.
+
+Em uma plataforma **sem prebuild** (por exemplo, Linux **musl**/Alpine, ou uma
+arquitetura exótica), o pacote opcional correspondente simplesmente **falha em
+silêncio** e o npm o ignora — a instalação continua verde, **sem erro e sem
+compilar nada**. Em tempo de execução, o módulo de credenciais detecta a ausência
+do binário (o import dinâmico falha de forma controlada), emite **um único aviso**
+e **degrada para o arquivo `0600`** da cascata do ADR-003 (keychain → arquivo →
+`REDMINE_API_KEY`). O login e o boot nunca são interrompidos por falta de keychain.
+
 ## Quickstart
 
 Do login ao contexto da issue no seu LLM, em três passos:
