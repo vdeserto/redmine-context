@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import { lstatSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -91,6 +91,10 @@ beforeAll(() => {
   // Instala o tarball local. spawnSync (não execFileSync) para capturar o LOG
   // COMPLETO mesmo se o install falhar — precisamos do log para a asserção e do
   // status para provar que o install em si teve sucesso.
+  // `--prefer-offline` usa o cache do npm (aquecido pelo `npm ci` do job) e só vai
+  // à rede para packuments ausentes; os `--fetch-retries`/timeouts toleram blips de
+  // rede num gate release-blocking (M1 do review). Hermetismo pleno (lockfile fixo no
+  // consumer + `--offline`) fica como follow-up se surgir flakiness.
   const install = spawnSync(
     'npm',
     [
@@ -99,6 +103,12 @@ beforeAll(() => {
       '--prefer-offline',
       '--no-audit',
       '--no-fund',
+      '--fetch-retries',
+      '5',
+      '--fetch-retry-mintimeout',
+      '2000',
+      '--fetch-retry-maxtimeout',
+      '60000',
       '--foreground-scripts',
       '--loglevel',
       'verbose',
@@ -140,16 +150,27 @@ describe('instalação limpa: sem toolchain nativo (#75)', () => {
   });
 });
 
-describe('instalação limpa: bin executável via symlink (npx) (#75)', () => {
-  it('expõe o bin como SYMLINK em node_modules/.bin (caminho npx)', () => {
-    expect(lstatSync(binViaSymlink).isSymbolicLink()).toBe(true);
+describe('instalação limpa: bin executável (npx) (#75)', () => {
+  // O npm expõe o bin de forma diferente por SO: SYMLINK Unix (executa o shebang
+  // com argv[1]=symlink) vs. shims `redmine-context.cmd`/`.ps1` no Windows (que
+  // chamam `node <realpath>`). Ambos são o caminho que `npx`/`npm i -g` usam.
+  const isWindows = process.platform === 'win32';
+
+  it('expõe o bin em node_modules/.bin (symlink no Unix; shim .cmd no Windows)', () => {
+    if (isWindows) {
+      expect(existsSync(`${binViaSymlink}.cmd`)).toBe(true);
+    } else {
+      expect(lstatSync(binViaSymlink).isSymbolicLink()).toBe(true);
+    }
   });
 
-  it('roda --help pelo symlink com exit 0 e imprime a ajuda', () => {
-    // Executa o próprio symlink (shebang + exec bit que o npm aplica): argv[1] é
-    // o caminho do symlink, reproduzindo o que `npx` faz. execFileSync lança se o
-    // exit code != 0 ⇒ sucesso implica exit 0.
-    const out = execFileSync(binViaSymlink, ['--help'], { encoding: 'utf8' });
+  it('roda --help pelo entrypoint instalado com exit 0 e imprime a ajuda', () => {
+    // Unix: executa o próprio symlink (argv[1]=symlink, reproduz o npx e exercita o
+    // guard de realpath do #76). Windows: o shim `.cmd` via `cmd /c` (sem shell:true
+    // — `cmd` é o programa; `/c` o argumento). execFileSync lança se exit != 0.
+    const out = isWindows
+      ? execFileSync('cmd', ['/c', `${binViaSymlink}.cmd`, '--help'], { encoding: 'utf8' })
+      : execFileSync(binViaSymlink, ['--help'], { encoding: 'utf8' });
     expect(out).toContain('Uso:');
     expect(out).toContain('redmine-context');
     // Rule #33 / ADR: nada de referências a ferramentas de IA na saída.
