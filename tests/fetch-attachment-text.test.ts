@@ -5,7 +5,14 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { fetchAttachmentText, AttachmentNotFoundError } from '../src/index.js';
+import {
+  fetchAttachmentText,
+  fetchAttachmentTextCacheFirst,
+  AttachmentNotFoundError,
+} from '../src/index.js';
+import type { CacheKey, CacheStore } from '../src/cache/index.js';
+import type { ExtractionResult } from '../src/index.js';
+import { ExtractorRegistry, type Extractor } from '../src/extract/index.js';
 
 /** Response mínima OK com corpo JSON, no formato que o client espera. */
 function jsonResponse(body: unknown): Response {
@@ -160,5 +167,107 @@ describe('fetchAttachmentText (orquestração get → normalize → extração d
     await expect(fetchAttachmentText({ ...baseOpts, issueId: 999, attachmentId: 77 })).rejects.toMatchObject({
       status: 404,
     });
+  });
+});
+
+/** Extrator fake para image/png (nunca executado no caminho cache-first). */
+function fakeImageExtractor(): Extractor {
+  return {
+    id: 'fake',
+    version: '1.0.0',
+    supportedMimes: ['image/png'],
+    extract: vi.fn(async (): Promise<ExtractionResult> => ({ status: 'done', text: 'X' })),
+  };
+}
+
+/** Store fake com `get` controlável; demais operações no-op. */
+function fakeStore(getImpl: () => Promise<ExtractionResult | undefined>): CacheStore<ExtractionResult> {
+  return {
+    get: vi.fn(getImpl),
+    put: vi.fn(async () => undefined),
+    invalidate: vi.fn(async () => undefined),
+    lock: vi.fn(async <T>(_k: CacheKey, critical: () => Promise<T>) => critical()),
+    gc: vi.fn(async () => undefined),
+  };
+}
+
+/** fetch que serve APENAS o JSON da issue (cache-first não baixa o binário). */
+function stubIssueOnly(payload: unknown): ReturnType<typeof vi.fn> {
+  const fetchMock = vi.fn(async () => jsonResponse(payload));
+  vi.stubGlobal('fetch', fetchMock);
+  return fetchMock;
+}
+
+describe('fetchAttachmentTextCacheFirst (M4-11 #70: cache-first, não-bloqueante)', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('cache-hit: devolve o texto já extraído IMEDIATAMENTE, sem baixar o anexo', async () => {
+    const fetchMock = stubIssueOnly(payloadWith([pngAttachment]));
+    const store = fakeStore(async () => ({ status: 'done', text: 'TEXTO-CACHEADO' }));
+
+    const result = await fetchAttachmentTextCacheFirst({
+      ...baseOpts,
+      attachmentId: 77,
+      registry: new ExtractorRegistry().register(fakeImageExtractor()),
+      store,
+      background: () => undefined,
+    });
+
+    expect(result.extraction.status).toBe('done');
+    expect(result.extraction.text).toBe('TEXTO-CACHEADO');
+    const downloads = fetchMock.mock.calls.filter((c) => String(c[0]).includes('/attachments/download/'));
+    expect(downloads).toHaveLength(0);
+  });
+
+  it('TIMER: cache-miss de mídia pesada retorna processing em < 5s (background que nunca resolve)', async () => {
+    stubIssueOnly(payloadWith([pngAttachment]));
+    const store = fakeStore(async () => undefined);
+    const background = vi.fn(() => {
+      void new Promise<never>(() => {
+        /* extração lenta simulada: jamais resolve */
+      });
+    });
+
+    const started = performance.now();
+    const result = await fetchAttachmentTextCacheFirst({
+      ...baseOpts,
+      attachmentId: 77,
+      registry: new ExtractorRegistry().register(fakeImageExtractor()),
+      store,
+      background,
+    });
+    const elapsedMs = performance.now() - started;
+
+    expect(elapsedMs).toBeLessThan(5000);
+    expect(result.extraction.status).toBe('processing');
+    expect(background).toHaveBeenCalledTimes(1);
+  });
+
+  it('anexo sem extrator: devolve unsupported (registry vazio), sem processing', async () => {
+    stubIssueOnly(payloadWith([txtAttachment]));
+
+    const result = await fetchAttachmentTextCacheFirst({
+      ...baseOpts,
+      attachmentId: 88,
+      registry: new ExtractorRegistry(),
+      store: fakeStore(async () => undefined),
+      background: () => undefined,
+    });
+
+    expect(result.extraction.status).toBe('unsupported');
+  });
+
+  it('anexo inexistente na issue: lança AttachmentNotFoundError tipado', async () => {
+    stubIssueOnly(payloadWith([pngAttachment]));
+
+    await expect(
+      fetchAttachmentTextCacheFirst({
+        ...baseOpts,
+        attachmentId: 999,
+        registry: new ExtractorRegistry().register(fakeImageExtractor()),
+        store: fakeStore(async () => undefined),
+        background: () => undefined,
+      }),
+    ).rejects.toBeInstanceOf(AttachmentNotFoundError);
   });
 });

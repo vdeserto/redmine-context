@@ -64,7 +64,7 @@ export interface ExtractIssueAttachmentsOptions {
  * @param attachment - Anexo do contrato.
  * @returns MIME provável, ou `undefined` se indeterminável.
  */
-function probableMime(attachment: Attachment): string | undefined {
+export function probableMime(attachment: Attachment): string | undefined {
   return mimeForExtension(attachment.filename) ?? attachment.content_type;
 }
 
@@ -75,7 +75,7 @@ function probableMime(attachment: Attachment): string | undefined {
  * @param extractor - Extrator resolvido pelo registry.
  * @returns Config `(version, model, params)` para {@link buildAttachmentKey}.
  */
-function toExtractorConfig(extractor: Extractor): ExtractorConfig {
+export function toExtractorConfig(extractor: Extractor): ExtractorConfig {
   return {
     version: extractor.version,
     model: extractor.model ?? extractor.id,
