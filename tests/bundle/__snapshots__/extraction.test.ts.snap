@@ -1,0 +1,63 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`bundle Markdown: extraction > snapshot do bundle com keyframe referenciado (DoD M4-08) 1`] = `
+"# Issue #100
+
+## Assunto
+
+<untrusted-content>
+Assunto
+</untrusted-content>
+
+## Metadados
+
+- **Projeto:** P
+- **Tracker:** T
+- **Status:** S
+- **Prioridade:** N
+- **Autor:** A
+- **Responsável:** (nenhum)
+- **Criada em:** 2026-07-20T09:00:00Z
+- **Atualizada em:** 2026-07-20T12:00:00Z
+
+## Descrição
+
+_(sem descrição)_
+
+## Custom Fields
+
+_(nenhum)_
+
+## Histórico
+
+_(nenhum)_
+
+## Relações
+
+_(nenhuma)_
+
+## Issue Pai
+
+_(nenhuma)_
+
+## Sub-issues
+
+_(nenhuma)_
+
+## Anexos
+
+- **Anexo #20** — 100 bytes
+  - Nome: <untrusted-content>clip.mp4</untrusted-content>
+  - URL: https://redmine.example/attachments/download/20/clip.mp4
+  - Texto extraído (done):
+<untrusted-content>
+transcricao do audio do video
+</untrusted-content>
+  - Artefatos:
+    - keyframe: /cache/rc/att/20-ab12cd34/keyframe.jpg (image/jpeg)
+
+---
+
+_Empacotado por redmine-context v0.1.0._
+"
+`;
