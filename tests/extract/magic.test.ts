@@ -42,10 +42,15 @@ describe('magic: detectMime (assinaturas por bytes)', () => {
     expect(detectMime(bytes(MAGIC.zip))).toBe('application/zip');
   });
 
-  it('RIFF sem o segmento WEBP em offset 8 NÃO é webp (segmento dupla-checado)', () => {
-    // RIFF de um WAV (áudio) começa igual, mas não tem "WEBP" no offset 8.
+  it('RIFF/WAVE em offset 8 é audio/wav, não webp (segmento dupla-checado)', () => {
+    // RIFF de um WAV (áudio) começa igual ao webp, mas tem "WAVE" no offset 8.
     const riffWav = bytes([0x52, 0x49, 0x46, 0x46, 0x24, 0x00, 0x00, 0x00, 0x57, 0x41, 0x56, 0x45]);
-    expect(detectMime(riffWav)).toBeUndefined();
+    expect(detectMime(riffWav)).toBe('audio/wav');
+  });
+
+  it('RIFF com subtipo desconhecido no offset 8 → undefined (nem webp, nem wav, nem avi)', () => {
+    const riffUnknown = bytes([0x52, 0x49, 0x46, 0x46, 0x24, 0x00, 0x00, 0x00, 0x58, 0x58, 0x58, 0x58]);
+    expect(detectMime(riffUnknown)).toBeUndefined();
   });
 
   it('classifica texto plausível (ASCII + acentos UTF-8) como text/plain', () => {
@@ -75,6 +80,59 @@ describe('magic: detectMime (assinaturas por bytes)', () => {
   });
 });
 
+describe('magic: contêineres de áudio/vídeo (M4-14/#73)', () => {
+  /** Monta uma box ISO-BMFF `ftyp` com a brand dada no offset 8. */
+  function ftyp(brand: string): Uint8Array {
+    const box = [0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70]; // size + 'ftyp'
+    for (const ch of brand) box.push(ch.charCodeAt(0));
+    box.push(0x00, 0x00, 0x00, 0x00); // minor version
+    return Uint8Array.from(box);
+  }
+
+  it('ISO-BMFF com brand de vídeo (isom/mp42/qt) → video/mp4', () => {
+    expect(detectMime(ftyp('isom'))).toBe('video/mp4');
+    expect(detectMime(ftyp('mp42'))).toBe('video/mp4');
+    expect(detectMime(ftyp('qt  '))).toBe('video/mp4');
+    expect(detectMime(ftyp('avc1'))).toBe('video/mp4');
+  });
+
+  it('ISO-BMFF com brand de áudio (M4A/M4B) → audio/mp4', () => {
+    expect(detectMime(ftyp('M4A '))).toBe('audio/mp4');
+    expect(detectMime(ftyp('M4B '))).toBe('audio/mp4');
+  });
+
+  it('ISO-BMFF sem a brand completa (amostra curta) cai em video/mp4 (default)', () => {
+    // 'ftyp' presente mas sem os 4 bytes da brand → não é áudio → vídeo por default.
+    const short = Uint8Array.from([0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70, 0x4d, 0x34]);
+    expect(detectMime(short)).toBe('video/mp4');
+  });
+
+  it('RIFF/AVI → video/x-msvideo', () => {
+    const avi = bytes([0x52, 0x49, 0x46, 0x46, 0x24, 0x00, 0x00, 0x00, 0x41, 0x56, 0x49, 0x20]);
+    expect(detectMime(avi)).toBe('video/x-msvideo');
+  });
+
+  it('MP3 com tag ID3 → audio/mpeg', () => {
+    const id3 = bytes([0x49, 0x44, 0x33, 0x04, 0x00, 0x00]);
+    expect(detectMime(id3)).toBe('audio/mpeg');
+  });
+
+  it('MP3 sem tag (frame sync 0xFF 0xFB) → audio/mpeg', () => {
+    expect(detectMime(bytes([0xff, 0xfb, 0x90, 0x00]))).toBe('audio/mpeg');
+    expect(detectMime(bytes([0xff, 0xf3, 0x00]))).toBe('audio/mpeg');
+    // JPEG (FF D8) NÃO deve ser confundido com frame sync (0xD8 & 0xE0 = 0xC0).
+    expect(detectMime(bytes([0xff, 0xd8, 0xff, 0xe0]))).toBe('image/jpeg');
+  });
+
+  it('Ogg (OggS) → audio/ogg', () => {
+    expect(detectMime(bytes([0x4f, 0x67, 0x67, 0x53, 0x00, 0x02]))).toBe('audio/ogg');
+  });
+
+  it('Matroska/WebM (EBML) → video/webm', () => {
+    expect(detectMime(bytes([0x1a, 0x45, 0xdf, 0xa3, 0x01, 0x00]))).toBe('video/webm');
+  });
+});
+
 describe('magic: mimeForExtension (apenas para aviso de mismatch)', () => {
   it('mapeia extensões conhecidas (case-insensitive)', () => {
     expect(mimeForExtension('photo.PNG')).toBe('image/png');
@@ -83,6 +141,15 @@ describe('magic: mimeForExtension (apenas para aviso de mismatch)', () => {
     expect(mimeForExtension('doc.pdf')).toBe('application/pdf');
     expect(mimeForExtension('sheet.docx')).toBe('application/zip');
     expect(mimeForExtension('notes.txt')).toBe('text/plain');
+    expect(mimeForExtension('clip.MP4')).toBe('video/mp4');
+    expect(mimeForExtension('screencast.mov')).toBe('video/mp4');
+    expect(mimeForExtension('recording.webm')).toBe('video/webm');
+    expect(mimeForExtension('capture.mkv')).toBe('video/webm');
+    expect(mimeForExtension('old.avi')).toBe('video/x-msvideo');
+    expect(mimeForExtension('voice.m4a')).toBe('audio/mp4');
+    expect(mimeForExtension('song.mp3')).toBe('audio/mpeg');
+    expect(mimeForExtension('rec.wav')).toBe('audio/wav');
+    expect(mimeForExtension('podcast.ogg')).toBe('audio/ogg');
   });
 
   it('extensão ausente ou não mapeada → undefined (sem mismatch a avisar)', () => {
