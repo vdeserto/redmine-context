@@ -11,7 +11,7 @@ vi.mock('node:child_process', () => ({ execFile: vi.fn() }));
 
 import { execFile } from 'node:child_process';
 
-import { detectFfmpegVersion, findFfmpeg } from '../../src/extract/ffmpeg.js';
+import { detectFfmpegVersion, findFfmpeg, findFfprobe } from '../../src/extract/ffmpeg.js';
 
 const mockExecFile = vi.mocked(execFile);
 
@@ -39,6 +39,21 @@ describe('extract/ffmpeg: findFfmpeg', () => {
 
   it('retorna undefined quando ausente', () => {
     expect(findFfmpeg({ platform: 'linux', pathValue: '/usr/bin', isExecutable: () => false })).toBeUndefined();
+  });
+});
+
+describe('extract/ffmpeg: findFfprobe', () => {
+  it('encontra o ffprobe via PATH injetado (ffprobe costuma vir junto do ffmpeg)', () => {
+    const found = findFfprobe({
+      platform: 'linux',
+      pathValue: '/usr/bin',
+      isExecutable: (p) => p === '/usr/bin/ffprobe',
+    });
+    expect(found).toEqual({ path: '/usr/bin/ffprobe' });
+  });
+
+  it('retorna undefined quando ausente', () => {
+    expect(findFfprobe({ platform: 'linux', pathValue: '/usr/bin', isExecutable: () => false })).toBeUndefined();
   });
 });
 

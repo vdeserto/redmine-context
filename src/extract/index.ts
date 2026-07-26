@@ -74,7 +74,13 @@ export {
   type WatchdogInvocation,
 } from './subprocess.js';
 
-export { detectFfmpegVersion, findFfmpeg, type FfmpegLocation } from './ffmpeg.js';
+export {
+  detectFfmpegVersion,
+  findFfmpeg,
+  findFfprobe,
+  type FfmpegLocation,
+  type FfprobeLocation,
+} from './ffmpeg.js';
 
 export {
   audioTempDir,
@@ -104,12 +110,20 @@ export {
   convertVideoToWav,
   extractVideoKeyframe,
   extractVideoTranscript,
+  parseFfprobeDuration,
+  probeVideoDuration,
   VIDEO_MIMES,
+  type DurationProbeOk,
+  type DurationProbeResult,
+  type DurationProbeUnavailable,
   type ExtractKeyframeOptions,
   type ExtractVideoTranscriptOptions,
+  type FfprobeInvocation,
+  type FfprobeRunner,
   type KeyframeFailure,
   type KeyframeResult,
   type KeyframeSuccess,
+  type ProbeVideoDurationOptions,
 } from './video.js';
 
 export {

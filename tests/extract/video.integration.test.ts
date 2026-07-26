@@ -18,7 +18,7 @@ import { promisify } from 'node:util';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { convertVideoToWav } from '../../src/extract/video.js';
+import { convertVideoToWav, probeVideoDuration } from '../../src/extract/video.js';
 import { findFfmpeg } from '../../src/extract/ffmpeg.js';
 import { readWavHeader } from './audio-wav.js';
 
@@ -73,6 +73,19 @@ describe.skipIf(!process.env.FFMPEG_INTEGRATION)(
       expect(result.status).toBe('failed');
       if (result.status !== 'failed') throw new Error('esperava failed');
       expect(result.reason).toBe('video-sem-audio');
+    });
+
+    it('probeVideoDuration mede a duração real do fixture via ffprobe (M4-09)', async () => {
+      const input = join(dir, 'with-audio.mp4');
+      await makeVideoFixture(bin, input, true);
+
+      const probe = await probeVideoDuration(input);
+
+      expect(probe.status).toBe('ok');
+      if (probe.status !== 'ok') throw new Error('esperava ok');
+      // O fixture tem ~0,3s; validamos uma janela folgada (robusto a arredondamentos).
+      expect(probe.seconds).toBeGreaterThan(0.1);
+      expect(probe.seconds).toBeLessThan(5);
     });
   },
 );

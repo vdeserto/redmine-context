@@ -16,6 +16,14 @@ import { findExecutable, type ConventionalDirs } from './which.js';
 const FFMPEG_BINARY = 'ffmpeg';
 
 /**
+ * Nome base do binário do `ffprobe` — a ferramenta de SONDA do pacote ffmpeg. É
+ * distribuída junto do ffmpeg (mesmo diretório/pacote em brew/apt/BtbN), por isso
+ * reusa os MESMOS locais convencionais ({@link CONVENTIONAL}). Usada pela #65 para
+ * medir a duração de um vídeo ANTES de transcrevê-lo (limite configurável, ADR-002).
+ */
+const FFPROBE_BINARY = 'ffprobe';
+
+/**
  * Locais convencionais do `ffmpeg` por família de SO, consultados após o `PATH`.
  * No Windows não há caminho canônico (builds estáticos BtbN são descompactados
  * em qualquer lugar) — cobrimos os destinos mais comuns como best-effort.
@@ -47,6 +55,30 @@ export interface FfmpegLocation {
  */
 export function findFfmpeg(deps?: Parameters<typeof findExecutable>[2]): FfmpegLocation | undefined {
   const located = findExecutable([FFMPEG_BINARY], CONVENTIONAL, deps);
+  return located !== undefined ? { path: located.path } : undefined;
+}
+
+/** Resultado de {@link findFfprobe}: caminho absoluto do binário localizado. */
+export interface FfprobeLocation {
+  /** Caminho absoluto do executável `ffprobe` encontrado. */
+  readonly path: string;
+}
+
+/**
+ * Localiza o binário `ffprobe` no `PATH` e em locais convencionais por plataforma
+ * (os mesmos do ffmpeg — o ffprobe vem no MESMO pacote). Função pura e injetável;
+ * não executa o binário. Degrada para `undefined` quando ausente (ADR-002): sem
+ * ffprobe, a #65 não bloqueia — apenas não mede a duração.
+ *
+ * @param deps - Deps injetáveis (plataforma/PATH/executabilidade) — ver
+ *   {@link findExecutable}. Default: ambiente real.
+ * @returns A localização encontrada, ou `undefined` se não instalado.
+ * @example
+ * const probe = findFfprobe();
+ * if (probe === undefined) logger.warn('ffprobe não instalado; duração não medida');
+ */
+export function findFfprobe(deps?: Parameters<typeof findExecutable>[2]): FfprobeLocation | undefined {
+  const located = findExecutable([FFPROBE_BINARY], CONVENTIONAL, deps);
   return located !== undefined ? { path: located.path } : undefined;
 }
 
