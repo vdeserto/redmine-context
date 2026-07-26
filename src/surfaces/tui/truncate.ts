@@ -21,46 +21,57 @@
  * CJK/emoji (largura dupla) podem estourar o orçamento. Suporte real de
  * largura visual (ex.: string-width) fica para quando houver demanda — ver
  * issue de follow-up da responsividade.
+ *
+ * HARDENING WINDOWS LEGADO (M5-09, #84): o marcador de corte deixou de ser um
+ * literal fixo `'…'` e passa a vir de `./glyphs.ts`, que degrada para `'...'`
+ * no terminal legado do Windows (evitando o mojibake da reticência Unicode).
+ * Como o fallback ASCII tem LARGURA 3 (vs. 1 do `'…'`), a matemática de corte
+ * agora desconta `ellipsis.length` em vez de assumir 1 — do contrário o
+ * resultado ASCII estouraria a largura orçada. O marcador é um parâmetro com
+ * default (`glyphs.ellipsis`) para manter as funções puras e testáveis com
+ * qualquer largura de reticência.
  */
-
-/** Marcador de corte — um único caractere (reticências), nunca `'...'` (3 colunas). */
-const ELLIPSIS = '…';
+import { glyphs } from './glyphs.js';
 
 /**
- * Trunca `text` em `max` caracteres a partir do FIM, terminando com
- * {@link ELLIPSIS} quando corta. Uso padrão — subjects, rótulos, qualquer
- * string onde o INÍCIO é a parte mais relevante.
+ * Trunca `text` em `max` caracteres a partir do FIM, terminando com o marcador
+ * de corte quando corta. Uso padrão — subjects, rótulos, qualquer string onde
+ * o INÍCIO é a parte mais relevante.
  *
  * @param text - String candidata a corte.
  * @param max - Largura máxima permitida (colunas). `max <= 0` retorna vazio.
+ * @param ellipsis - Marcador de corte (default: `glyphs.ellipsis`, ASCII no
+ *   terminal legado do Windows). Seu comprimento é descontado do orçamento.
  * @returns `text` inalterado (couber) ou cortado com reticências ao final.
  *
  * @example
  * truncate('Refatorar o pipeline de exportação de anexos', 20); // 'Refatorar o pipel…'
  */
-export function truncate(text: string, max: number): string {
+export function truncate(text: string, max: number, ellipsis: string = glyphs.ellipsis): string {
   if (max <= 0) return '';
   if (text.length <= max) return text;
-  if (max === 1) return ELLIPSIS;
-  return `${text.slice(0, max - 1)}${ELLIPSIS}`;
+  if (max <= ellipsis.length) return ellipsis.slice(0, max);
+  return `${text.slice(0, max - ellipsis.length)}${ellipsis}`;
 }
 
 /**
- * Trunca `text` em `max` caracteres a partir do INÍCIO, iniciando com
- * {@link ELLIPSIS} quando corta. Uso em caminhos/campos em edição — onde o
+ * Trunca `text` em `max` caracteres a partir do INÍCIO, iniciando com o
+ * marcador de corte quando corta. Uso em caminhos/campos em edição — onde o
  * FIM é a parte mais relevante (nome do arquivo ao final de um path, ou o
  * cursor de digitação de um campo de texto ainda ativo).
  *
  * @param text - String candidata a corte.
  * @param max - Largura máxima permitida (colunas). `max <= 0` retorna vazio.
+ * @param ellipsis - Marcador de corte (default: `glyphs.ellipsis`, ASCII no
+ *   terminal legado do Windows). Seu comprimento é descontado do orçamento.
  * @returns `text` inalterado (couber) ou cortado com reticências no início.
  *
  * @example
  * truncateStart('/home/usuario/projetos/redmine-context/saida', 20); // '…text/redmine-context/saida'.slice — ver teste para o valor exato
  */
-export function truncateStart(text: string, max: number): string {
+export function truncateStart(text: string, max: number, ellipsis: string = glyphs.ellipsis): string {
   if (max <= 0) return '';
   if (text.length <= max) return text;
-  if (max === 1) return ELLIPSIS;
-  return `${ELLIPSIS}${text.slice(text.length - (max - 1))}`;
+  if (max <= ellipsis.length) return ellipsis.slice(0, max);
+  return `${ellipsis}${text.slice(text.length - (max - ellipsis.length))}`;
 }

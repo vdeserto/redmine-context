@@ -8,6 +8,7 @@
  */
 import { Box, Text } from 'ink';
 
+import { glyphs } from '../../glyphs.js';
 import { useListNavigation } from '../../hooks/use-list-navigation.js';
 import { useNavigation } from '../../navigation.js';
 import { symbols } from '../../symbols.js';
@@ -62,7 +63,7 @@ export function OnboardingModeScreen() {
       <Box marginTop={1}>
         <Text color={theme.muted}>
           <Text bold color={theme.accent}>
-            ↑↓/j/k
+            {`${glyphs.arrowUp}${glyphs.arrowDown}/j/k`}
           </Text>{' '}
           navegam,{' '}
           <Text bold color={theme.accent}>

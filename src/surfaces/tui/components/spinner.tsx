@@ -5,14 +5,19 @@
  * de `@inkjs/ui` (ver `../theme.tsx`, mapeamento previsto): frames braille
  * (mesmo conjunto usado por spinners de terminal populares), avançados por um
  * `setInterval` simples.
+ *
+ * HARDENING WINDOWS LEGADO (M5-09, #84): os frames vêm de `../glyphs.ts`, que
+ * degrada os braille para um spinner ASCII (`| / - \`) no terminal legado do
+ * Windows — do contrário apareceriam como mojibake.
  */
 import { useEffect, useState } from 'react';
 import { Text } from 'ink';
 
+import { glyphs } from '../glyphs.js';
 import { useTheme } from '../theme.js';
 
-/** Sequência de frames braille do spinner — um giro completo por volta do array. */
-export const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'] as const;
+/** Sequência de frames do spinner — um giro completo por volta do array (ASCII no Windows legado). */
+export const SPINNER_FRAMES = glyphs.spinnerFrames;
 
 /** Intervalo (ms) entre frames — rápido o bastante para parecer fluido, sem sobrecarregar o terminal. */
 export const SPINNER_INTERVAL_MS = 80;

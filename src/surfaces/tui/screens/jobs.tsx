@@ -41,6 +41,7 @@ import { Box, Text, useInput } from 'ink';
 import { useRef } from 'react';
 
 import { Spinner } from '../components/spinner.js';
+import { glyphs } from '../glyphs.js';
 import { useListNavigation } from '../hooks/use-list-navigation.js';
 import { useJobRegistry, type Job } from '../job-registry.js';
 import { jobStatusColor, jobStatusIcon, jobStatusLabel } from '../job-status.js';
@@ -129,7 +130,7 @@ export function JobsScreen() {
       <Box marginTop={1}>
         <Text color={theme.muted}>
           <Text bold color={theme.accent}>
-            ↑/↓
+            {`${glyphs.arrowUp}/${glyphs.arrowDown}`}
           </Text>{' '}
           navega,{' '}
           <Text bold color={theme.accent}>

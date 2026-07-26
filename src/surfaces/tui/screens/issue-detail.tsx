@@ -43,6 +43,7 @@ import {
 } from '../attachment-status.js';
 import { Spinner } from '../components/spinner.js';
 import { ScrollView } from '../components/scroll-view.js';
+import { glyphs } from '../glyphs.js';
 import { humanizeFileSize } from '../format-file-size.js';
 import { useIssueDetail } from '../hooks/use-issue-detail.js';
 import { useNavigation } from '../navigation.js';
@@ -55,8 +56,8 @@ import { useLoadedIssue } from './loaded-issue-context.js';
 /** Altura (em linhas) da viewport rolável de descrição + journals. */
 const CONTENT_HEIGHT = 10;
 
-/** Placeholder discreto para campos ausentes (assignee, autor/data de journal, old/new value). */
-const EMPTY_PLACEHOLDER = '—';
+/** Placeholder discreto para campos ausentes (assignee, autor/data de journal, old/new value). ASCII no Windows legado (#84). */
+const EMPTY_PLACEHOLDER = glyphs.emptyPlaceholder;
 
 /** Metadados fixos no topo: id/subject, status/prioridade, autor/responsável, datas. */
 function IssueMeta({ issue, theme }: { issue: Issue; theme: Theme }) {
@@ -93,7 +94,7 @@ function buildAttachmentRow(attachment: Attachment, theme: Theme): ReactNode {
     <Text key={`attachment-${attachment.id}`}>
       {attachment.filename}{' '}
       <Text color={theme.muted}>
-        ({humanizeFileSize(attachment.filesize)} · {attachment.content_type ?? EMPTY_PLACEHOLDER})
+        ({humanizeFileSize(attachment.filesize)} {glyphs.middleDot} {attachment.content_type ?? EMPTY_PLACEHOLDER})
       </Text>{' '}
       <Text bold color={attachmentStatusColor(theme, status)}>
         [{attachmentStatusLabel(status)}]
@@ -161,7 +162,7 @@ function buildContentRows(issue: Issue, theme: Theme): ReactNode[] {
     issue.journals.forEach((journal) => {
       rows.push(
         <Text color={theme.muted} key={`journal-${journal.id}-head`}>
-          {journal.user?.name ?? EMPTY_PLACEHOLDER} · {journal.created_on}
+          {journal.user?.name ?? EMPTY_PLACEHOLDER} {glyphs.middleDot} {journal.created_on}
         </Text>,
       );
       if (journal.notes !== undefined && journal.notes !== '') {

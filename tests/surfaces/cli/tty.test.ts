@@ -56,3 +56,25 @@ describe('CLI: shouldRenderTui', () => {
 it('CI=1 (provedores que não usam "true") também degrada', () => {
   expect(shouldRenderTui({ CI: '1' }, true)).toBe(false);
 });
+
+/**
+ * HARDENING WINDOWS LEGADO (M5-09, #84): a degradação NO_COLOR/não-TTY é
+ * decidida por `shouldRenderTui`, que é AGNÓSTICA de plataforma — logo o
+ * caminho de texto puro vale igual no Windows. Estes casos travam a invariante
+ * simulando o ambiente típico do cmd.exe/PowerShell legado (sem `WT_SESSION`).
+ */
+describe('CLI: degradação no Windows legado (NO_COLOR / não-TTY)', () => {
+  it('NO_COLOR degrada mesmo em TTY do Windows legado', () => {
+    expect(shouldRenderTui({ NO_COLOR: '1', ComSpec: 'C:\\Windows\\system32\\cmd.exe' }, true)).toBe(
+      false,
+    );
+  });
+
+  it('não-TTY (pipe/redirect) degrada no Windows legado', () => {
+    expect(shouldRenderTui({ ComSpec: 'C:\\Windows\\system32\\cmd.exe' }, false)).toBe(false);
+  });
+
+  it('TTY do Windows legado sem sinal de degradação ainda abre a TUI', () => {
+    expect(shouldRenderTui({ ComSpec: 'C:\\Windows\\system32\\cmd.exe' }, true)).toBe(true);
+  });
+});

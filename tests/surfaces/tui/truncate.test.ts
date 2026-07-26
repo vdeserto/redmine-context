@@ -52,3 +52,31 @@ describe('truncateStart (corte a partir do início, preserva o fim)', () => {
     expect(truncateStart('qualquer coisa', 0)).toBe('');
   });
 });
+
+/**
+ * HARDENING WINDOWS LEGADO (M5-09, #84): no terminal legado a reticência
+ * degrada para o ASCII `'...'` (3 colunas). A largura orçada TEM de continuar
+ * respeitada — a matemática de corte desconta `ellipsis.length`, nunca assume
+ * 1. Estes testes travam essa invariante passando o marcador ASCII explícito.
+ */
+describe('truncate com reticência ASCII (Windows legado): respeita a largura', () => {
+  it('corta ao FIM sem estourar a largura, terminando com "..."', () => {
+    const result = truncate('Refatorar o pipeline de exportação de anexos', 20, '...');
+    expect(result.length).toBe(20);
+    expect(result.endsWith('...')).toBe(true);
+    expect(result).toBe('Refatorar o pipel...');
+  });
+
+  it('corta ao INÍCIO sem estourar a largura, começando com "..."', () => {
+    const result = truncateStart('/home/usuario/projetos/redmine-context/saida', 20, '...');
+    expect(result.length).toBe(20);
+    expect(result.startsWith('...')).toBe(true);
+    expect(result.endsWith('saida')).toBe(true);
+  });
+
+  it('max menor ou igual à reticência: nunca excede max (corta a própria reticência)', () => {
+    expect(truncate('qualquer coisa', 3, '...')).toBe('...');
+    expect(truncate('qualquer coisa', 2, '...')).toBe('..');
+    expect(truncateStart('qualquer coisa', 2, '...')).toBe('..');
+  });
+});
