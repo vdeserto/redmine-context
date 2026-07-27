@@ -82,10 +82,18 @@ function findEocd(buf: Buffer): number {
   const floor = Math.max(0, buf.length - EOCD_MIN - MAX_COMMENT);
   for (let i = buf.length - EOCD_MIN; i >= floor; i -= 1) {
     if (buf.readUInt32LE(i) === EOCD_SIG) {
-      return i;
+      // Anti-spoofing (dados anexados após o zip): um EOCD REAL termina EXATAMENTE
+      // no fim do arquivo (offset + 22 + tamanho-do-comentário === buf.length). Sem
+      // essa checagem, uma segunda assinatura `PK\x05\x06` forjada e anexada ao fim
+      // seria aceita, permitindo apontar o central directory para conteúdo diferente
+      // do que o Word abriria. Um Office real tem comentário vazio e EOCD no EOF.
+      const commentLen = buf.readUInt16LE(i + 20);
+      if (i + EOCD_MIN + commentLen === buf.length) {
+        return i;
+      }
     }
   }
-  throw new Error('zip inválido: assinatura EOCD não encontrada');
+  throw new Error('zip inválido: EOCD ausente ou inconsistente (dados anexados?)');
 }
 
 /** Implementação de {@link ZipArchive} sobre um buffer + índice de entradas. */
@@ -181,6 +189,9 @@ export function parseZip(buffer: Buffer): ZipArchive {
     const localHeaderOffset = buffer.readUInt32LE(p + 42);
     const name = buffer.toString('utf8', p + CDH_FIXED, p + CDH_FIXED + nameLen);
     // Entradas de diretório (nome terminando em `/`) não têm conteúdo útil.
+    // Nomes DUPLICADOS: last-write-wins (o `Map` sobrescreve). Decisão consciente —
+    // não há escrita em disco (sem path traversal), apenas round-trip de texto; a
+    // última entrada com aquele nome é a lida, como na maioria dos leitores de zip.
     if (!name.endsWith('/')) {
       entries.set(name, { name, method, compressedSize, uncompressedSize, localHeaderOffset });
     }

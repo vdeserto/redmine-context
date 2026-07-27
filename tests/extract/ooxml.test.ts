@@ -21,7 +21,13 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { createDefaultRegistry } from '../../src/extract/index.js';
 import { dispatchExtraction } from '../../src/extract/dispatcher.js';
-import { createOoxmlExtractor, OoxmlExtractor } from '../../src/extract/ooxml.js';
+import {
+  createOoxmlExtractor,
+  DOCX_DIALECT,
+  extractTextFromXml,
+  OoxmlExtractor,
+  unescapeXml,
+} from '../../src/extract/ooxml.js';
 import { parseZip } from '../../src/extract/zip.js';
 
 /** Caminho absoluto de uma fixture OOXML. */
@@ -107,7 +113,29 @@ describe('OoxmlExtractor', () => {
   it('zip comum (não-OOXML) → unsupported, sem erro', async () => {
     const r = await extractor.extract(fx('plain.zip'), { mime: 'application/zip' });
     expect(r.status).toBe('unsupported');
-    expect(r.metadata?.reason).toMatch(/nao-ooxml|não-ooxml/);
+    expect(r.metadata?.reason).toBe('zip-nao-ooxml');
+  });
+
+  it('xlsx sem sharedStrings (só números) → failed (ooxml-sem-texto)', async () => {
+    const r = await extractor.extract(fx('nostrings.xlsx'), { mime: 'application/zip' });
+    expect(r.status).toBe('failed');
+    expect(r.metadata?.reason).toBe('ooxml-sem-texto');
+    expect(r.metadata?.format).toBe('xlsx');
+  });
+
+  it('pptx sem slides → failed (ooxml-sem-texto)', async () => {
+    const r = await extractor.extract(fx('noslides.pptx'), { mime: 'application/zip' });
+    expect(r.status).toBe('failed');
+    expect(r.metadata?.reason).toBe('ooxml-sem-texto');
+    expect(r.metadata?.format).toBe('pptx');
+  });
+
+  it('dados anexados após o EOCD (spoofing) → falha, não extrai conteúdo divergente', async () => {
+    const tampered = Buffer.concat([readFileSync(fx('sample.docx')), Buffer.from('JUNK-APPENDED')]);
+    const p = tmpFile('tampered.docx', tampered);
+    const r = await extractor.extract(p, { mime: 'application/zip' });
+    expect(r.status).toBe('failed');
+    expect(r.metadata?.reason).toBe('zip-invalido');
   });
 
   it('arquivo corrompido (zip truncado) → failed, sem lançar', async () => {
@@ -130,6 +158,35 @@ describe('OoxmlExtractor', () => {
       signal: AbortSignal.abort(),
     });
     expect(r.status).toBe('cancelled');
+  });
+});
+
+describe('robustez adversarial (achados da review #184)', () => {
+  it('extractTextFromXml é LINEAR: 200k tags <w:t> abertas e nunca fechadas terminam rápido', () => {
+    // Guarda de regressão do BLOCKER (ReDoS O(n²)): a implementação antiga com
+    // `regex.matchAll` degeneraria para minutos aqui e estouraria o timeout do teste.
+    // O scanner de um passo resolve isto em milissegundos. Sem asserção de tempo
+    // frágil — o próprio timeout do vitest (5s) é a guarda.
+    const evil = '<w:t>'.repeat(200_000);
+    const out = extractTextFromXml(evil, DOCX_DIALECT);
+    // Cada `<w:t>` captura "até o próximo `<`" = string vazia → sem texto, sem travar.
+    expect(out).toBe('');
+  });
+
+  it('unescapeXml mantém LITERAL entidade numérica fora do range Unicode (não lança)', () => {
+    expect(unescapeXml('a &#99999999; b')).toBe('a &#99999999; b');
+    expect(unescapeXml('a &#xFFFFFFFF; b')).toBe('a &#xFFFFFFFF; b');
+    // ...e ainda resolve as válidas na mesma string.
+    expect(unescapeXml('&#65; &amp; &#x42;')).toBe('A & B');
+  });
+
+  it('rejeita ZIP64 (parseZip lança)', () => {
+    // EOCD mínimo (22 bytes) terminando no EOF, com totalEntries = 0xffff (marcador ZIP64).
+    const buf = Buffer.alloc(22);
+    buf.writeUInt32LE(0x06054b50, 0); // assinatura EOCD
+    buf.writeUInt16LE(0xffff, 10); // total de entradas = sentinela ZIP64
+    // commentLen (offset 20) = 0 → 0 + 22 + 0 === 22 === buf.length (EOCD no EOF)
+    expect(() => parseZip(buf)).toThrow(/zip64/i);
   });
 });
 

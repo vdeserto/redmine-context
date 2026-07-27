@@ -90,4 +90,9 @@ zipTree(
 zipTree('xlsx', { '[Content_Types].xml': CONTENT_TYPES, 'xl/workbook.xml': XLSX_WORKBOOK, 'xl/sharedStrings.xml': XLSX_SHARED }, join(OUT, 'sample.xlsx'), false);
 zipTree('plain', { 'readme.txt': 'apenas um zip comum, sem OOXML\n' }, join(OUT, 'plain.zip'), true);
 
+// Fixtures adversariais/degradadas (gap da review #184):
+// xlsx SEM sharedStrings (planilha só de números) e pptx SEM slides → sem texto.
+zipTree('xlsx-nostrings', { '[Content_Types].xml': CONTENT_TYPES, 'xl/workbook.xml': XLSX_WORKBOOK }, join(OUT, 'nostrings.xlsx'), false);
+zipTree('pptx-noslides', { '[Content_Types].xml': CONTENT_TYPES, 'ppt/presentation.xml': PPTX_PRESENTATION }, join(OUT, 'noslides.pptx'), false);
+
 log('OK');
