@@ -33,6 +33,7 @@ import type { ExtractionResult } from '../contract.js';
 
 import { createAudioExtractor } from './audio-extractor.js';
 import { ExtractorRegistry, type ExtractOptions, type Extractor } from './dispatcher.js';
+import { createOoxmlExtractor } from './ooxml.js';
 import { createPdfExtractor } from './pdf.js';
 import { runWithWatchdog, sanitizedEnv } from './subprocess.js';
 import { createVideoExtractor } from './video-extractor.js';
@@ -394,5 +395,9 @@ export async function createDefaultRegistry(
   registry.register(pdf);
   registry.register(createAudioExtractor({ transcriber: whisper }));
   registry.register(createVideoExtractor({ transcriber: whisper }));
+  // OOXML (docx/pptx/xlsx, #184): 100% local sem binário — registrado para
+  // `application/zip` (o magic.ts reporta OOXML como zip; a diferenciação fina é
+  // do extrator). Um zip não-OOXML devolve `unsupported`.
+  registry.register(createOoxmlExtractor());
   return registry;
 }

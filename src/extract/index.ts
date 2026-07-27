@@ -120,6 +120,10 @@ export {
   type VideoPipelineOverrides,
 } from './video-extractor.js';
 
+export { createOoxmlExtractor, OoxmlExtractor, OOXML_MIMES } from './ooxml.js';
+
+export { parseZip, type ZipArchive, type ZipEntry } from './zip.js';
+
 export {
   convertVideoToWav,
   extractVideoKeyframe,

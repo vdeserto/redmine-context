@@ -222,6 +222,13 @@ por padrão), conforme o [ADR-002](documentation/adr/ADR-002-midia-100-local-pol
 O texto extraído é sempre marcado como **não confiável** (`<untrusted-content>`)
 no bundle. Áudio/vídeo entram no M4 pelo mesmo caminho.
 
+Documentos **Office (OOXML)** — `.docx`, `.pptx`, `.xlsx` — também têm o texto
+extraído **100% localmente e SEM binário externo** (são contêineres ZIP com XML;
+o texto é lido direto no Node). Funciona nos 3 SOs sem instalar nada e **não** entra
+no `doctor`. Cobertura: parágrafos do documento (docx), texto dos slides na ordem
+(pptx) e as *shared strings* (xlsx); formatação complexa/tabelas saem simplificadas.
+Um `.doc`/`.ppt`/`.xls` antigo (formato binário pré-2007) não é OOXML e não é suportado.
+
 - **CLI**: `redmine-context issue <id> --extract` baixa os anexos, roda o OCR e
   embute o texto no bundle.
 - **MCP**: `get_issue_context(..., extract_attachments: true)` e
