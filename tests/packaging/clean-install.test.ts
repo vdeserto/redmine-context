@@ -36,6 +36,14 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 /** Raiz do pacote (tests/packaging → raiz). */
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 
+/**
+ * Nome do executável do npm portável por SO: no Windows o npm é um shim
+ * `npm.cmd` (execFileSync/spawnSync sem `shell` não resolve PATHEXT, então
+ * `'npm'` daria ENOENT); no POSIX é `npm`. Evita `shell: true` (proibido pela
+ * lint rule do #83).
+ */
+const NPM = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+
 /** Padrão de qualquer ferramenta/etapa de compilação nativa (deve estar AUSENTE). */
 const NATIVE_BUILD = /node-gyp|node-pre-gyp|prebuild-install|gyp info|node-gyp rebuild/i;
 
@@ -61,10 +69,10 @@ beforeAll(() => {
 
   // Build explícito ANTES do pack com --ignore-scripts: assim o `prepack` (que
   // roda `tsc`) não roda de novo nem contamina o JSON de `npm pack --json`.
-  execFileSync('npm', ['run', 'build'], { cwd: ROOT, stdio: 'pipe' });
+  execFileSync(NPM, ['run', 'build'], { cwd: ROOT, stdio: 'pipe' });
 
   const raw = execFileSync(
-    'npm',
+    NPM,
     ['pack', '--json', '--ignore-scripts', '--pack-destination', workDir],
     { cwd: ROOT, encoding: 'utf8' },
   );
@@ -96,7 +104,7 @@ beforeAll(() => {
   // rede num gate release-blocking (M1 do review). Hermetismo pleno (lockfile fixo no
   // consumer + `--offline`) fica como follow-up se surgir flakiness.
   const install = spawnSync(
-    'npm',
+    NPM,
     [
       'install',
       tarball,
