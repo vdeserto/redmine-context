@@ -10,12 +10,14 @@
  * módulo interno é importado aqui (regra eslint `no-restricted-imports`).
  */
 
+import { realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
 import { runDoctor, runIssue, runLogin } from './commands.js';
 import { createPromptSession } from './prompts.js';
 import { shouldRenderTui } from './tty.js';
 import type { ParsedArgs, RunDeps } from './types.js';
+import { TOOL_VERSION } from '../../index.js';
 import { runStdioServer } from '../mcp/server.js';
 import { runTui } from '../tui/index.js';
 
@@ -30,6 +32,8 @@ Uso:
   redmine-context login [opções]
   redmine-context doctor
   redmine-context mcp
+  redmine-context --version    (imprime a versão e sai)
+  redmine-context --help       (imprime esta ajuda e sai)
 
 Comando issue:
   Busca a issue, normaliza e imprime o bundle em stdout (Markdown por padrão).
@@ -96,6 +100,10 @@ export function parseArgs(argv: string[]): ParsedArgs {
       flags.set('help', true);
       continue;
     }
+    if (token === '-v') {
+      flags.set('version', true);
+      continue;
+    }
     if (token.startsWith('--')) {
       const name = token.slice(2);
       if (VALUE_FLAGS.has(name)) {
@@ -159,6 +167,10 @@ async function dispatch(argv: string[], deps: RunDeps): Promise<number> {
   const parsed = parseArgs(argv);
   const command = parsed.positionals[0];
 
+  if (parsed.flags.get('version') === true || command === 'version') {
+    deps.stdout(`${TOOL_VERSION}\n`);
+    return 0;
+  }
   if (parsed.flags.get('help') === true || command === 'help') {
     deps.stdout(HELP);
     return 0;
@@ -193,8 +205,13 @@ async function dispatch(argv: string[], deps: RunDeps): Promise<number> {
 }
 
 /* c8 ignore start -- wire de execução; coberto pelo teste E2E real (#20). */
+// O npm expõe o `bin` como SYMLINK (node_modules/.bin/redmine-context) — é assim
+// que `npx` e `npm i -g` invocam. `import.meta.url` é o realpath do arquivo, mas
+// `process.argv[1]` é o caminho do symlink; sem resolver o realpath, o guard não
+// dispararia via npx e o CLI/MCP sairia vazio (#76). `realpathSync` alinha os dois.
 const invokedPath = process.argv[1];
-if (invokedPath !== undefined && import.meta.url === pathToFileURL(invokedPath).href) {
+const invokedRealPath = invokedPath !== undefined ? realpathSync(invokedPath) : undefined;
+if (invokedRealPath !== undefined && import.meta.url === pathToFileURL(invokedRealPath).href) {
   run(process.argv.slice(2)).then(
     (code) => process.exit(code),
     (error: unknown) => {

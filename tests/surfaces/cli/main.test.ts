@@ -72,6 +72,22 @@ describe('CLI: roteamento e help', () => {
     expect(h.stdout()).not.toMatch(/claude|gpt|openai|copilot|\bAI\b/i);
   });
 
+  it('--version imprime a versão semver em stdout, exit 0', async () => {
+    const h = harness();
+    const code = await run(['--version'], h.deps);
+    expect(code).toBe(0);
+    expect(h.stdout().trim()).toMatch(/^\d+\.\d+\.\d+$/);
+    expect(h.stdout()).toBe(`${core.TOOL_VERSION}\n`);
+    expect(h.stderr()).toBe('');
+  });
+
+  it('-v é alias de --version', async () => {
+    const h = harness();
+    const code = await run(['-v'], h.deps);
+    expect(code).toBe(0);
+    expect(h.stdout()).toBe(`${core.TOOL_VERSION}\n`);
+  });
+
   it('sem argumentos imprime help em stderr e retorna 1 (sem TTY)', async () => {
     const h = harness();
     const code = await run([], h.deps);

@@ -1,0 +1,86 @@
+# Changeset check — reprova PRs de código que não trazem um changeset — issue #85 (M5-10)
+#
+# Todo PR que altera código publicável (src/**, package.json) precisa ADICIONAR um
+# changeset (`.changeset/*.md`) declarando o tipo de bump (patch/minor/major) e a
+# nota de CHANGELOG.
+#
+# CORREÇÃO DO GAP #87 (MAJOR-2): antes o gate rodava `changeset status --since`, mas
+# como este é um repo de pacote ÚNICO com um changeset inicial pendente
+# (`.changeset/initial-release.md`), o `status` reporta bump pendente e sai 0 para
+# QUALQUER PR — mesmo um que mexa em `src/**` sem trazer changeset próprio. Ou seja,
+# o gate NÃO enforçava. Agora a verificação é explícita por git diff:
+#   - se o PR mexe em `src/**` ou `package.json` (código publicável) E NÃO adiciona
+#     nenhum `.changeset/*.md` novo → FALHA (exit 1), bloqueando o merge;
+#   - PR só de docs/CI/tests (sem tocar código publicável) → PASSA;
+#   - PR de código COM changeset novo → PASSA.
+#
+# Como criar um changeset localmente:  `npm run changeset`  (modo interativo) —
+# ou adicione manualmente um arquivo em `.changeset/<slug>.md` (ver .changeset/README.md).
+#
+# NÃO edita ci.yml/e2e.yml/smoke-npx.yml — workflow separado, dedicado ao gate de changeset.
+
+name: Changeset check
+
+on:
+  pull_request:
+    branches:
+      - main
+      - 'milestone/**'
+
+# Cancela runs redundantes do mesmo PR.
+concurrency:
+  group: changeset-check-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  changeset-check:
+    name: changeset-check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Histórico completo: o diff do PR usa o merge-base com a base (3-dot).
+          fetch-depth: 0
+
+      - name: Ensure base ref is available
+        shell: bash
+        # Usa a base REAL do PR (main OU milestone/**), não `main` fixo — senão o
+        # diff de um PR para milestone/** seria calculado contra a base errada.
+        # Sem --depth: o merge-base do 3-dot precisa do histórico da base.
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: git fetch --no-tags origin "$BASE_REF"
+
+      - name: Verify changeset was added for publishable changes
+        shell: bash
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          # Mudanças introduzidas pelo PR (merge-base(base, head) → head).
+          CODE_CHANGED="$(git diff --name-only "origin/$BASE_REF"...HEAD -- 'src/**' 'package.json' || true)"
+          # Changesets NOVOS (adicionados) neste PR — ignora README.md/config.json.
+          CHANGESET_ADDED="$(git diff --name-only --diff-filter=A "origin/$BASE_REF"...HEAD -- '.changeset/**/*.md' '.changeset/*.md' \
+            | grep -viE '(^|/)README\.md$' || true)"
+
+          if [ -z "$CODE_CHANGED" ]; then
+            echo "PR não altera código publicável (src/** ou package.json) — changeset não é exigido. OK."
+            exit 0
+          fi
+
+          echo "Código publicável alterado:"
+          echo "$CODE_CHANGED" | sed 's/^/  - /'
+
+          if [ -z "$CHANGESET_ADDED" ]; then
+            echo "::error::Este PR altera código publicável (src/** ou package.json) mas NÃO adiciona um changeset. Rode 'npm run changeset' e commite o .changeset/<slug>.md."
+            exit 1
+          fi
+
+          echo "Changeset(s) adicionado(s) neste PR:"
+          echo "$CHANGESET_ADDED" | sed 's/^/  - /'
+          echo "OK."

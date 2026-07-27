@@ -18,6 +18,7 @@ import { Box, Text, useInput } from 'ink';
 import { useState, useCallback } from 'react';
 
 import { TextInput } from '../../components/text-input.js';
+import { glyphs } from '../../glyphs.js';
 import { useNavigation } from '../../navigation.js';
 import { symbols } from '../../symbols.js';
 import { useTheme } from '../../theme.js';
@@ -77,7 +78,7 @@ export function OnboardingLoginScreen() {
               setPendingLogin(callbacks.onLoginSubmit({ username, password }));
               push('onboarding-validating');
             }}
-            mask="•"
+            mask={glyphs.maskBullet}
             isActive={field === 'password'}
           />
         </Box>

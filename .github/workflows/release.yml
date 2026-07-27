@@ -1,0 +1,126 @@
+# Release — versionamento + publish npm com provenance via Changesets — issue #85 (M5-10)
+#
+# Fluxo (no push em `main`):
+#   1. Job `gates`: reexecuta os mesmos gates do CI (typecheck + lint + testes +
+#      build) numa run limpa. O job `release` DEPENDE dele (`needs: gates`), então
+#      nada é versionado/publicado sem os gates verdes.
+#   2. Job `release`: usa `changesets/action`:
+#        - Se há changesets pendentes em `.changeset/*.md`, ABRE/ATUALIZA o PR
+#          "Version Packages" (bumpa a versão + gera o CHANGELOG). Ao MERGEAR esse
+#          PR em `main`, esta workflow roda de novo; agora não há changesets
+#          pendentes → a action executa `npm run release` (= `changeset publish`),
+#          publicando no npm.
+#
+# PROVENANCE: `NPM_CONFIG_PROVENANCE: true` faz o `npm publish` (chamado pelo
+# `changeset publish`) anexar attestation de proveniência (SLSA). Requer
+# `permissions: id-token: write` (OIDC) + `contents: write` (para tags/commits do
+# CHANGELOG). O repo precisa ser PÚBLICO para a proveniência aparecer no npm.
+#
+# GUARDADO POR NPM_TOKEN (INERTE AGORA): o passo do changesets/action só roda se
+# `NPM_TOKEN` estiver definido. Enquanto o Victor não adicionar o segredo, este
+# passo é PULADO (skip) — NADA é publicado. Isso satisfaz o AC "publica com
+# provenance" (config correta) sem publicar nada hoje.
+#
+# NOTA (correção do gap #87): o contexto `secrets` NÃO é acessível em expressões
+# `if:` — `if: ${{ secrets.NPM_TOKEN != '' }}` seria sempre não-confiável e poderia
+# deixar o passo eternamente pulado (nunca publicaria quando o token existisse).
+# Por isso o segredo é mapeado para uma env no nível do JOB e o `if:` testa a env
+# (o contexto `env` É acessível em `if:` de passo).
+#
+# NÃO edita ci.yml/e2e.yml/smoke-npx.yml — workflow separado.
+
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+
+# Não cancela um release em andamento.
+concurrency:
+  group: release-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # Gates equivalentes ao CI — o release só prossegue se ficarem verdes.
+  gates:
+    name: gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+        shell: bash
+
+      - name: Typecheck
+        run: npm run typecheck
+        shell: bash
+
+      - name: Lint
+        run: npm run lint
+        shell: bash
+
+      - name: Unit tests (with coverage)
+        run: npm test
+        shell: bash
+
+      - name: Build
+        run: npm run build
+        shell: bash
+
+  release:
+    name: release
+    needs: gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Mapeia o segredo para env do JOB: `secrets` não funciona em `if:`, mas `env`
+    # sim. Vazio (sem o segredo) → o passo abaixo é pulado; NADA é publicado.
+    env:
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+    permissions:
+      contents: write # commit/tag do "Version Packages" + CHANGELOG
+      pull-requests: write # abre/atualiza o PR "Version Packages"
+      id-token: write # OIDC → provenance no npm publish
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - name: Install dependencies
+        run: npm ci
+        shell: bash
+
+      # GUARDA: só roda se NPM_TOKEN existir (via env do job — `secrets` não vale
+      # em `if:`). Sem o segredo, este passo é PULADO (inerte); NADA é publicado.
+      - name: Create Release PR or Publish (npm, com provenance)
+        if: ${{ env.NPM_TOKEN != '' }}
+        uses: changesets/action@v1
+        with:
+          version: npm run version # changeset version (bump + CHANGELOG)
+          publish: npm run release # changeset publish (npm publish)
+          commit: "chore(release): version packages"
+          title: "chore(release): version packages"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_PROVENANCE: "true"

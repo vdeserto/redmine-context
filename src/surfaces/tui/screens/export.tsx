@@ -48,6 +48,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { Spinner } from '../components/spinner.js';
 import { TextInput } from '../components/text-input.js';
+import { glyphs } from '../glyphs.js';
 import { useExportBundle, type ExportFormat } from '../hooks/use-export-bundle.js';
 import { useListNavigation } from '../hooks/use-list-navigation.js';
 import { useJobRegistry } from '../job-registry.js';
@@ -282,7 +283,7 @@ export function ExportScreen() {
           {state.status === 'idle' ? (
             <>
               <Text bold color={theme.accent}>
-                ↑/↓
+                {`${glyphs.arrowUp}/${glyphs.arrowDown}`}
               </Text>{' '}
               escolhe o formato,{' '}
               <Text bold color={theme.accent}>

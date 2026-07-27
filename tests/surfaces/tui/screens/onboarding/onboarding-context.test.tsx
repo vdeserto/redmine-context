@@ -23,6 +23,7 @@ import {
   OnboardingProvider,
   useOnboarding,
 } from '../../../../../src/surfaces/tui/screens/onboarding/onboarding-context.js';
+import { Catch } from '../../catch-boundary.js';
 
 /** Componente de teste: chama o hook sem um `OnboardingProvider` acima. */
 function ScreenWithoutProvider() {
@@ -62,10 +63,13 @@ afterEach(() => {
 
 describe('TUI: useOnboarding', () => {
   it('lança erro quando usado fora do OnboardingProvider', () => {
-    // Ink envolve a árvore num ErrorBoundary interno: o erro não escapa
-    // síncrono de render(), mas é exibido no frame (mesmo padrão de
-    // useNavigation()/useTheme()).
-    const { lastFrame } = render(<ScreenWithoutProvider />);
+    // Error boundary de teste (CI-independente): sob CI=true o ink não escreve o
+    // erro no frame; o boundary captura o throw do hook e o expõe como Text.
+    const { lastFrame } = render(
+      <Catch>
+        <ScreenWithoutProvider />
+      </Catch>,
+    );
     expect(lastFrame()).toContain('useOnboarding() usado fora de <OnboardingProvider>.');
   });
 

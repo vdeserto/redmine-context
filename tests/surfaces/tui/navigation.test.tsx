@@ -14,6 +14,7 @@ import {
   useNavigation,
   useNavigationStack,
 } from '../../../src/surfaces/tui/navigation.js';
+import { Catch } from './catch-boundary.js';
 
 /** Componente de teste: chama o hook sem um `NavigationProvider` acima. */
 function ScreenWithoutRouter() {
@@ -64,7 +65,11 @@ describe('TUI: useNavigation', () => {
   it('lança erro quando usado fora do NavigationProvider', () => {
     // Ink envolve a árvore num ErrorBoundary interno (componentDidCatch): o
     // erro não escapa síncrono de render(), mas é exibido no frame.
-    const { lastFrame } = render(<ScreenWithoutRouter />);
+    const { lastFrame } = render(
+      <Catch>
+        <ScreenWithoutRouter />
+      </Catch>,
+    );
     expect(lastFrame()).toContain('useNavigation() usado fora de <NavigationProvider>.');
   });
 });

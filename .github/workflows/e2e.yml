@@ -1,0 +1,93 @@
+# E2E — CLI + MCP contra um Redmine seedado descartável (issue #80 / M5-05.2)
+#
+# Job SEPARADO do CI base (ci.yml) e do smoke npx (smoke-npx.yml) — Docker só
+# roda no runner Linux, então este workflow é ubuntu-only e não entra na matriz
+# multi-SO. Ele:
+#   1. builda o projeto (dist/);
+#   2. sobe o stack de teste + seed com `npm run ci:e2e:up` (#79 — docker compose
+#      Redmine+Postgres, espera healthy + one-shots, roda o seed idempotente);
+#   3. roda a validação E2E (`npm run e2e:ci`): CLI `issue <id>` contra o seed,
+#      a tool MCP `get_issue_context` (cliente stdio) byte-idêntica à CLI, e os
+#      cenários de segurança (http:// recusado sem --insecure; anexo > limite
+#      pulado);
+#   4. derruba o stack com `docker compose down -v` SEMPRE (always()), inclusive
+#      em falha, para não vazar containers/volumes.
+#
+# Tornar o check obrigatório para merge é config de proteção de branch do repo
+# (não deste workflow) — ver a nota em ci.yml.
+
+name: E2E
+
+# `paths-ignore` (correção do gap #87): PRs/pushes que só mexem em docs/markdown
+# NÃO disparam o E2E de Docker (~30min). Qualquer mudança de código
+# (`src/`, `scripts/`, `docker/`, `package*.json`, o próprio workflow) dispara.
+on:
+  push:
+    branches:
+      - main
+      - 'milestone/**'
+    paths-ignore:
+      - '**/*.md'
+      - 'documentation/**'
+      - 'LICENSE'
+      - '.changeset/**'
+  pull_request:
+    branches:
+      - main
+      - 'milestone/**'
+    paths-ignore:
+      - '**/*.md'
+      - 'documentation/**'
+      - 'LICENSE'
+      - '.changeset/**'
+
+# Cancela runs redundantes do mesmo ref (o stack docker é caro; não empilha).
+concurrency:
+  group: e2e-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    name: e2e
+    runs-on: ubuntu-latest
+    # Generoso: docker up + migração do Redmine + one-shots + seed + E2E.
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+        shell: bash
+
+      - name: Build
+        run: npm run build
+        shell: bash
+
+      # Sobe o stack (Redmine + Postgres), espera healthy + one-shots e roda o
+      # seed idempotente. Credenciais são test-only do compose (sem segredos).
+      - name: Bring up seeded Redmine stack
+        run: npm run ci:e2e:up
+        shell: bash
+
+      # CLI valida o bundle contra o seed; MCP (stdio) == CLI; http:// recusado
+      # sem --insecure; anexo > limite pulado.
+      - name: Run E2E (CLI + MCP + security)
+        run: npm run e2e:ci
+        shell: bash
+
+      # Teardown SEMPRE: limpa o stack e os volumes mesmo se algum passo falhar.
+      - name: Tear down stack
+        if: always()
+        run: docker compose -f docker/docker-compose.yml down -v
+        shell: bash

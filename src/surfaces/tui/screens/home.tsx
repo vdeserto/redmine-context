@@ -41,6 +41,7 @@ import { Box, Text, useInput } from 'ink';
 
 import { Spinner } from '../components/spinner.js';
 import { TextInput } from '../components/text-input.js';
+import { glyphs } from '../glyphs.js';
 import { useEscapeInterceptor } from '../hooks/use-escape-interceptor.js';
 import { useIssueSearch, type SearchStatusFilter } from '../hooks/use-issue-search.js';
 import { useListNavigation } from '../hooks/use-list-navigation.js';
@@ -226,7 +227,7 @@ export function HomeScreen() {
         <Text color={theme.muted}> [{STATUS_FILTER_LABELS[statusFilter]}]</Text>
         {!isSearching ? (
           <Text color={theme.muted}>
-            {'  '}/ busca · f filtro · t jobs
+            {`  / busca ${glyphs.middleDot} f filtro ${glyphs.middleDot} t jobs`}
           </Text>
         ) : null}
       </Box>
@@ -238,7 +239,7 @@ export function HomeScreen() {
             <TextInput
               value={query}
               onChange={setQuery}
-              placeholder="digite para buscar…"
+              placeholder={`digite para buscar${glyphs.ellipsis}`}
               isActive={isSearching}
             />
             <Text color={theme.muted}> [{STATUS_FILTER_LABELS[statusFilter]}]</Text>
@@ -363,7 +364,7 @@ export function HomeScreen() {
           ) : (
             <>
               <Text bold color={theme.accent}>
-                ↑/↓
+                {`${glyphs.arrowUp}/${glyphs.arrowDown}`}
               </Text>{' '}
               navega,{' '}
               <Text bold color={theme.accent}>

@@ -25,6 +25,7 @@ import { useState } from 'react';
 
 import { Spinner } from '../../components/spinner.js';
 import { TextInput } from '../../components/text-input.js';
+import { glyphs } from '../../glyphs.js';
 import { useNavigation } from '../../navigation.js';
 import { symbols } from '../../symbols.js';
 import { useTheme } from '../../theme.js';
@@ -84,7 +85,7 @@ export function OnboardingApiKeyScreen() {
           value={apiKey}
           onChange={setApiKey}
           onSubmit={handleSubmit}
-          mask="•"
+          mask={glyphs.maskBullet}
           isActive={status !== 'validating'}
         />
       </Box>

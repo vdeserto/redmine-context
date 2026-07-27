@@ -11,6 +11,7 @@ import { Breadcrumb } from '../../../../src/surfaces/tui/components/breadcrumb.j
 import { SCREENS } from '../../../../src/surfaces/tui/screen.js';
 import { symbols } from '../../../../src/surfaces/tui/symbols.js';
 import { ThemeProvider } from '../../../../src/surfaces/tui/theme.js';
+import { Catch } from '../catch-boundary.js';
 
 describe('TUI: Breadcrumb', () => {
   it('com pilha de 1 item, renderiza só o título da tela inicial (sem separador)', () => {
@@ -46,7 +47,11 @@ describe('TUI: Breadcrumb', () => {
   it('lança erro quando usado fora do ThemeProvider (consome tokens de cor)', () => {
     // Mesmo padrão de useNavigation()/useTheme(): o erro aparece no frame via
     // o ErrorBoundary interno do Ink, não escapa síncrono de render().
-    const { lastFrame } = render(<Breadcrumb stack={['welcome']} />);
+    const { lastFrame } = render(
+      <Catch>
+        <Breadcrumb stack={['welcome']} />
+      </Catch>,
+    );
     expect(lastFrame()).toContain('useTheme() usado fora de <ThemeProvider>.');
   });
 });
