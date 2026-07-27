@@ -83,6 +83,7 @@ ver [Ambiente de teste](#ambiente-de-teste) e [E2E](#e2e-dogfood-cli--mcp)).
 | `npm run build` | Compila para `dist/` |
 | `npm run seed` | Popula fixtures base no Redmine via REST (ver [Seed](#seed-de-fixtures)) |
 | `npm run e2e` | Roteiro E2E de dogfood (CLI + MCP) contra o Docker (ver [E2E](#e2e-dogfood-cli--mcp)) |
+| `npm run ci:e2e:up` | Sobe + espera healthy/one-shots + seed em 1 comando, p/ o CI (ver [CI](#subir-e-seedar-em-1-comando-ci)) |
 
 ## Estrutura
 
@@ -221,6 +222,22 @@ Config via ambiente (defaults combinam com o compose de teste):
 > por sessão e **não bloqueia a REST API via Basic auth**; ainda assim o seed o
 > zera de forma proativa e idempotente (`PUT /users/{id}.json`, mantendo a mesma
 > senha) para manter o admin utilizável em web + API.
+
+### Subir e seedar em 1 comando (CI)
+
+Para o job de E2E no CI (Linux, issue #80), o stack precisa ficar **pronto e
+seedado** em um único passo. `scripts/ci-e2e-up.sh` faz exatamente isso,
+**reutilizando** o compose, o `wait-for-healthy.sh` e o `seed.mjs` (sem fork):
+
+```bash
+npm run ci:e2e:up          # = bash scripts/ci-e2e-up.sh
+```
+
+Passos: `docker compose up -d` → `wait-for-healthy.sh postgres redmine` →
+`docker compose wait load-default-data enable-rest-api` (garante que os one-shots
+saíram com código 0) → `npm run seed` (idempotente). Em sucesso o stack fica **de
+pé** (o teardown, `down -v`, é responsabilidade do chamador). Re-executar é seguro:
+o seed não duplica. Aceita `COMPOSE_FILE`/`TIMEOUT` e as variáveis do seed.
 
 ### E2E dogfood (CLI + MCP)
 
