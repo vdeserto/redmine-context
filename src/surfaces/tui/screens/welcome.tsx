@@ -20,6 +20,7 @@ import { useCallback, useRef, useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 
 import { resolveApiKey, TOOL_NAME, TOOL_VERSION } from '../../../index.js';
+import { GradientText } from '../components/gradient-text.js';
 import { useEnvFallbackAllowed } from '../instance.js';
 import { useNavigation } from '../navigation.js';
 import { useTheme } from '../theme.js';
@@ -89,14 +90,15 @@ export function WelcomeScreen() {
     if (input === 'c') {
       navigateRef.current('config');
     }
+    if (input === 'a') {
+      navigateRef.current('appearance');
+    }
   }, []);
   useInput(handleInput);
 
   return (
     <Box flexDirection="column" paddingX={1} paddingY={1}>
-      <Text bold color={theme.primary}>
-        {TOOL_NAME}
-      </Text>
+      <GradientText colors={theme.gradient ?? [theme.primary]}>{TOOL_NAME}</GradientText>
       <Text color={theme.muted}>v{TOOL_VERSION}</Text>
       <Box marginTop={1}>
         <Text>Contexto completo de issues do Redmine, pronto para qualquer LLM.</Text>
@@ -107,6 +109,7 @@ export function WelcomeScreen() {
           <Text bold color={theme.accent}>?</Text> para atalhos,{' '}
           <Text bold color={theme.accent}>d</Text> para o doctor,{' '}
           <Text bold color={theme.accent}>c</Text> para configuração,{' '}
+          <Text bold color={theme.accent}>a</Text> para aparência,{' '}
           <Text bold color={theme.accent}>q</Text> para sair.
         </Text>
       </Box>

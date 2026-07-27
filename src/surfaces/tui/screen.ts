@@ -11,6 +11,7 @@
 import type { ComponentType } from 'react';
 
 import { AboutScreen } from './screens/about.js';
+import { AppearanceScreen } from './screens/appearance.js';
 import { ConfigScreen } from './screens/config.js';
 import { DoctorScreen } from './screens/doctor.js';
 import { ExportScreen } from './screens/export.js';
@@ -30,6 +31,7 @@ import { symbols } from './symbols.js';
 export type ScreenName =
   | 'welcome'
   | 'about'
+  | 'appearance'
   | 'doctor'
   | 'config'
   | 'home'
@@ -64,6 +66,7 @@ export interface ScreenEntry {
 export const SCREENS: Record<ScreenName, ScreenEntry> = {
   welcome: { component: WelcomeScreen, title: 'Início' },
   about: { component: AboutScreen, title: 'Atalhos' },
+  appearance: { component: AppearanceScreen, title: 'Aparência' },
   doctor: { component: DoctorScreen, title: 'Doctor' },
   config: { component: ConfigScreen, title: 'Configuração' },
   home: { component: HomeScreen, title: 'Minhas issues' },

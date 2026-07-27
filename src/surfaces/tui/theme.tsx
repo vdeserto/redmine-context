@@ -52,6 +52,21 @@ export interface Theme {
   danger: string;
   /** Bordas de Box (painéis, cards, modais). Discreta por padrão. */
   border: string;
+  /**
+   * Segunda cor de identidade (opcional) — variedade em listas/cabeçalhos sem
+   * abusar do `accent`. Ausente ⇒ cai em {@link Theme.primary}.
+   */
+  secondary?: string;
+  /**
+   * Cor de FUNDO de painéis/realce (opcional, #190). Usada no full-screen e no
+   * item selecionado. Ausente ⇒ sem fundo (herda o do terminal).
+   */
+  background?: string;
+  /**
+   * Ramp de cores (2+ hex) para efeitos de GRADIENTE em títulos/breadcrumb
+   * (opcional, #190). Ausente ⇒ texto sólido em {@link Theme.primary}.
+   */
+  gradient?: readonly string[];
 }
 
 /** Tema padrão da TUI — ver guideline de uso na documentação do arquivo. */
@@ -96,6 +111,46 @@ export function useTheme(): Theme {
     throw new Error('useTheme() usado fora de <ThemeProvider>.');
   }
   return theme;
+}
+
+/**
+ * Controlador de PALETA (#190) — permite ao seletor de tema trocar a paleta ao
+ * vivo (preview ao navegar) e confirmar (persistindo). Fornecido pelo `App`, que
+ * mantém o estado da paleta ativa e o repassa ao {@link ThemeProvider}.
+ */
+export interface ThemeController {
+  /** Id da paleta atualmente ativa. */
+  readonly paletteId: string;
+  /** Aplica uma paleta AO VIVO, sem persistir (preview ao navegar no seletor). */
+  preview(id: string): void;
+  /** Aplica E persiste a paleta (Enter no seletor). */
+  select(id: string): Promise<void>;
+}
+
+const ThemeControllerContext = createContext<ThemeController | undefined>(undefined);
+
+/** Provider do controlador de paleta — montado pelo `App`. */
+export function ThemeControllerProvider({
+  value,
+  children,
+}: {
+  value: ThemeController;
+  children: ReactNode;
+}) {
+  return <ThemeControllerContext.Provider value={value}>{children}</ThemeControllerContext.Provider>;
+}
+
+/**
+ * Hook do controlador de paleta — usado pelo seletor de tema.
+ *
+ * @throws {Error} Se chamado fora de um `<ThemeControllerProvider>`.
+ */
+export function useThemeController(): ThemeController {
+  const controller = useContext(ThemeControllerContext);
+  if (controller === undefined) {
+    throw new Error('useThemeController() usado fora de <ThemeControllerProvider>.');
+  }
+  return controller;
 }
 
 /**

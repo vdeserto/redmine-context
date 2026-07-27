@@ -267,10 +267,21 @@ de texto completa — mesma credencial e mesmo core da CLI/MCP:
 | Exportação | `e` no Detalhe | grava o bundle MD/JSON (destino com `~`) |
 | Jobs | `t` | operações da sessão |
 | Doctor / Config | `d` / `c` no Início | status do ambiente · logout |
+| Aparência | `a` no Início | escolher a **paleta de cores** (preview ao vivo) |
 
 Atalhos globais: `Esc` volta · `q` sai · `Ctrl+C` duas vezes sai · `?` atalhos.
 Sessão expirada (401) reabre o login e retoma a operação automaticamente.
 Em `NO_COLOR`, `CI=true` ou saída não-TTY, a TUI cede lugar ao modo texto puro.
+
+### Full-screen e paletas de cores
+
+Em um terminal com cor, a TUI abre em **tela cheia** (alt-screen, como o vim/htop) —
+o conteúdo anterior do terminal é restaurado ao sair. As cores vêm de **kits de
+paletas** consagradas em truecolor: **Catppuccin Mocha** (default), **Dracula**,
+**Nord**, **Tokyo Night**, **Gruvbox Dark**, **Rosé Pine**, **Solarized Dark** e
+**One Dark**. Abra a tela **Aparência** (`a` no Início), navegue com `↑`/`↓` para
+pré-visualizar ao vivo, `Enter` salva (persistida em `settings.json`, por SO via
+`env-paths`) e `Esc` cancela. A escolha vale para os próximos boots.
 
 ## Ambiente de teste
 

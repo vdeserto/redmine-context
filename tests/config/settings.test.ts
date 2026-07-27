@@ -57,6 +57,22 @@ describe('FileSettingsStore', () => {
     expect(await store.getInstanceUrl()).toBeUndefined();
   });
 
+  it('paleta (#190): set persiste e get devolve; whitespace-only → undefined', async () => {
+    const filePath = tmpPath();
+    const store = new FileSettingsStore({ filePath });
+    expect(await store.getPaletteId()).toBeUndefined();
+    await store.setPaletteId('dracula');
+    expect(await store.getPaletteId()).toBe('dracula');
+    // Round-trip por nova instância + convive com instanceUrl na mesma settings.json.
+    await store.setInstanceUrl('https://redmine.example');
+    const reread = new FileSettingsStore({ filePath });
+    expect(await reread.getPaletteId()).toBe('dracula');
+    expect(await reread.getInstanceUrl()).toBe('https://redmine.example');
+    // whitespace-only editado à mão → tratado como ausente.
+    writeFileSync(filePath, JSON.stringify({ palette: '   ' }));
+    expect(await new FileSettingsStore({ filePath }).getPaletteId()).toBeUndefined();
+  });
+
   it('preserva chaves desconhecidas ao regravar (formato evolutivo)', async () => {
     const filePath = tmpPath();
     const store = new FileSettingsStore({ filePath });
