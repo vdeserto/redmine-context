@@ -32,15 +32,24 @@ import { runTui } from '../../../src/surfaces/tui/index.js';
 function harness(overrides: Record<string, unknown> = {}) {
   const out: string[] = [];
   const err: string[] = [];
+  // Settings em memória (#187): isola do arquivo real de config — sem esta
+  // injeção, `run()` usaria `defaultSettingsStore()` (arquivo do usuário) e os
+  // testes poluiriam/liriam a instância persistida real.
+  const settings = {
+    getInstanceUrl: vi.fn().mockResolvedValue(undefined),
+    setInstanceUrl: vi.fn().mockResolvedValue(undefined),
+    clearInstanceUrl: vi.fn().mockResolvedValue(undefined),
+  };
   const deps = {
     stdout: (s: string) => out.push(s),
     stderr: (s: string) => err.push(s),
     env: {} as NodeJS.ProcessEnv,
     prompt: vi.fn(),
     promptPassword: vi.fn(),
+    settings,
     ...overrides,
   };
-  return { deps, stdout: () => out.join(''), stderr: () => err.join('') };
+  return { deps, settings, stdout: () => out.join(''), stderr: () => err.join('') };
 }
 
 /** Stream de bundle bem-sucedido: um progresso + o resultado. */
@@ -232,11 +241,39 @@ describe('CLI: comando issue', () => {
     expect(core.fetchIssueBundle).toHaveBeenCalledWith(expect.objectContaining({ baseUrl: 'https://env.example' }));
   });
 
+  it('usa a URL PERSISTIDA (login) quando --url e REDMINE_URL ausentes (#187)', async () => {
+    vi.mocked(core.resolveApiKey).mockResolvedValue('key');
+    vi.mocked(core.fetchIssueBundle).mockReturnValue(bundleStream('MD'));
+    const h = harness();
+    h.settings.getInstanceUrl.mockResolvedValue('https://persisted.example');
+
+    const code = await run(['issue', '42'], h.deps);
+
+    expect(code).toBe(0);
+    expect(core.fetchIssueBundle).toHaveBeenCalledWith(
+      expect.objectContaining({ baseUrl: 'https://persisted.example' }),
+    );
+  });
+
+  it('--url tem precedência sobre a URL persistida (#187)', async () => {
+    vi.mocked(core.resolveApiKey).mockResolvedValue('key');
+    vi.mocked(core.fetchIssueBundle).mockReturnValue(bundleStream('MD'));
+    const h = harness();
+    h.settings.getInstanceUrl.mockResolvedValue('https://persisted.example');
+
+    await run(['issue', '42', '--url', 'https://flag.example'], h.deps);
+
+    expect(core.fetchIssueBundle).toHaveBeenCalledWith(
+      expect.objectContaining({ baseUrl: 'https://flag.example' }),
+    );
+  });
+
   it('sem URL retorna 1 e orienta o uso', async () => {
     const h = harness();
     const code = await run(['issue', '42'], h.deps);
     expect(code).toBe(1);
     expect(h.stderr()).toContain('REDMINE_URL');
+    expect(h.stderr()).toContain('login');
     expect(core.resolveApiKey).not.toHaveBeenCalled();
   });
 
@@ -355,6 +392,43 @@ describe('CLI: comando login', () => {
     const code = await run(['login'], h.deps);
     expect(code).toBe(1);
     expect(h.stderr()).toContain('obrigatória');
+  });
+
+  it('persiste a URL da instância no login bem-sucedido (#187)', async () => {
+    cascadeMock();
+    vi.mocked(core.loginWithPassword).mockResolvedValue({
+      apiKey: 'K',
+      user: { id: 1, login: 'alice', name: 'Alice' },
+    });
+    const h = harness({
+      prompt: vi.fn().mockResolvedValue('alice'),
+      promptPassword: vi.fn().mockResolvedValue('secret'),
+    });
+
+    const code = await run(['login', '--url', 'https://login.example'], h.deps);
+
+    expect(code).toBe(0);
+    expect(h.settings.setInstanceUrl).toHaveBeenCalledWith('https://login.example');
+  });
+
+  it('login usa a URL persistida como fallback antes de perguntar (#187)', async () => {
+    cascadeMock();
+    vi.mocked(core.loginWithPassword).mockResolvedValue({
+      apiKey: 'K',
+      user: { id: 1, login: 'alice', name: 'Alice' },
+    });
+    const prompt = vi.fn().mockResolvedValue('alice');
+    const h = harness({ prompt, promptPassword: vi.fn().mockResolvedValue('secret') });
+    h.settings.getInstanceUrl.mockResolvedValue('https://saved.example');
+
+    const code = await run(['login'], h.deps);
+
+    expect(code).toBe(0);
+    // Não perguntou a URL (usou a persistida); o login foi contra ela.
+    expect(prompt).not.toHaveBeenCalledWith(expect.stringContaining('URL'));
+    expect(core.loginWithPassword).toHaveBeenCalledWith(
+      expect.objectContaining({ baseUrl: 'https://saved.example' }),
+    );
   });
 
   it('erro de login (não-auth) mapeia para exit 2', async () => {

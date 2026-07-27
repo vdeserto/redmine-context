@@ -75,11 +75,20 @@ export async function runIssue(parsed: ParsedArgs, deps: RunDeps): Promise<numbe
     return EXIT.GENERIC;
   }
 
-  const baseUrl = stringFlag(parsed, 'url') ?? deps.env.REDMINE_URL;
-  if (baseUrl === undefined || baseUrl.length === 0) {
-    deps.stderr('Informe a URL do Redmine com --url <url> ou defina REDMINE_URL.\n');
+  // Instância: --url → REDMINE_URL → URL persistida no login (#187).
+  const persistedUrl = deps.settings ? await deps.settings.getInstanceUrl() : undefined;
+  const resolved = core.resolveInstanceUrl({
+    flagUrl: stringFlag(parsed, 'url'),
+    envUrl: deps.env.REDMINE_URL,
+    persistedUrl,
+  });
+  if (resolved === undefined) {
+    deps.stderr(
+      'Instância não configurada. Use --url <url>, defina REDMINE_URL, ou rode `redmine-context login`.\n',
+    );
     return EXIT.GENERIC;
   }
+  const baseUrl = resolved.url;
   const insecure = parsed.flags.get('insecure') === true;
 
   let apiKey: string | undefined;
@@ -211,7 +220,8 @@ async function resolveKeyInteractively(baseUrl: string, insecure: boolean, deps:
 export async function runLogin(parsed: ParsedArgs, deps: RunDeps): Promise<number> {
   const insecure = parsed.flags.get('insecure') === true;
 
-  let baseUrl = stringFlag(parsed, 'url') ?? deps.env.REDMINE_URL;
+  const persistedUrl = deps.settings ? await deps.settings.getInstanceUrl() : undefined;
+  let baseUrl = stringFlag(parsed, 'url') ?? deps.env.REDMINE_URL ?? persistedUrl;
   if (baseUrl === undefined || baseUrl.length === 0) {
     baseUrl = (await deps.prompt('URL do Redmine: ')).trim();
   }
@@ -237,6 +247,13 @@ export async function runLogin(parsed: ParsedArgs, deps: RunDeps): Promise<numbe
         logger: { warn: (message) => deps.stderr(`${message}\n`) },
       })
       .set(baseUrl, apiKey);
+    // Persiste a instância (#187) para que TUI/CLI/MCP não dependam de REDMINE_URL.
+    // Falha ao salvar a instância NÃO invalida o login (a credencial já foi salva).
+    try {
+      await deps.settings?.setInstanceUrl(baseUrl);
+    } catch (error) {
+      deps.stderr(`aviso: não foi possível salvar a instância padrão: ${messageOf(error)}\n`);
+    }
     deps.stderr(`Credencial salva para ${baseUrl}.\n`);
     return 0;
   } catch (error) {

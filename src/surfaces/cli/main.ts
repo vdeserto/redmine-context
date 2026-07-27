@@ -17,7 +17,7 @@ import { runDoctor, runIssue, runLogin } from './commands.js';
 import { createPromptSession } from './prompts.js';
 import { shouldRenderTui } from './tty.js';
 import type { ParsedArgs, RunDeps } from './types.js';
-import { TOOL_VERSION } from '../../index.js';
+import { TOOL_VERSION, defaultSettingsStore } from '../../index.js';
 import { runStdioServer } from '../mcp/server.js';
 import { runTui } from '../tui/index.js';
 
@@ -138,6 +138,7 @@ function defaultDeps(): RunDeps & { closePrompts(): void } {
     prompt: (q) => session.prompt(q),
     promptPassword: (q) => session.promptPassword(q),
     isTTY: process.stdout.isTTY === true,
+    settings: defaultSettingsStore(),
     closePrompts: () => session.close(),
   };
 }

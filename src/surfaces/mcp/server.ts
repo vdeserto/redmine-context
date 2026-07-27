@@ -89,6 +89,13 @@ export interface McpServerDeps {
   resolveApiKey: typeof resolveApiKey;
   /** Ambiente consultado para `REDMINE_URL` e pela cascata de credencial. */
   env: NodeJS.ProcessEnv;
+  /**
+   * Store da URL da instância persistida (#187): fallback quando `REDMINE_URL`
+   * não está no ambiente do processo (ex.: registro MCP sem a env, mas com
+   * `login` já feito). Continua uma ÚNICA instância configurada — nunca vem dos
+   * argumentos das tools. Opcional (ausente nos testes que fixam a env).
+   */
+  settings?: core.SettingsStore;
   /** Versão da ferramenta gravada no bundle. */
   toolVersion: string;
   /**
@@ -227,9 +234,14 @@ interface ResolvedInstance {
  * @returns A instância resolvida, ou um CallToolResult de erro (`isError`).
  */
 async function resolveInstance(deps: McpServerDeps): Promise<ResolvedInstance | CallToolResult> {
-  const baseUrl = deps.env.REDMINE_URL;
+  // REDMINE_URL tem precedência; sem ela, cai na URL persistida no login (#187).
+  // Continua UMA instância configurada (env/persistida) — nunca de argumento de tool.
+  const persistedUrl = deps.settings ? await deps.settings.getInstanceUrl() : undefined;
+  const baseUrl = deps.env.REDMINE_URL ?? persistedUrl;
   if (baseUrl === undefined || baseUrl.length === 0) {
-    return errorResult('Instância não configurada. Defina REDMINE_URL no ambiente do processo.');
+    return errorResult(
+      'Instância não configurada. Defina REDMINE_URL no ambiente do processo ou rode `redmine-context login`.',
+    );
   }
 
   let apiKey: string | undefined;
@@ -516,6 +528,7 @@ export function defaultMcpDeps(): McpServerDeps {
     fetchAttachmentText: core.fetchAttachmentTextCacheFirst,
     resolveApiKey: core.resolveApiKey,
     env: process.env,
+    settings: core.defaultSettingsStore(),
     toolVersion: core.TOOL_VERSION,
     insecure: parseInsecure(process.env),
     // Diagnóstico SEMPRE em stderr: o stdout pertence ao protocolo stdio.

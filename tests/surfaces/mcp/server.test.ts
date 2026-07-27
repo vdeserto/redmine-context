@@ -104,6 +104,41 @@ describe('MCP: get_issue_context handler', () => {
     expect(deps.logs.join('')).toContain('Buscando issue');
   });
 
+  it('sem REDMINE_URL, usa a URL PERSISTIDA do login (#187)', async () => {
+    vi.mocked(core.resolveApiKey).mockResolvedValue('key');
+    vi.mocked(core.fetchIssueBundle).mockReturnValue(bundleStream('MD'));
+    const settings = {
+      getInstanceUrl: vi.fn().mockResolvedValue('https://persisted.example'),
+      setInstanceUrl: vi.fn(),
+      clearInstanceUrl: vi.fn(),
+    };
+    const handler = createGetIssueContextHandler(makeDeps({ env: {} as NodeJS.ProcessEnv, settings }));
+
+    const result = await handler({ issue_id: 42 });
+
+    expect(result.isError).toBeFalsy();
+    expect(core.fetchIssueBundle).toHaveBeenCalledWith(
+      expect.objectContaining({ baseUrl: 'https://persisted.example' }),
+    );
+  });
+
+  it('REDMINE_URL tem precedência sobre a persistida (#187)', async () => {
+    vi.mocked(core.resolveApiKey).mockResolvedValue('key');
+    vi.mocked(core.fetchIssueBundle).mockReturnValue(bundleStream('MD'));
+    const settings = {
+      getInstanceUrl: vi.fn().mockResolvedValue('https://persisted.example'),
+      setInstanceUrl: vi.fn(),
+      clearInstanceUrl: vi.fn(),
+    };
+    const handler = createGetIssueContextHandler(makeDeps({ settings })); // env já tem REDMINE_URL
+
+    await handler({ issue_id: 42 });
+
+    expect(core.fetchIssueBundle).toHaveBeenCalledWith(
+      expect.objectContaining({ baseUrl: 'https://redmine.example' }),
+    );
+  });
+
   it('sucesso json: format=json mapeia para o formato canônico do core', async () => {
     vi.mocked(core.resolveApiKey).mockResolvedValue('key');
     vi.mocked(core.fetchIssueBundle).mockReturnValue(bundleStream('{"a":1}', 'json'));

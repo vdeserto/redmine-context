@@ -36,6 +36,18 @@ export {
 } from './keyring.js';
 
 export {
+  FileSettingsStore,
+  defaultSettingsPath,
+  defaultSettingsStore,
+  resolveInstanceUrl,
+  type FileSettingsStoreOptions,
+  type InstanceUrlOrigin,
+  type ResolvedInstanceUrl,
+  type Settings,
+  type SettingsStore,
+} from './settings.js';
+
+export {
   diagnoseBinaries,
   tesseractInstallHint,
   pdftotextInstallHint,
