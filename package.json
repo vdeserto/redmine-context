@@ -29,6 +29,7 @@
     "test": "vitest run --coverage",
     "seed": "node scripts/seed.mjs",
     "e2e": "node scripts/e2e.mjs",
+    "e2e:ci": "node scripts/e2e-ci.mjs",
     "ci:e2e:up": "bash scripts/ci-e2e-up.sh"
   },
   "devDependencies": {
