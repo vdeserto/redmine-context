@@ -18,15 +18,28 @@
 
 name: E2E
 
+# `paths-ignore` (correção do gap #87): PRs/pushes que só mexem em docs/markdown
+# NÃO disparam o E2E de Docker (~30min). Qualquer mudança de código
+# (`src/`, `scripts/`, `docker/`, `package*.json`, o próprio workflow) dispara.
 on:
   push:
     branches:
       - main
       - 'milestone/**'
+    paths-ignore:
+      - '**/*.md'
+      - 'documentation/**'
+      - 'LICENSE'
+      - '.changeset/**'
   pull_request:
     branches:
       - main
       - 'milestone/**'
+    paths-ignore:
+      - '**/*.md'
+      - 'documentation/**'
+      - 'LICENSE'
+      - '.changeset/**'
 
 # Cancela runs redundantes do mesmo ref (o stack docker é caro; não empilha).
 concurrency:

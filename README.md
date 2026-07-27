@@ -62,14 +62,19 @@ por SO):
 
 O `doctor` reporta o status do modelo junto com os binários.
 
-#### Download automático opt-in (`--download-binaries`)
+#### Download automático opt-in (`--download-binaries`) — planejado (#58)
 
-Onde existe **artefato estático oficial**, o opt-in `--download-binaries` pode
+> ⚠️ **Ainda não implementado.** O flag `--download-binaries` está **planejado**
+> ([issue #58](https://github.com/vdeserto/redmine-context/issues/58)); por ora,
+> instale os binários pelo gerenciador do seu SO (tabela acima) — o `doctor`
+> aponta a instrução correta. Esta seção descreve o comportamento **futuro**.
+
+Onde existe **artefato estático oficial**, o opt-in `--download-binaries` **poderá**
 obter o binário/modelo automaticamente (explícito e ruidoso; **nunca** no MCP
 headless): **ffmpeg** ([builds BtbN](https://github.com/BtbN/FFmpeg-Builds)),
 **whisper.cpp** ([releases](https://github.com/ggml-org/whisper.cpp/releases)) e o
 **modelo GGUF**. O **tesseract** não tem artefato estático oficial — instale-o
-pelo gerenciador do seu SO (tabela acima). Cada download tem SHA-256 pinado, URL
+pelo gerenciador do seu SO (tabela acima). Cada download terá SHA-256 pinado, URL
 fixa e escrita atômica
 ([ADR-002](documentation/adr/ADR-002-midia-100-local-politica-binarios.md)).
 

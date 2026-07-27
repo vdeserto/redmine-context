@@ -13,6 +13,9 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       include: ['src/**/*.{ts,tsx}'],
+      // Arquivos só de tipos/interfaces não têm código executável; o v8 os conta
+      // como 0% e polui o relatório (gap #87, NIT). Sem impacto no threshold real.
+      exclude: ['src/**/types.ts'],
       thresholds: {
         lines: 80,
         functions: 80,
