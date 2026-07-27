@@ -236,6 +236,13 @@ describe('fixtures versionadas: ausência de segredos (M5-06 #81)', () => {
     // O host local do stack de gravação não pode vazar: foi reescrito p/ o placeholder.
     expect(RAW).not.toContain('localhost:3080');
     expect(FIXTURE.baseUrl).toBe('https://redmine.example');
+    // Exaustivo: os padrões de VALOR de segredo são varridos no ARQUIVO INTEIRO
+    // (incl. meta/`note`), pois não dão falso-positivo no texto descritivo — só a
+    // api_key real (40 hex), Basic <b64> e `?key=<v>` casariam. (O nome de header
+    // "Authorization" fica só no scan de `interactions` por aparecer no `note`.)
+    expect(RAW).not.toMatch(/\b[a-f0-9]{40}\b/i);
+    expect(RAW).not.toMatch(/\bbasic\s+[a-z0-9+/=]{8,}/i);
+    expect(RAW).not.toMatch(/[?&]key=/i);
   });
 
   // Campos sensíveis, se existirem, aparecem apenas REDIGIDOS.
