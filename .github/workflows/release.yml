@@ -17,9 +17,15 @@
 # CHANGELOG). O repo precisa ser PÚBLICO para a proveniência aparecer no npm.
 #
 # GUARDADO POR NPM_TOKEN (INERTE AGORA): o passo do changesets/action só roda se
-# `secrets.NPM_TOKEN` estiver definido. Enquanto o Victor não adicionar o segredo,
-# este job é PULADO (skip) — NADA é publicado. Isso satisfaz o AC "publica com
+# `NPM_TOKEN` estiver definido. Enquanto o Victor não adicionar o segredo, este
+# passo é PULADO (skip) — NADA é publicado. Isso satisfaz o AC "publica com
 # provenance" (config correta) sem publicar nada hoje.
+#
+# NOTA (correção do gap #87): o contexto `secrets` NÃO é acessível em expressões
+# `if:` — `if: ${{ secrets.NPM_TOKEN != '' }}` seria sempre não-confiável e poderia
+# deixar o passo eternamente pulado (nunca publicaria quando o token existisse).
+# Por isso o segredo é mapeado para uma env no nível do JOB e o `if:` testa a env
+# (o contexto `env` É acessível em `if:` de passo).
 #
 # NÃO edita ci.yml/e2e.yml/smoke-npx.yml — workflow separado.
 
@@ -79,6 +85,10 @@ jobs:
     needs: gates
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # Mapeia o segredo para env do JOB: `secrets` não funciona em `if:`, mas `env`
+    # sim. Vazio (sem o segredo) → o passo abaixo é pulado; NADA é publicado.
+    env:
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
     permissions:
       contents: write # commit/tag do "Version Packages" + CHANGELOG
       pull-requests: write # abre/atualiza o PR "Version Packages"
@@ -100,10 +110,10 @@ jobs:
         run: npm ci
         shell: bash
 
-      # GUARDA: só roda se NPM_TOKEN existir. Sem o segredo, este passo é PULADO
-      # (inerte) e NADA é versionado/publicado.
+      # GUARDA: só roda se NPM_TOKEN existir (via env do job — `secrets` não vale
+      # em `if:`). Sem o segredo, este passo é PULADO (inerte); NADA é publicado.
       - name: Create Release PR or Publish (npm, com provenance)
-        if: ${{ secrets.NPM_TOKEN != '' }}
+        if: ${{ env.NPM_TOKEN != '' }}
         uses: changesets/action@v1
         with:
           version: npm run version # changeset version (bump + CHANGELOG)
