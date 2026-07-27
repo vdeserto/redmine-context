@@ -36,13 +36,13 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 /** Raiz do pacote (tests/packaging → raiz). */
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 
-/**
- * Nome do executável do npm portável por SO: no Windows o npm é um shim
- * `npm.cmd` (execFileSync/spawnSync sem `shell` não resolve PATHEXT, então
- * `'npm'` daria ENOENT); no POSIX é `npm`. Evita `shell: true` (proibido pela
- * lint rule do #83).
- */
-const NPM = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+// Reinvoca o npm cross-SO via `node <npm-cli.js>` (npm_execpath é setado pelo
+// `npm test`) — evita o shim `npm.cmd` do Windows, que dá EINVAL em
+// execFileSync/spawnSync sem `shell` (e a lint rule do #83 proíbe `shell: true`).
+const NPM_CLI = process.env.npm_execpath;
+const NPM_VIA_NODE = typeof NPM_CLI === 'string' && NPM_CLI.endsWith('.js');
+const NPM_BIN = NPM_VIA_NODE ? process.execPath : (NPM_CLI ?? 'npm');
+const NPM_PREFIX: readonly string[] = NPM_VIA_NODE && NPM_CLI !== undefined ? [NPM_CLI] : [];
 
 /** Padrão de qualquer ferramenta/etapa de compilação nativa (deve estar AUSENTE). */
 const NATIVE_BUILD = /node-gyp|node-pre-gyp|prebuild-install|gyp info|node-gyp rebuild/i;
@@ -69,11 +69,11 @@ beforeAll(() => {
 
   // Build explícito ANTES do pack com --ignore-scripts: assim o `prepack` (que
   // roda `tsc`) não roda de novo nem contamina o JSON de `npm pack --json`.
-  execFileSync(NPM, ['run', 'build'], { cwd: ROOT, stdio: 'pipe' });
+  execFileSync(NPM_BIN, [...NPM_PREFIX, 'run', 'build'], { cwd: ROOT, stdio: 'pipe' });
 
   const raw = execFileSync(
-    NPM,
-    ['pack', '--json', '--ignore-scripts', '--pack-destination', workDir],
+    NPM_BIN,
+    [...NPM_PREFIX, 'pack', '--json', '--ignore-scripts', '--pack-destination', workDir],
     { cwd: ROOT, encoding: 'utf8' },
   );
   const meta = (JSON.parse(raw) as readonly PackResult[])[0];
@@ -104,8 +104,9 @@ beforeAll(() => {
   // rede num gate release-blocking (M1 do review). Hermetismo pleno (lockfile fixo no
   // consumer + `--offline`) fica como follow-up se surgir flakiness.
   const install = spawnSync(
-    NPM,
+    NPM_BIN,
     [
+      ...NPM_PREFIX,
       'install',
       tarball,
       '--prefer-offline',

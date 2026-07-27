@@ -20,12 +20,13 @@ import { beforeAll, describe, expect, it } from 'vitest';
 /** Raiz do pacote (tests/packaging → raiz). */
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 
-/**
- * Nome do executável do npm portável por SO: no Windows o npm é um shim
- * `npm.cmd` (execFileSync sem `shell` não resolve PATHEXT, então `'npm'` daria
- * ENOENT); no POSIX é `npm`. Evita `shell: true` (proibido pela lint rule do #83).
- */
-const NPM = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+// Reinvoca o npm cross-SO via `node <npm-cli.js>` (npm_execpath é setado pelo
+// `npm test`) — evita o shim `npm.cmd` do Windows, que dá EINVAL em
+// execFileSync/spawnSync sem `shell` (e a lint rule do #83 proíbe `shell: true`).
+const NPM_CLI = process.env.npm_execpath;
+const NPM_VIA_NODE = typeof NPM_CLI === 'string' && NPM_CLI.endsWith('.js');
+const NPM_BIN = NPM_VIA_NODE ? process.execPath : (NPM_CLI ?? 'npm');
+const NPM_PREFIX: readonly string[] = NPM_VIA_NODE && NPM_CLI !== undefined ? [NPM_CLI] : [];
 
 interface PackFileEntry {
   readonly path: string;
@@ -46,11 +47,11 @@ beforeAll(() => {
 
   // Build explícito ANTES do pack (com --ignore-scripts) para que a saída do
   // tsc nunca contamine o JSON de `npm pack --json`. Determinístico.
-  execFileSync(NPM, ['run', 'build'], { cwd: ROOT, stdio: 'pipe' });
+  execFileSync(NPM_BIN, [...NPM_PREFIX, 'run', 'build'], { cwd: ROOT, stdio: 'pipe' });
 
   const raw = execFileSync(
-    NPM,
-    ['pack', '--json', '--ignore-scripts', '--pack-destination', tmp],
+    NPM_BIN,
+    [...NPM_PREFIX, 'pack', '--json', '--ignore-scripts', '--pack-destination', tmp],
     { cwd: ROOT, encoding: 'utf8' },
   );
   const meta = (JSON.parse(raw) as readonly PackResult[])[0];
