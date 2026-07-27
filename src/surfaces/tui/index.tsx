@@ -98,7 +98,7 @@ export async function runTui(deps: RunTuiDeps = {}): Promise<number> {
   try {
     const { waitUntilExit } = render(
       <InstanceProvider value={instance}>
-        <App initialPaletteId={paletteId} settings={settings} fullScreen={fullScreen} />
+        <App initialPaletteId={paletteId} settings={settings} />
       </InstanceProvider>,
       { exitOnCtrlC: false },
     );

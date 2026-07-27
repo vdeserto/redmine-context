@@ -60,8 +60,10 @@ export interface Theme {
    */
   secondary?: string;
   /**
-   * Cor de FUNDO da tela em full-screen (opcional, #190) — consumida só em
-   * `app.tsx` (o fill do `AppShell`). Ausente ⇒ sem fundo (herda o do terminal).
+   * Cor de FUNDO da paleta (opcional, #190). RESERVADA — hoje NÃO é consumida:
+   * o full-screen usa o alt-screen sem pintar um fundo sólido (pintar deixava uma
+   * emenda no topo e um retângulo que não cobria a tela toda — #190 polish). Fica
+   * na paleta para um eventual modo "fundo temático" opt-in no futuro.
    */
   background?: string;
   /**

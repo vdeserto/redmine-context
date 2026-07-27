@@ -48,7 +48,6 @@ import {
   useOnboarding,
   type OnboardingReAuth,
 } from './screens/onboarding/onboarding-context.js';
-import { useStdoutDimensions } from './hooks/use-stdout-dimensions.js';
 import { DEFAULT_PALETTE_ID, resolvePalette } from './palettes.js';
 import { INITIAL_SCREEN, SCREENS, type ScreenName } from './screen.js';
 import { symbols } from './symbols.js';
@@ -102,8 +101,6 @@ export interface AppProps {
   initialPaletteId?: string;
   /** Store para PERSISTIR a paleta escolhida (#190). Ausente ⇒ persistência é no-op. */
   settings?: Pick<SettingsStore, 'setPaletteId'>;
-  /** Preenche a altura do terminal (full-screen, #190). Só o `runTui` liga em TTY. */
-  fullScreen?: boolean;
 }
 
 /**
@@ -143,7 +140,7 @@ export function useThemeControllerState(
 }
 
 export function App(props: AppProps = {}) {
-  const { initialPaletteId, settings, fullScreen = false } = props;
+  const { initialPaletteId, settings } = props;
   const navigation = useNavigationStack(INITIAL_SCREEN);
   const onboardingCallbacks = useOnboardingCallbacks();
 
@@ -165,7 +162,7 @@ export function App(props: AppProps = {}) {
                     (primeiro produtor real) e `./screens/jobs.tsx` (painel) —
                     ver o JSDoc de `./job-registry.tsx` para o contrato completo. */}
                 <JobRegistryProvider>
-                  <AppShell fullScreen={fullScreen} />
+                  <AppShell />
                 </JobRegistryProvider>
               </LoadedIssueProvider>
             </HomeSelectionProvider>
@@ -181,17 +178,12 @@ export function App(props: AppProps = {}) {
  * tela atual. Só existe dentro dos providers de `App` — depende de
  * `useTheme()`/`useNavigation()`.
  */
-function AppShell({ fullScreen = false }: { fullScreen?: boolean }) {
+function AppShell() {
   const { exit } = useApp();
   const { current, pop, popTo, stack } = useNavigation();
   const { reAuth, abortReAuth } = useOnboarding();
   const theme = useTheme();
   const { armed } = useExitGuard(exit);
-  // Full-screen (#190): preenche a altura/largura do terminal (alt-screen ligado
-  // pelo runTui) e pinta o fundo temático. Só quando há dimensões reais (TTY);
-  // nos testes (`ink-testing-library`) `rows` é undefined ⇒ layout normal.
-  const { rows, columns } = useStdoutDimensions();
-  const fill = fullScreen && rows !== undefined;
 
   // Handler ESTÁVEL (refs + useCallback): identidade nova a cada render faz o
   // useInput des/re-subscrever no efeito pós-commit, abrindo janelas em que
@@ -247,17 +239,13 @@ function AppShell({ fullScreen = false }: { fullScreen?: boolean }) {
 
   const Screen = SCREENS[current].component;
 
+  // Full-screen é o ALT-SCREEN (o `runTui` liga o buffer alternativo em TTY): o
+  // app ocupa a tela inteira e restaura ao sair, como vim/htop. NÃO pintamos um
+  // fundo sólido nem forçamos altura fixa — isso deixava uma emenda no topo, um
+  // retângulo que não chegava ao rodapé e artefatos de layout (#190 polish). O
+  // conteúdo fica no topo e as cores vêm dos tokens da paleta (texto/bordas).
   return (
-    <Box
-      flexDirection="column"
-      // Full-screen (#190): `minHeight` (NÃO `height` fixo) — o container CRESCE
-      // com o conteúdo quando ele é maior que a tela (o terminal corta o excesso,
-      // como antes), e só ENCHE até `rows` quando o conteúdo é menor (fundo cobre
-      // a tela). `height` fixo faria o Yoga ENCOLHER/AMOSTRAR linhas de listas
-      // longas (home/jobs), corrompendo o layout (achado B2 da review).
-      {...(fill ? { minHeight: rows, width: columns } : {})}
-      {...(fill && theme.background !== undefined ? { backgroundColor: theme.background } : {})}
-    >
+    <Box flexDirection="column">
       <Breadcrumb stack={stack} />
       {armed ? (
         <Box paddingX={1} marginBottom={1}>
