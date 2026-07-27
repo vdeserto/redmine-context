@@ -54,5 +54,24 @@ idioma auto-detect + override (`por+eng` no tesseract) · limites 100 MB/20 min 
 
   (Repetir trocando `main` por `milestone/M5` para proteger a branch de milestone.)
 
+## Replay offline via fixtures (#81 / M5-06)
+- **Problema:** o E2E real (#80) precisa de Docker e só roda no Linux; macOS/Windows
+  da matriz (#77) não têm o Redmine. O #81 dá cobertura E2E-equivalente **offline**.
+- **Mecanismo:** fixtures HTTP gravadas + replay pelo **stub de `fetch` global** (o
+  mesmo padrão dos demais testes do core). Não usa `nock`: o client usa `fetch`/undici,
+  que o `nock` (interceptor de `http`/`https`) não intercepta de forma confiável.
+- **Gravação:** `scripts/record-fixtures.mjs` (`npm run record:fixtures`) exercita o
+  Redmine seedado (`npm run ci:e2e:up`) e grava `GET /issues/{id}.json` (com include)
+  das 3 issues + o download do anexo em `tests/fixtures/redmine-e2e/interactions.json`.
+- **Segredos redigidos:** a `api_key` viaja só no header (não serializado); campos
+  sensíveis viram `[REDACTED]`; a URL base do stack é reescrita para
+  `https://redmine.example`; o script **aborta** se a chave real vazar.
+- **Replay:** `tests/integration/redmine-replay.test.ts` reexecuta
+  `getIssue → normalize → bundle` (Markdown + JSON canônico) e o download do anexo
+  contra snapshots determinísticos; requisições não gravadas **lançam** (prova o
+  isolamento de rede). Testes de ausência de segredos por grep. Roda em `npm test`,
+  logo na matriz mac/win do `ci.yml` (#77) — sem workflow novo.
+- **Regravar:** ver README §"Replay OFFLINE via fixtures gravadas".
+
 ## Próximo passo
 **/plan:breakdown** — quebrar M1–M5 em 15–30 issues granulares.

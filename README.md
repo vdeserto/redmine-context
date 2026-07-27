@@ -158,6 +158,7 @@ ver [Ambiente de teste](#ambiente-de-teste) e [E2E](#e2e-dogfood-cli--mcp)).
 | `npm run seed` | Popula fixtures base no Redmine via REST (ver [Seed](#seed-de-fixtures)) |
 | `npm run e2e` | Roteiro E2E de dogfood (CLI + MCP) contra o Docker (ver [E2E](#e2e-dogfood-cli--mcp)) |
 | `npm run ci:e2e:up` | Sobe + espera healthy/one-shots + seed em 1 comando, p/ o CI (ver [CI](#subir-e-seedar-em-1-comando-ci)) |
+| `npm run record:fixtures` | Grava fixtures HTTP p/ o replay offline (ver [Replay offline](#replay-offline-via-fixtures-gravadas-macoswindows)) |
 
 ## Estrutura
 
@@ -346,6 +347,40 @@ issue→bundle (cache quente, orçamento < 30 s), testa a **recusa de http:// se
 > A api_key é obtida no fluxo real (`GET /users/current.json` com Basic auth
 > admin). Contra o Docker local (http) a CLI usa `--insecure` e o MCP server
 > lê `REDMINE_INSECURE=1` do ambiente.
+
+### Replay OFFLINE via fixtures gravadas (macOS/Windows)
+
+O E2E real acima depende de Docker e só roda no Linux do CI (#80). Para dar
+cobertura E2E-equivalente **offline** na matriz **macOS/Windows** (#77) — onde o
+Redmine não está disponível —, gravamos as respostas HTTP do Redmine seedado como
+**fixtures versionadas** e as **reproduzimos sem rede nem docker** (issue #81):
+
+- **Fixtures**: `tests/fixtures/redmine-e2e/interactions.json` — as interações
+  `GET /issues/{id}.json` (com `include`) das 3 issues do seed e o download do
+  anexo de texto. **Segredos redigidos**: nenhuma `api_key`, `Authorization` ou
+  senha real; a URL base do stack é reescrita para `https://redmine.example`.
+- **Replay**: `tests/integration/redmine-replay.test.ts` — substitui o `fetch`
+  global por um stub dirigido pelas fixtures (mesmo mecanismo dos demais testes
+  do core; o client usa `fetch`/undici, que o `nock` não intercepta) e reexecuta
+  `getIssue → normalize → bundle` + o download do anexo, comparando contra
+  snapshots determinísticos. Requisições **não gravadas lançam** — se algo tentar
+  a rede, o teste falha. Roda na suíte padrão (`npm test`), portanto na matriz de
+  3 SOs do CI.
+
+**Regravar as fixtures** (só quando o seed/contrato mudar):
+
+```bash
+npm run ci:e2e:up        # sobe + espera healthy/one-shots + seed (precisa de Docker)
+npm run record:fixtures  # grava tests/fixtures/redmine-e2e/interactions.json (segredos redigidos)
+npx vitest run tests/integration/redmine-replay.test.ts -u   # atualiza os snapshots
+git add tests/fixtures/redmine-e2e tests/integration/__snapshots__
+```
+
+O `scripts/record-fixtures.mjs` obtém a `api_key` do admin no fluxo real
+(`GET /users/current.json`, Basic auth), mas **nunca** a grava: ela viaja só no
+header (não serializado), campos sensíveis são redigidos para `[REDACTED]` e o
+script **aborta** se a chave real aparecer no arquivo. O teste versionado
+reafirma a ausência de segredos por grep.
 
 ### Reproduzir instância limpa / derrubar
 

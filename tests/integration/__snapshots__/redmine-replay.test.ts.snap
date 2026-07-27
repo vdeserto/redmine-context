@@ -1,0 +1,412 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`replay offline das fixtures do Redmine seedado (M5-06 #81) > JSON canônico é determinístico entre execuções (offline) 1`] = `
+"{
+  "issue": {
+    "attachments": [
+      {
+        "author": {
+          "id": 1,
+          "name": "Redmine Admin"
+        },
+        "content_type": "text/plain",
+        "content_url": "https://redmine.example/attachments/download/1/fixture-note.txt",
+        "created_on": "2026-07-27T01:52:18Z",
+        "filename": "fixture-note.txt",
+        "filesize": 49,
+        "id": 1
+      }
+    ],
+    "author": {
+      "id": 1,
+      "name": "Redmine Admin"
+    },
+    "children": [
+      {
+        "id": 3,
+        "subject": {
+          "untrusted": true,
+          "value": "RC Fixture: issue base 3"
+        },
+        "tracker": {
+          "id": 1,
+          "name": "Bug"
+        }
+      }
+    ],
+    "created_on": "2026-07-27T01:52:16Z",
+    "custom_fields": [
+      {
+        "id": 1,
+        "name": "Severidade",
+        "raw_value": "Alta",
+        "value": {
+          "untrusted": true,
+          "value": "Alta"
+        }
+      }
+    ],
+    "description": {
+      "untrusted": true,
+      "value": "Issue base 1 gerada pelo seed (rc-fixtures). Texto simples para smoke tests."
+    },
+    "id": 1,
+    "journals": [
+      {
+        "created_on": "2026-07-27T01:52:17Z",
+        "details": [],
+        "id": 1,
+        "notes": {
+          "untrusted": true,
+          "value": "[seed] Comentário de fixture na issue base 1 (parent, com anexo e relation)."
+        },
+        "user": {
+          "id": 1,
+          "name": "Redmine Admin"
+        }
+      },
+      {
+        "created_on": "2026-07-27T01:52:17Z",
+        "details": [
+          {
+            "name": "1",
+            "new_value": {
+              "untrusted": true,
+              "value": "Alta"
+            },
+            "old_value": {
+              "untrusted": true,
+              "value": ""
+            },
+            "property": "cf"
+          }
+        ],
+        "id": 2,
+        "user": {
+          "id": 1,
+          "name": "Redmine Admin"
+        }
+      },
+      {
+        "created_on": "2026-07-27T01:52:17Z",
+        "details": [
+          {
+            "name": "child_id",
+            "new_value": {
+              "untrusted": true,
+              "value": "3"
+            },
+            "old_value": null,
+            "property": "attr"
+          }
+        ],
+        "id": 8,
+        "user": {
+          "id": 1,
+          "name": "Redmine Admin"
+        }
+      },
+      {
+        "created_on": "2026-07-27T01:52:18Z",
+        "details": [
+          {
+            "name": "relates",
+            "new_value": {
+              "untrusted": true,
+              "value": "2"
+            },
+            "old_value": null,
+            "property": "relation"
+          }
+        ],
+        "id": 9,
+        "user": {
+          "id": 1,
+          "name": "Redmine Admin"
+        }
+      },
+      {
+        "created_on": "2026-07-27T01:52:18Z",
+        "details": [
+          {
+            "name": "1",
+            "new_value": {
+              "untrusted": true,
+              "value": "fixture-note.txt"
+            },
+            "old_value": null,
+            "property": "attachment"
+          }
+        ],
+        "id": 11,
+        "user": {
+          "id": 1,
+          "name": "Redmine Admin"
+        }
+      }
+    ],
+    "priority": {
+      "id": 2,
+      "name": "Normal"
+    },
+    "project": {
+      "id": 1,
+      "name": "RC Fixtures"
+    },
+    "relations": [
+      {
+        "delay": null,
+        "id": 1,
+        "issue_id": 1,
+        "issue_to_id": 2,
+        "relation_type": "relates"
+      }
+    ],
+    "status": {
+      "id": 1,
+      "name": "New"
+    },
+    "subject": {
+      "untrusted": true,
+      "value": "RC Fixture: issue base 1"
+    },
+    "tracker": {
+      "id": 1,
+      "name": "Bug"
+    },
+    "updated_on": "2026-07-27T01:52:18Z"
+  },
+  "schema_version": "1.0",
+  "source": {
+    "base_url": "https://redmine.example",
+    "issue_id": 1,
+    "issue_updated_on": "2026-07-27T01:52:18Z"
+  },
+  "tool_version": "0.1.0"
+}"
+`;
+
+exports[`replay offline das fixtures do Redmine seedado (M5-06 #81) > empacota a issue base 1 (Markdown) com as strings do seed 1`] = `
+"# Issue #1
+
+## Assunto
+
+<untrusted-content>
+RC Fixture: issue base 1
+</untrusted-content>
+
+## Metadados
+
+- **Projeto:** RC Fixtures
+- **Tracker:** Bug
+- **Status:** New
+- **Prioridade:** Normal
+- **Autor:** Redmine Admin
+- **Responsável:** (nenhum)
+- **Criada em:** 2026-07-27T01:52:16Z
+- **Atualizada em:** 2026-07-27T01:52:18Z
+
+## Descrição
+
+<untrusted-content>
+Issue base 1 gerada pelo seed (rc-fixtures). Texto simples para smoke tests.
+</untrusted-content>
+
+## Custom Fields
+
+- **<untrusted-content>Severidade</untrusted-content>:** <untrusted-content>Alta</untrusted-content>
+
+## Histórico
+
+### Journal #1 — 2026-07-27T01:52:17Z — Redmine Admin
+
+Nota:
+<untrusted-content>
+[seed] Comentário de fixture na issue base 1 (parent, com anexo e relation).
+</untrusted-content>
+
+### Journal #2 — 2026-07-27T01:52:17Z — Redmine Admin
+
+Alterações:
+  - <untrusted-content>1</untrusted-content>: <untrusted-content></untrusted-content> → <untrusted-content>Alta</untrusted-content>
+
+### Journal #8 — 2026-07-27T01:52:17Z — Redmine Admin
+
+Alterações:
+  - <untrusted-content>child_id</untrusted-content>: ∅ → <untrusted-content>3</untrusted-content>
+
+### Journal #9 — 2026-07-27T01:52:18Z — Redmine Admin
+
+Alterações:
+  - <untrusted-content>relates</untrusted-content>: ∅ → <untrusted-content>2</untrusted-content>
+
+### Journal #11 — 2026-07-27T01:52:18Z — Redmine Admin
+
+Alterações:
+  - <untrusted-content>1</untrusted-content>: ∅ → <untrusted-content>fixture-note.txt</untrusted-content>
+
+## Relações
+
+- **relates** → issue #2
+
+## Issue Pai
+
+_(nenhuma)_
+
+## Sub-issues
+
+- issue #3 [Bug] <untrusted-content>RC Fixture: issue base 3</untrusted-content>
+
+## Anexos
+
+- **Anexo #1** — 49 bytes
+  - Nome: <untrusted-content>fixture-note.txt</untrusted-content>
+  - URL: https://redmine.example/attachments/download/1/fixture-note.txt
+
+---
+
+_Empacotado por redmine-context v0.1.0._
+"
+`;
+
+exports[`replay offline das fixtures do Redmine seedado (M5-06 #81) > empacota a issue base 2 (Markdown) com as strings do seed 1`] = `
+"# Issue #2
+
+## Assunto
+
+<untrusted-content>
+RC Fixture: issue base 2
+</untrusted-content>
+
+## Metadados
+
+- **Projeto:** RC Fixtures
+- **Tracker:** Bug
+- **Status:** New
+- **Prioridade:** Normal
+- **Autor:** Redmine Admin
+- **Responsável:** (nenhum)
+- **Criada em:** 2026-07-27T01:52:16Z
+- **Atualizada em:** 2026-07-27T01:52:17Z
+
+## Descrição
+
+<untrusted-content>
+Issue base 2 gerada pelo seed (rc-fixtures). Descrição com **markdown** leve.
+</untrusted-content>
+
+## Custom Fields
+
+- **<untrusted-content>Severidade</untrusted-content>:** <untrusted-content>Média</untrusted-content>
+
+## Histórico
+
+### Journal #3 — 2026-07-27T01:52:17Z — Redmine Admin
+
+Nota:
+<untrusted-content>
+[seed] Comentário de fixture na issue base 2 (alvo da relation).
+</untrusted-content>
+
+### Journal #4 — 2026-07-27T01:52:17Z — Redmine Admin
+
+Alterações:
+  - <untrusted-content>1</untrusted-content>: <untrusted-content></untrusted-content> → <untrusted-content>Média</untrusted-content>
+
+### Journal #10 — 2026-07-27T01:52:18Z — Redmine Admin
+
+Alterações:
+  - <untrusted-content>relates</untrusted-content>: ∅ → <untrusted-content>1</untrusted-content>
+
+## Relações
+
+- **relates** → issue #2
+
+## Issue Pai
+
+_(nenhuma)_
+
+## Sub-issues
+
+_(nenhuma)_
+
+## Anexos
+
+_(nenhum)_
+
+---
+
+_Empacotado por redmine-context v0.1.0._
+"
+`;
+
+exports[`replay offline das fixtures do Redmine seedado (M5-06 #81) > empacota a issue base 3 (Markdown) com as strings do seed 1`] = `
+"# Issue #3
+
+## Assunto
+
+<untrusted-content>
+RC Fixture: issue base 3
+</untrusted-content>
+
+## Metadados
+
+- **Projeto:** RC Fixtures
+- **Tracker:** Bug
+- **Status:** New
+- **Prioridade:** Normal
+- **Autor:** Redmine Admin
+- **Responsável:** (nenhum)
+- **Criada em:** 2026-07-27T01:52:16Z
+- **Atualizada em:** 2026-07-27T01:52:17Z
+
+## Descrição
+
+<untrusted-content>
+Issue base 3 gerada pelo seed (rc-fixtures). Usada para validar contagens via GET.
+</untrusted-content>
+
+## Custom Fields
+
+- **<untrusted-content>Severidade</untrusted-content>:** <untrusted-content>Baixa</untrusted-content>
+
+## Histórico
+
+### Journal #5 — 2026-07-27T01:52:17Z — Redmine Admin
+
+Nota:
+<untrusted-content>
+[seed] Comentário de fixture na issue base 3 (child da issue base 1).
+</untrusted-content>
+
+### Journal #6 — 2026-07-27T01:52:17Z — Redmine Admin
+
+Alterações:
+  - <untrusted-content>1</untrusted-content>: <untrusted-content></untrusted-content> → <untrusted-content>Baixa</untrusted-content>
+
+### Journal #7 — 2026-07-27T01:52:17Z — Redmine Admin
+
+Alterações:
+  - <untrusted-content>parent_id</untrusted-content>: ∅ → <untrusted-content>1</untrusted-content>
+
+## Relações
+
+_(nenhuma)_
+
+## Issue Pai
+
+- issue #1
+
+## Sub-issues
+
+_(nenhuma)_
+
+## Anexos
+
+_(nenhum)_
+
+---
+
+_Empacotado por redmine-context v0.1.0._
+"
+`;
