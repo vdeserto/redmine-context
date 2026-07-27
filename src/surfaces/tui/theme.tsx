@@ -1,11 +1,13 @@
 /**
  * Tema central da TUI (M2-02).
  *
- * Única fonte de literais de cor da TUI: toda tela consome cores via
- * {@link useTheme}, nunca com `color="magenta"` direto no JSX — a varredura
- * `tests/surfaces/tui/no-hardcoded-colors.test.ts` garante isso em CI.
- * Centralizar aqui torna trocar a paleta (ou dar suporte a temas
- * alternativos) uma mudança em um único arquivo.
+ * Fonte de literais de cor da TUI (junto de `palettes.ts`, #190, que guarda os
+ * hex das paletas como DADOS de objeto, não como props JSX): toda tela consome
+ * cores via {@link useTheme}, nunca com `color="magenta"` direto no JSX — a
+ * varredura `tests/surfaces/tui/no-hardcoded-colors.test.ts` garante isso em CI
+ * (ela pega `color=`/`backgroundColor=` com literal; as chaves `primary:` de
+ * `palettes.ts` não são props, por isso passam). Centralizar aqui/em `palettes.ts`
+ * torna trocar a paleta uma mudança localizada.
  *
  * ## Paleta e guideline de uso
  *
@@ -52,6 +54,21 @@ export interface Theme {
   danger: string;
   /** Bordas de Box (painéis, cards, modais). Discreta por padrão. */
   border: string;
+  /**
+   * Segunda cor de identidade (opcional) — variedade em listas/cabeçalhos sem
+   * abusar do `accent`. Ausente ⇒ cai em {@link Theme.primary}.
+   */
+  secondary?: string;
+  /**
+   * Cor de FUNDO da tela em full-screen (opcional, #190) — consumida só em
+   * `app.tsx` (o fill do `AppShell`). Ausente ⇒ sem fundo (herda o do terminal).
+   */
+  background?: string;
+  /**
+   * Ramp de cores (2+ hex) para efeitos de GRADIENTE em títulos/breadcrumb
+   * (opcional, #190). Ausente ⇒ texto sólido em {@link Theme.primary}.
+   */
+  gradient?: readonly string[];
 }
 
 /** Tema padrão da TUI — ver guideline de uso na documentação do arquivo. */
@@ -96,6 +113,46 @@ export function useTheme(): Theme {
     throw new Error('useTheme() usado fora de <ThemeProvider>.');
   }
   return theme;
+}
+
+/**
+ * Controlador de PALETA (#190) — permite ao seletor de tema trocar a paleta ao
+ * vivo (preview ao navegar) e confirmar (persistindo). Fornecido pelo `App`, que
+ * mantém o estado da paleta ativa e o repassa ao {@link ThemeProvider}.
+ */
+export interface ThemeController {
+  /** Id da paleta atualmente ativa. */
+  readonly paletteId: string;
+  /** Aplica uma paleta AO VIVO, sem persistir (preview ao navegar no seletor). */
+  preview(id: string): void;
+  /** Aplica E persiste a paleta (Enter no seletor). */
+  select(id: string): Promise<void>;
+}
+
+const ThemeControllerContext = createContext<ThemeController | undefined>(undefined);
+
+/** Provider do controlador de paleta — montado pelo `App`. */
+export function ThemeControllerProvider({
+  value,
+  children,
+}: {
+  value: ThemeController;
+  children: ReactNode;
+}) {
+  return <ThemeControllerContext.Provider value={value}>{children}</ThemeControllerContext.Provider>;
+}
+
+/**
+ * Hook do controlador de paleta — usado pelo seletor de tema.
+ *
+ * @throws {Error} Se chamado fora de um `<ThemeControllerProvider>`.
+ */
+export function useThemeController(): ThemeController {
+  const controller = useContext(ThemeControllerContext);
+  if (controller === undefined) {
+    throw new Error('useThemeController() usado fora de <ThemeControllerProvider>.');
+  }
+  return controller;
 }
 
 /**

@@ -30,9 +30,10 @@
  * se a home registrou um interceptor (busca aberta), ele é quem trata o Esc
  * e o `pop()`/abandono de re-auth abaixo é pulado nesse ciclo.
  */
-import { useCallback, useRef } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { Box, Text, useApp, useInput } from 'ink';
 
+import type { SettingsStore } from '../../index.js';
 import { Breadcrumb } from './components/breadcrumb.js';
 import { ReAuthAbortedError } from './hooks/use-auth-guard.js';
 import { consumeEscapeInterceptor } from './hooks/use-escape-interceptor.js';
@@ -47,9 +48,18 @@ import {
   useOnboarding,
   type OnboardingReAuth,
 } from './screens/onboarding/onboarding-context.js';
+import { useStdoutDimensions } from './hooks/use-stdout-dimensions.js';
+import { DEFAULT_PALETTE_ID, resolvePalette } from './palettes.js';
 import { INITIAL_SCREEN, SCREENS, type ScreenName } from './screen.js';
 import { symbols } from './symbols.js';
-import { ThemeProvider, useTheme } from './theme.js';
+import {
+  DEFAULT_THEME,
+  ThemeControllerProvider,
+  ThemeProvider,
+  useTheme,
+  type Theme,
+  type ThemeController,
+} from './theme.js';
 
 /**
  * O que `Esc` deve fazer dado o estado atual — extraída como função pura
@@ -83,30 +93,85 @@ export function resolveEscapeAction(
  * `validateApiKey`, credential cascade) vive só ali, nunca nas telas em si
  * (ADR-005).
  */
-export function App() {
+/** Props do {@link App} — todas opcionais para não quebrar `render(<App/>)` nos testes. */
+export interface AppProps {
+  /**
+   * Id da paleta inicial (#190). Ausente ⇒ {@link DEFAULT_THEME} (comportamento
+   * atual, usado pelos testes); o `runTui` passa a paleta resolvida do settings.
+   */
+  initialPaletteId?: string;
+  /** Store para PERSISTIR a paleta escolhida (#190). Ausente ⇒ persistência é no-op. */
+  settings?: Pick<SettingsStore, 'setPaletteId'>;
+  /** Preenche a altura do terminal (full-screen, #190). Só o `runTui` liga em TTY. */
+  fullScreen?: boolean;
+}
+
+/**
+ * Estado do tema/paleta (#190) — extraído para teste determinístico (sem depender
+ * do teclado): mantém a paleta ativa, resolve o {@link Theme} e expõe o
+ * {@link ThemeController} (preview troca ao vivo; select troca + persiste best-effort).
+ *
+ * @param initialPaletteId - Paleta inicial; `undefined` ⇒ {@link DEFAULT_THEME} (testes).
+ * @param settings - Store para persistir a paleta no `select` (opcional).
+ * @returns O `theme` resolvido + o `controller`.
+ */
+export function useThemeControllerState(
+  initialPaletteId?: string,
+  settings?: Pick<SettingsStore, 'setPaletteId'>,
+): { theme: Theme; controller: ThemeController } {
+  const [paletteId, setPaletteId] = useState<string | undefined>(initialPaletteId);
+  const theme = paletteId !== undefined ? resolvePalette(paletteId).theme : DEFAULT_THEME;
+
+  const controller = useMemo<ThemeController>(
+    () => ({
+      paletteId: paletteId ?? DEFAULT_PALETTE_ID,
+      preview: (id) => setPaletteId(id),
+      select: async (id) => {
+        setPaletteId(id);
+        // Persistência best-effort: uma falha ao salvar não deve quebrar a TUI.
+        try {
+          await settings?.setPaletteId(id);
+        } catch {
+          /* segue com a paleta aplicada nesta sessão */
+        }
+      },
+    }),
+    [paletteId, settings],
+  );
+
+  return { theme, controller };
+}
+
+export function App(props: AppProps = {}) {
+  const { initialPaletteId, settings, fullScreen = false } = props;
   const navigation = useNavigationStack(INITIAL_SCREEN);
   const onboardingCallbacks = useOnboardingCallbacks();
 
+  // Paleta ativa (#190) — ver {@link useThemeControllerState}.
+  const { theme, controller } = useThemeControllerState(initialPaletteId, settings);
+
   return (
-    <ThemeProvider>
-      <NavigationProvider value={navigation}>
-        <OnboardingProvider callbacks={onboardingCallbacks}>
-          {/* #31: sobrevive ao remount de `home.tsx`/`issue-detail.tsx` — ver o
-              JSDoc de `./screens/home-selection.tsx` para o contrato completo. */}
-          <HomeSelectionProvider>
-            {/* #33: sobrevive ao remount de `issue-detail.tsx`/`export.tsx` —
-                ver o JSDoc de `./screens/loaded-issue-context.tsx`. */}
-            <LoadedIssueProvider>
-              {/* #34: registro de jobs da sessão, consumido por `./screens/export.tsx`
-                  (primeiro produtor real) e `./screens/jobs.tsx` (painel) —
-                  ver o JSDoc de `./job-registry.tsx` para o contrato completo. */}
-              <JobRegistryProvider>
-                <AppShell />
-              </JobRegistryProvider>
-            </LoadedIssueProvider>
-          </HomeSelectionProvider>
-        </OnboardingProvider>
-      </NavigationProvider>
+    <ThemeProvider theme={theme}>
+      <ThemeControllerProvider value={controller}>
+        <NavigationProvider value={navigation}>
+          <OnboardingProvider callbacks={onboardingCallbacks}>
+            {/* #31: sobrevive ao remount de `home.tsx`/`issue-detail.tsx` — ver o
+                JSDoc de `./screens/home-selection.tsx` para o contrato completo. */}
+            <HomeSelectionProvider>
+              {/* #33: sobrevive ao remount de `issue-detail.tsx`/`export.tsx` —
+                  ver o JSDoc de `./screens/loaded-issue-context.tsx`. */}
+              <LoadedIssueProvider>
+                {/* #34: registro de jobs da sessão, consumido por `./screens/export.tsx`
+                    (primeiro produtor real) e `./screens/jobs.tsx` (painel) —
+                    ver o JSDoc de `./job-registry.tsx` para o contrato completo. */}
+                <JobRegistryProvider>
+                  <AppShell fullScreen={fullScreen} />
+                </JobRegistryProvider>
+              </LoadedIssueProvider>
+            </HomeSelectionProvider>
+          </OnboardingProvider>
+        </NavigationProvider>
+      </ThemeControllerProvider>
     </ThemeProvider>
   );
 }
@@ -116,12 +181,17 @@ export function App() {
  * tela atual. Só existe dentro dos providers de `App` — depende de
  * `useTheme()`/`useNavigation()`.
  */
-function AppShell() {
+function AppShell({ fullScreen = false }: { fullScreen?: boolean }) {
   const { exit } = useApp();
   const { current, pop, popTo, stack } = useNavigation();
   const { reAuth, abortReAuth } = useOnboarding();
   const theme = useTheme();
   const { armed } = useExitGuard(exit);
+  // Full-screen (#190): preenche a altura/largura do terminal (alt-screen ligado
+  // pelo runTui) e pinta o fundo temático. Só quando há dimensões reais (TTY);
+  // nos testes (`ink-testing-library`) `rows` é undefined ⇒ layout normal.
+  const { rows, columns } = useStdoutDimensions();
+  const fill = fullScreen && rows !== undefined;
 
   // Handler ESTÁVEL (refs + useCallback): identidade nova a cada render faz o
   // useInput des/re-subscrever no efeito pós-commit, abrindo janelas em que
@@ -178,7 +248,16 @@ function AppShell() {
   const Screen = SCREENS[current].component;
 
   return (
-    <Box flexDirection="column">
+    <Box
+      flexDirection="column"
+      // Full-screen (#190): `minHeight` (NÃO `height` fixo) — o container CRESCE
+      // com o conteúdo quando ele é maior que a tela (o terminal corta o excesso,
+      // como antes), e só ENCHE até `rows` quando o conteúdo é menor (fundo cobre
+      // a tela). `height` fixo faria o Yoga ENCOLHER/AMOSTRAR linhas de listas
+      // longas (home/jobs), corrompendo o layout (achado B2 da review).
+      {...(fill ? { minHeight: rows, width: columns } : {})}
+      {...(fill && theme.background !== undefined ? { backgroundColor: theme.background } : {})}
+    >
       <Breadcrumb stack={stack} />
       {armed ? (
         <Box paddingX={1} marginBottom={1}>

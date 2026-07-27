@@ -27,13 +27,15 @@ import { normalizeInstanceUrl } from './credentials.js';
 /** Nome do arquivo de settings no diretório de config do usuário. */
 const SETTINGS_FILENAME = 'settings.json';
 
-/** Formato persistido (evolutivo; só `instanceUrl` por ora). */
+/** Formato persistido (evolutivo). */
 export interface Settings {
   /** URL base da instância "default/última usada" (normalizada ao gravar). */
   instanceUrl?: string;
+  /** Id da paleta de cores da TUI escolhida (#190). */
+  palette?: string;
 }
 
-/** Store de settings não-secretas: get/set/clear da URL da instância. */
+/** Store de settings não-secretas: URL da instância + paleta da TUI. */
 export interface SettingsStore {
   /** URL da instância persistida, ou `undefined` se nenhuma. */
   getInstanceUrl(): Promise<string | undefined>;
@@ -41,6 +43,10 @@ export interface SettingsStore {
   setInstanceUrl(url: string): Promise<void>;
   /** Remove a URL da instância persistida; no-op se não existir. */
   clearInstanceUrl(): Promise<void>;
+  /** Id da paleta de cores da TUI persistida, ou `undefined` se nenhuma (#190). */
+  getPaletteId(): Promise<string | undefined>;
+  /** Persiste o id da paleta de cores da TUI (#190). */
+  setPaletteId(id: string): Promise<void>;
 }
 
 /** Caminho padrão do arquivo de settings (diretório de config do usuário). */
@@ -128,6 +134,18 @@ export class FileSettingsStore implements SettingsStore {
     const data = await this.readRaw();
     if (!('instanceUrl' in data)) return;
     delete data.instanceUrl;
+    await this.write(data);
+  }
+
+  async getPaletteId(): Promise<string | undefined> {
+    const id = (await this.readRaw()).palette;
+    const trimmed = typeof id === 'string' ? id.trim() : '';
+    return trimmed.length > 0 ? trimmed : undefined;
+  }
+
+  async setPaletteId(id: string): Promise<void> {
+    const data = await this.readRaw();
+    data.palette = id;
     await this.write(data);
   }
 }
