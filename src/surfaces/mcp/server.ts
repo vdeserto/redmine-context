@@ -7,7 +7,11 @@
  * interno é acessado diretamente (regra eslint `no-restricted-imports`).
  *
  * Segurança: NENHUMA tool aceita URL/host arbitrário — a instância vem sempre da
- * config/env do processo (`REDMINE_URL` + cascata de credencial). No transporte
+ * config/env do processo (`REDMINE_URL`; sem ela, a URL persistida no `login`,
+ * #187) + cascata de credencial. Quando a URL vem da persistida (fonte mutável),
+ * a credencial de AMBIENTE (`REDMINE_API_KEY`, instance-agnóstica) é DESABILITADA
+ * — só credencial pinada à instância (keychain/arquivo) é aceita, impedindo que um
+ * `settings.json` adulterado exfiltre a chave (ver `resolveInstance`). No transporte
  * stdio o protocolo ocupa o stdout, portanto todo diagnóstico vai para stderr.
  */
 
@@ -234,20 +238,32 @@ interface ResolvedInstance {
  * @returns A instância resolvida, ou um CallToolResult de erro (`isError`).
  */
 async function resolveInstance(deps: McpServerDeps): Promise<ResolvedInstance | CallToolResult> {
-  // REDMINE_URL tem precedência; sem ela, cai na URL persistida no login (#187).
-  // Continua UMA instância configurada (env/persistida) — nunca de argumento de tool.
+  // REDMINE_URL tem precedência; sem ela, cai na URL persistida no login (#187),
+  // via o resolvedor único (trata string vazia como ausente). Continua UMA
+  // instância configurada (env/persistida) — nunca de argumento de tool.
   const persistedUrl = deps.settings ? await deps.settings.getInstanceUrl() : undefined;
-  const baseUrl = deps.env.REDMINE_URL ?? persistedUrl;
-  if (baseUrl === undefined || baseUrl.length === 0) {
+  const resolved = core.resolveInstanceUrl({ envUrl: deps.env.REDMINE_URL, persistedUrl });
+  if (resolved === undefined) {
     return errorResult(
       'Instância não configurada. Defina REDMINE_URL no ambiente do processo ou rode `redmine-context login`.',
     );
+  }
+  const { url: baseUrl, origin } = resolved;
+  // Auditabilidade (#187): quando a instância NÃO veio da env (fallback persistido),
+  // registra a URL em uso no diagnóstico (o stdout é do protocolo → vai ao stderr).
+  if (origin !== 'env') {
+    deps.log?.(`instância resolvida via ${origin}: ${baseUrl}`);
   }
 
   let apiKey: string | undefined;
   try {
     apiKey = await deps.resolveApiKey(baseUrl, {
       env: deps.env,
+      // SEGURANÇA (#187): URL de fonte MUTÁVEL (settings.json persistido, origem
+      // `config`) NÃO pode usar a REDMINE_API_KEY instance-agnóstica — só credencial
+      // PINADA à instância (keychain/arquivo). Impede que um settings.json adulterado
+      // redirecione a chave real para um host arbitrário (fail-closed).
+      allowEnvFallback: origin !== 'config',
       // Aviso de migração/keychain vai para o diagnóstico (stdout é do protocolo).
       logger: { warn: (message) => deps.log?.(message) },
     });

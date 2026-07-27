@@ -62,7 +62,16 @@ export async function resolveTuiInstance(
   return {
     ...(url !== undefined ? { url } : {}),
     origin,
-    clearPersisted: () => settings.clearInstanceUrl(),
+    clearPersisted: async () => {
+      await settings.clearInstanceUrl();
+      // Se a instância desta sessão veio da persistida, ela foi escrita em
+      // `env.REDMINE_URL` no boot — limpa também, senão os hooks de dados
+      // continuariam vendo a instância "logada" após o logout (só um restart
+      // corrigiria). Não toca `env` quando a origem foi a própria env real.
+      if (origin === 'config') {
+        delete env.REDMINE_URL;
+      }
+    },
   };
 }
 

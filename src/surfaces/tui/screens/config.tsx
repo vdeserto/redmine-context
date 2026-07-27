@@ -48,8 +48,14 @@ export function ConfigScreen() {
       try {
         await createCredentialCascade({ env: process.env }).delete(instanceUrl);
         // Também remove a URL persistida (#187) para não reconfigurar sozinha no
-        // próximo boot; a env REDMINE_URL, se definida, permanece (é read-only aqui).
-        await instance.clearPersisted();
+        // próximo boot. Isolado em try próprio: a parte CRÍTICA (a credencial) já
+        // foi removida acima, então uma falha ao limpar o settings.json NÃO deve
+        // marcar o logout como erro total — degrada silenciosamente.
+        try {
+          await instance.clearPersisted();
+        } catch {
+          // Best-effort: a credencial já foi removida; settings.json fica para a próxima.
+        }
         // Env é somente-leitura: se ainda resolver a credencial, avisa (sem expor a key).
         const remaining = await describeCredentialSource(instanceUrl, { env: process.env });
         setEnvStillPresent(remaining === 'env');

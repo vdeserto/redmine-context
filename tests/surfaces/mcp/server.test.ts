@@ -120,6 +120,32 @@ describe('MCP: get_issue_context handler', () => {
     expect(core.fetchIssueBundle).toHaveBeenCalledWith(
       expect.objectContaining({ baseUrl: 'https://persisted.example' }),
     );
+    // SEGURANÇA (#187): URL persistida (fonte mutável) NÃO usa a REDMINE_API_KEY
+    // instance-agnóstica — só credencial pinada. Impede exfiltração via settings.json.
+    expect(core.resolveApiKey).toHaveBeenCalledWith(
+      'https://persisted.example',
+      expect.objectContaining({ allowEnvFallback: false }),
+    );
+  });
+
+  it('REDMINE_URL VAZIA cai na persistida (string vazia = ausente, #187)', async () => {
+    vi.mocked(core.resolveApiKey).mockResolvedValue('key');
+    vi.mocked(core.fetchIssueBundle).mockReturnValue(bundleStream('MD'));
+    const settings = {
+      getInstanceUrl: vi.fn().mockResolvedValue('https://persisted.example'),
+      setInstanceUrl: vi.fn(),
+      clearInstanceUrl: vi.fn(),
+    };
+    const handler = createGetIssueContextHandler(
+      makeDeps({ env: { REDMINE_URL: '' } as NodeJS.ProcessEnv, settings }),
+    );
+
+    const result = await handler({ issue_id: 42 });
+
+    expect(result.isError).toBeFalsy();
+    expect(core.fetchIssueBundle).toHaveBeenCalledWith(
+      expect.objectContaining({ baseUrl: 'https://persisted.example' }),
+    );
   });
 
   it('REDMINE_URL tem precedência sobre a persistida (#187)', async () => {

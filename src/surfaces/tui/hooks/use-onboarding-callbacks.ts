@@ -18,7 +18,14 @@
  */
 import { useRef } from 'react';
 
-import { createCredentialCascade, loginWithPassword, validateApiKey, RedmineAuthError } from '../../../index.js';
+import {
+  createCredentialCascade,
+  defaultSettingsStore,
+  loginWithPassword,
+  validateApiKey,
+  RedmineAuthError,
+  type SettingsStore,
+} from '../../../index.js';
 import type {
   OnboardingCallbacks,
   OnboardingLoginCredentials,
@@ -41,6 +48,18 @@ function messageOf(cause: unknown): string {
 }
 
 /**
+ * Persiste a instância autenticada (#187) — simétrico ao `login` da CLL. Falha ao
+ * salvar a URL NÃO invalida o onboarding (a credencial já foi salva): swallow.
+ */
+async function persistInstance(settings: SettingsStore, url: string): Promise<void> {
+  try {
+    await settings.setInstanceUrl(url);
+  } catch {
+    // Sem persistência a TUI ainda funciona nesta sessão (REDMINE_URL/prompt).
+  }
+}
+
+/**
  * Monta os callbacks reais de onboarding — injetados em
  * `<OnboardingProvider callbacks={...}>` por `../app.tsx`.
  *
@@ -48,7 +67,9 @@ function messageOf(cause: unknown): string {
  * const callbacks = useOnboardingCallbacks();
  * return <OnboardingProvider callbacks={callbacks}>...</OnboardingProvider>;
  */
-export function useOnboardingCallbacks(): OnboardingCallbacks {
+export function useOnboardingCallbacks(
+  settings: SettingsStore = defaultSettingsStore(),
+): OnboardingCallbacks {
   // Ref (não state): a URL só é lida dentro dos callbacks de login/api_key,
   // nunca precisa disparar um re-render por si só.
   const urlRef = useRef('');
@@ -74,6 +95,7 @@ export function useOnboardingCallbacks(): OnboardingCallbacks {
         insecure: isInsecureEnvSet(process.env),
       });
       await createCredentialCascade().set(urlRef.current, result.apiKey);
+      await persistInstance(settings, urlRef.current);
       return { kind: 'success', user: result.user };
     } catch (cause) {
       if (cause instanceof RedmineAuthError) {
@@ -91,6 +113,7 @@ export function useOnboardingCallbacks(): OnboardingCallbacks {
         insecure: isInsecureEnvSet(process.env),
       });
       await createCredentialCascade().set(urlRef.current, result.apiKey);
+      await persistInstance(settings, urlRef.current);
       return { kind: 'success', user: result.user };
     } catch (cause) {
       if (cause instanceof RedmineAuthError) {

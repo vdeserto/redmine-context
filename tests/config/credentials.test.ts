@@ -192,6 +192,30 @@ describe('cascata (arquivo → env, keychain indisponível)', () => {
     expect(value).toBeUndefined();
   });
 
+  it('SEGURANÇA (#187): allowEnvFallback:false IGNORA a REDMINE_API_KEY (instance-agnóstica)', async () => {
+    // Com a env-key presente MAS allowEnvFallback:false, a cascata NÃO devolve a
+    // chave — impede que uma URL de fonte mutável (settings.json) exfiltre a chave.
+    const value = await resolveApiKey(INSTANCE, {
+      filePath,
+      keyringLoader: unavailableKeyring,
+      env: { REDMINE_API_KEY: ENV_API_KEY },
+      allowEnvFallback: false,
+    });
+    expect(value).toBeUndefined();
+  });
+
+  it('allowEnvFallback:false ainda usa a credencial PINADA do arquivo', async () => {
+    // Só a env-key (instance-agnóstica) é bloqueada; credencial pinada à instância continua valendo.
+    await new FileCredentialStore({ filePath }).set(INSTANCE, API_KEY);
+    const value = await resolveApiKey(INSTANCE, {
+      filePath,
+      keyringLoader: unavailableKeyring,
+      env: { REDMINE_API_KEY: ENV_API_KEY },
+      allowEnvFallback: false,
+    });
+    expect(value).toBe(API_KEY);
+  });
+
   it('createCredentialCascade grava no arquivo quando o keychain está indisponível', async () => {
     const cascade = createCredentialCascade({ filePath, keyringLoader: unavailableKeyring, env: {} });
     await cascade.set(INSTANCE, API_KEY);

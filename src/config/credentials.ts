@@ -486,6 +486,16 @@ export interface CredentialCascadeOptions {
   keyringService?: string;
   /** Carregador do módulo nativo do keychain; injetável em testes. */
   keyringLoader?: KeyringModuleLoader;
+  /**
+   * Permite a credencial de AMBIENTE (`REDMINE_API_KEY`) como fallback. Default
+   * `true` (retrocompatível). SEGURANÇA (#187): a env-key é INSTANCE-AGNÓSTICA
+   * (o `EnvCredentialStore` a devolve para QUALQUER URL). Quando a URL da
+   * instância vem de uma fonte MUTÁVEL/menos confiável (ex.: `settings.json`
+   * persistido, origem `config`), passe `false` — assim uma URL adulterada não
+   * pode fazer a chave real ser enviada a um host arbitrário; só credencial
+   * PINADA à instância (keychain/arquivo) é aceita (fail-closed).
+   */
+  allowEnvFallback?: boolean;
 }
 
 /**
@@ -519,9 +529,14 @@ export function createCredentialCascade(
   const file = new FileCredentialStore(
     options.filePath !== undefined ? { filePath: options.filePath } : {},
   );
+  // allowEnvFallback === false → env store sobre um ambiente VAZIO: nunca resolve
+  // a `REDMINE_API_KEY` (instance-agnóstica). Usado quando a URL veio de fonte
+  // mutável (settings.json persistido, #187) — só credencial pinada é aceita.
+  const envSource: NodeJS.ProcessEnv =
+    options.allowEnvFallback === false ? {} : (options.env ?? process.env);
   const env = new EnvCredentialStore({
     ...(options.envVarName !== undefined ? { varName: options.envVarName } : {}),
-    ...(options.env !== undefined ? { env: options.env } : {}),
+    env: envSource,
   });
   return new MigratingCredentialCascade(keyring, file, env, logger);
 }

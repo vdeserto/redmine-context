@@ -95,6 +95,11 @@ export async function runIssue(parsed: ParsedArgs, deps: RunDeps): Promise<numbe
   try {
     apiKey = await core.resolveApiKey(baseUrl, {
       env: deps.env,
+      // SEGURANÇA (#187): se a URL veio do settings.json persistido (origem
+      // `config`, fonte mutável), NÃO usar a REDMINE_API_KEY instance-agnóstica —
+      // só credencial pinada à instância (keychain/arquivo). URL de --url/env é
+      // confiável (mesma invocação), então mantém o fallback de ambiente.
+      allowEnvFallback: resolved.origin !== 'config',
       logger: { warn: (message) => deps.stderr(`${message}\n`) },
     });
   } catch (error) {
@@ -220,8 +225,14 @@ async function resolveKeyInteractively(baseUrl: string, insecure: boolean, deps:
 export async function runLogin(parsed: ParsedArgs, deps: RunDeps): Promise<number> {
   const insecure = parsed.flags.get('insecure') === true;
 
+  // Mesma precedência do resto (--url → REDMINE_URL → persistida), tratando
+  // string vazia como ausente via o resolvedor único (#187).
   const persistedUrl = deps.settings ? await deps.settings.getInstanceUrl() : undefined;
-  let baseUrl = stringFlag(parsed, 'url') ?? deps.env.REDMINE_URL ?? persistedUrl;
+  let baseUrl = core.resolveInstanceUrl({
+    flagUrl: stringFlag(parsed, 'url'),
+    envUrl: deps.env.REDMINE_URL,
+    persistedUrl,
+  })?.url;
   if (baseUrl === undefined || baseUrl.length === 0) {
     baseUrl = (await deps.prompt('URL do Redmine: ')).trim();
   }

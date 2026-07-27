@@ -54,14 +54,29 @@ describe('resolveTuiInstance (#187)', () => {
     expect(env.REDMINE_URL).toBeUndefined();
   });
 
-  it('clearPersisted delega para o store (usado no logout)', async () => {
+  it('clearPersisted (origem config) limpa o store E o env.REDMINE_URL do boot (#187)', async () => {
     const env = {} as NodeJS.ProcessEnv;
+    const settings = fakeSettings('https://persisted.example');
+
+    const info = await resolveTuiInstance(env, settings);
+    expect(env.REDMINE_URL).toBe('https://persisted.example'); // populado no boot
+
+    await info.clearPersisted();
+
+    expect(settings.clearInstanceUrl).toHaveBeenCalledTimes(1);
+    // Sem isto, os hooks continuariam vendo a instância "logada" após o logout.
+    expect(env.REDMINE_URL).toBeUndefined();
+  });
+
+  it('clearPersisted (origem env) NÃO apaga a REDMINE_URL real do ambiente', async () => {
+    const env = { REDMINE_URL: 'https://env.example' } as NodeJS.ProcessEnv;
     const settings = fakeSettings('https://persisted.example');
 
     const info = await resolveTuiInstance(env, settings);
     await info.clearPersisted();
 
     expect(settings.clearInstanceUrl).toHaveBeenCalledTimes(1);
+    expect(env.REDMINE_URL).toBe('https://env.example');
   });
 
   it('falha ao ler a persistida degrada para none (não lança)', async () => {

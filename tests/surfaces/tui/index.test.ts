@@ -16,11 +16,21 @@ const { render, waitUntilExit } = vi.hoisted(() => {
 vi.mock('ink', () => ({ render }));
 vi.mock('../../../src/surfaces/tui/app.js', () => ({ App: (): null => null }));
 
+import type { SettingsStore } from '../../../src/index.js';
 import { runTui } from '../../../src/surfaces/tui/index.js';
+
+/** Settings em memória — isola do arquivo real e da mutação de `process.env` (#187). */
+const settings: SettingsStore = {
+  getInstanceUrl: vi.fn().mockResolvedValue(undefined),
+  setInstanceUrl: vi.fn().mockResolvedValue(undefined),
+  clearInstanceUrl: vi.fn().mockResolvedValue(undefined),
+};
 
 describe('TUI: runTui', () => {
   it('renderiza o roteador e resolve 0 quando o app sai', async () => {
-    const code = await runTui();
+    // Injeta env/settings próprios: sem isso `runTui()` tocaria o settings.json
+    // REAL do usuário e mutaria o `process.env.REDMINE_URL` do processo de teste.
+    const code = await runTui({ env: {} as NodeJS.ProcessEnv, settings });
     expect(render).toHaveBeenCalledTimes(1);
     expect(waitUntilExit).toHaveBeenCalledTimes(1);
     expect(code).toBe(0);

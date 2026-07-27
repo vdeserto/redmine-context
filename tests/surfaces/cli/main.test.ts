@@ -253,6 +253,24 @@ describe('CLI: comando issue', () => {
     expect(core.fetchIssueBundle).toHaveBeenCalledWith(
       expect.objectContaining({ baseUrl: 'https://persisted.example' }),
     );
+    // SEGURANÇA (#187): URL persistida (origem config) NÃO usa a env-key.
+    expect(core.resolveApiKey).toHaveBeenCalledWith(
+      'https://persisted.example',
+      expect.objectContaining({ allowEnvFallback: false }),
+    );
+  });
+
+  it('--url/REDMINE_URL (origem confiável) mantêm o fallback de ambiente (#187)', async () => {
+    vi.mocked(core.resolveApiKey).mockResolvedValue('key');
+    vi.mocked(core.fetchIssueBundle).mockReturnValue(bundleStream('MD'));
+    const h = harness();
+
+    await run(['issue', '42', '--url', 'https://flag.example'], h.deps);
+
+    expect(core.resolveApiKey).toHaveBeenCalledWith(
+      'https://flag.example',
+      expect.objectContaining({ allowEnvFallback: true }),
+    );
   });
 
   it('--url tem precedência sobre a URL persistida (#187)', async () => {

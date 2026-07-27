@@ -17,7 +17,7 @@
  * headless, adicionando a persistência só como último recurso.
  */
 
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
 import envPaths from 'env-paths';
@@ -97,15 +97,24 @@ export class FileSettingsStore implements SettingsStore {
     return typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, unknown>) : {};
   }
 
-  /** Escreve o objeto, criando o diretório de config sob demanda. */
+  /**
+   * Escreve o objeto ATOMICAMENTE (arquivo temp + `rename`), criando o diretório
+   * sob demanda. O `rename` no mesmo diretório é atômico nos SOs suportados —
+   * evita deixar um `settings.json` truncado se o processo morrer no meio da escrita.
+   */
   private async write(data: Record<string, unknown>): Promise<void> {
     await mkdir(dirname(this.filePath), { recursive: true });
-    await writeFile(this.filePath, `${JSON.stringify(data, null, 2)}\n`);
+    const tmp = `${this.filePath}.${process.pid}.tmp`;
+    await writeFile(tmp, `${JSON.stringify(data, null, 2)}\n`);
+    await rename(tmp, this.filePath);
   }
 
   async getInstanceUrl(): Promise<string | undefined> {
     const url = (await this.readRaw()).instanceUrl;
-    return typeof url === 'string' && url.length > 0 ? url : undefined;
+    // Rejeita string vazia OU só-whitespace (ex.: settings.json editado à mão) —
+    // mesma semântica do `nonEmpty()` do resolvedor, evitando um baseUrl de espaços.
+    const trimmed = typeof url === 'string' ? url.trim() : '';
+    return trimmed.length > 0 ? trimmed : undefined;
   }
 
   async setInstanceUrl(url: string): Promise<void> {
