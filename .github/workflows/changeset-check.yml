@@ -1,0 +1,62 @@
+# Changeset check — reprova PRs de código que não trazem um changeset — issue #85 (M5-10)
+#
+# Todo PR que altera código publicável (src/, package.json, etc.) precisa incluir
+# um changeset (`.changeset/*.md`) declarando o tipo de bump (patch/minor/major)
+# e a nota de CHANGELOG. Este workflow roda `changeset status --since=origin/main`,
+# que:
+#   - PASSA (exit 0) se todos os pacotes com mudanças têm changeset associado,
+#     OU se não há mudança publicável desde `main` (ex.: PR só de docs/CI — o
+#     changeset status compara o estado dos pacotes e não exige changeset para
+#     mudanças que não afetam o conteúdo publicado);
+#   - FALHA (exit 1) se há mudança sem changeset — bloqueando o merge.
+#
+# Como criar um changeset localmente:  `npm run changeset`  (modo interativo) —
+# ou adicione manualmente um arquivo em `.changeset/<slug>.md` (ver .changeset/README.md).
+#
+# NÃO edita ci.yml/e2e.yml/smoke-npx.yml — workflow separado, dedicado ao gate de changeset.
+
+name: Changeset check
+
+on:
+  pull_request:
+    branches:
+      - main
+      - 'milestone/**'
+
+# Cancela runs redundantes do mesmo PR.
+concurrency:
+  group: changeset-check-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  changeset-check:
+    name: changeset-check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # `changeset status --since` precisa do histórico para diffar contra a base.
+          fetch-depth: 0
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+        shell: bash
+
+      - name: Ensure base ref is available
+        shell: bash
+        run: git fetch --no-tags --depth=1 origin main
+
+      - name: Verify changeset present
+        shell: bash
+        run: npx changeset status --since=origin/main

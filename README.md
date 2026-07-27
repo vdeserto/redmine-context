@@ -159,6 +159,21 @@ ver [Ambiente de teste](#ambiente-de-teste) e [E2E](#e2e-dogfood-cli--mcp)).
 | `npm run e2e` | Roteiro E2E de dogfood (CLI + MCP) contra o Docker (ver [E2E](#e2e-dogfood-cli--mcp)) |
 | `npm run ci:e2e:up` | Sobe + espera healthy/one-shots + seed em 1 comando, p/ o CI (ver [CI](#subir-e-seedar-em-1-comando-ci)) |
 | `npm run record:fixtures` | Grava fixtures HTTP p/ o replay offline (ver [Replay offline](#replay-offline-via-fixtures-gravadas-macoswindows)) |
+| `npm run changeset` | Cria um changeset (bump + nota de CHANGELOG) — ver [Release](#release-changesets) |
+| `npm run version` | `changeset version` — aplica bumps e escreve o `CHANGELOG.md` |
+| `npm run release` | `changeset publish` — publica no npm (usado só pela workflow de release) |
+
+## Release (Changesets)
+
+Versionamento e publicação npm via [`@changesets/cli`](https://github.com/changesets/changesets).
+
+- **Crie um changeset em todo PR de código:** `npm run changeset` (escolha `patch`/`minor`/`major` + a nota). Commite o `.changeset/<slug>.md` junto.
+- **Gate de CI:** `changeset-check.yml` roda `changeset status --since=origin/main` no PR e **reprova** código sem changeset (docs/CI ficam isentos).
+- **Release automático:** `release.yml` (push em `main`, após gates verdes) usa `changesets/action` para abrir o PR **"Version Packages"** (bump + CHANGELOG) e, ao mergeá-lo, roda `npm publish` com **provenance** (`NPM_CONFIG_PROVENANCE` + OIDC `id-token: write`).
+- **Guardado por `NPM_TOKEN`:** o publish só roda com o segredo presente — sem ele o workflow fica inerte (nada é publicado).
+- **Dry-run (não publica):** `npm publish --dry-run` simula o empacotamento do `dist/`.
+
+Detalhes e passos manuais (adicionar `NPM_TOKEN`, tornar o repo público, disparar o 1º release): `documentation/development/PLAN.md`.
 
 ## Estrutura
 

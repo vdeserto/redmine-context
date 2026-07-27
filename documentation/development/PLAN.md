@@ -73,5 +73,46 @@ idioma auto-detect + override (`por+eng` no tesseract) · limites 100 MB/20 min 
   logo na matriz mac/win do `ci.yml` (#77) — sem workflow novo.
 - **Regravar:** ver README §"Replay OFFLINE via fixtures gravadas".
 
+## Release & versionamento — Changesets (#85 / M5-10)
+
+Versionamento e publicação npm gerenciados por [`@changesets/cli`](https://github.com/changesets/changesets).
+
+- **Config:** `.changeset/config.json` — `baseBranch: main`, `access: public`, changelog automático (`@changesets/cli/changelog`), `commit: false`.
+- **Scripts npm:** `changeset` (criar), `version` (`changeset version` — bump + CHANGELOG), `release` (`changeset publish`).
+
+### Como criar um changeset (todo PR de código)
+```sh
+npm run changeset      # interativo: escolhe bump (patch/minor/major) + nota do CHANGELOG
+# gera .changeset/<slug>.md — commite junto com o código do PR
+```
+
+### Gate de PR sem changeset — `.github/workflows/changeset-check.yml`
+- Roda em `pull_request` (para `main`/`milestone/**`): `npx changeset status --since=origin/main`.
+- **FALHA** se um PR mexe em código publicável sem changeset; **PASSA** se há changeset ou se a mudança não afeta o publicado (docs/CI ficam isentos naturalmente).
+- Workflow separado — **não** toca em `ci.yml`/`e2e.yml`/`smoke-npx.yml`.
+
+### Release automático — `.github/workflows/release.yml`
+- Dispara no `push` em `main`. Job `gates` (typecheck+lint+test+build) roda primeiro; `release` só prossegue com **CI verde** (`needs: gates`).
+- Usa `changesets/action`:
+  1. Com changesets pendentes → abre/atualiza o PR **"Version Packages"** (bumpa versão + escreve `CHANGELOG.md`).
+  2. Ao **mergear** esse PR → não há changesets pendentes → roda `changeset publish` → `npm publish`.
+- **Provenance:** `NPM_CONFIG_PROVENANCE: true` + `permissions: id-token: write` + `contents: write` → attestation SLSA no npm.
+- **GUARDADO (inerte hoje):** o passo do `changesets/action` só roda com `if: ${{ secrets.NPM_TOKEN != '' }}`. **Sem o segredo o job é pulado — NADA é publicado.**
+
+### DoD — dry-run verde
+```sh
+npm ci
+npx changeset status          # lista bumps pendentes (exit 0)
+npm publish --dry-run         # empacota o dist/ e SIMULA (NÃO publica) — exit 0
+```
+Validado localmente: `changeset status` OK (minor em `redmine-context`); `npm publish --dry-run` empacota 213 arquivos (`dist/` + `README.md` + `LICENSE` + `package.json`, ~303 kB) sem erro. `prepack` (build via `tsc`) reaproveitado do #76.
+
+### Passos manuais do Victor (fora do escopo desta issue — não executados aqui)
+1. **Adicionar `NPM_TOKEN`** nos secrets do repo (token npm com permissão de publish) — sem ele o release fica inerte.
+2. **Tornar o repo público** (proveniência npm exige repo público).
+3. **Disparar o primeiro release:** mergear PRs com changesets em `main` → mergear o PR "Version Packages" gerado → o publish roda com provenance.
+
+> ⚠️ Esta issue **NÃO** publicou nada no npm, **NÃO** tornou o repo público e **NÃO** adicionou segredos. Apenas configurou o tooling (dry-run verde).
+
 ## Próximo passo
 **/plan:breakdown** — quebrar M1–M5 em 15–30 issues granulares.
