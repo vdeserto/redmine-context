@@ -11,6 +11,8 @@
  * != 0 → `failed` com motivo; timeout → `failed` com reason `timeout`.
  */
 
+import { join } from 'node:path';
+
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 // Mock do child_process (só o runner DEFAULT o usa) e do fs/promises (mkdir
@@ -115,7 +117,9 @@ describe('convertAudioToWav: sucesso e argumentos do ffmpeg', () => {
     // O último arg é o caminho de saída, dentro do dir TEMP do cache, .wav, e
     // coincide EXATAMENTE com o wavPath devolvido.
     const output = args.at(-1) ?? '';
-    expect(output.startsWith('/cache/tmp')).toBe(true);
+    // Produção computa join(tempDir, '<uuid>.wav'); compara o prefixo com join
+    // para casar o separador do SO (`\cache\tmp` no Windows, `/cache/tmp` no POSIX).
+    expect(output.startsWith(join('/cache/tmp'))).toBe(true);
     expect(output.endsWith('.wav')).toBe(true);
     expect(result.wavPath).toBe(output);
   });

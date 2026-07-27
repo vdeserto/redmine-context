@@ -19,6 +19,8 @@
  *   é limpo (best-effort) em qualquer desfecho.
  */
 
+import { join } from 'node:path';
+
 import { describe, expect, it, vi } from 'vitest';
 
 // Mock do child_process/fs (só os defaults os usam). Os testes por INJEÇÃO passam
@@ -414,8 +416,9 @@ describe('extractVideoKeyframe: 1 frame representativo no dir do anexo (M4-08)',
 
     expect(result.status).toBe('done');
     if (result.status !== 'done') throw new Error('esperava done');
-    // Referência no cache: dir do anexo + nome fixo do keyframe.
-    expect(result.keyframePath).toBe('/cache/att/12-ab/keyframe.jpg');
+    // Referência no cache: dir do anexo + nome fixo do keyframe. Construído com
+    // `join` para casar o `path.sep` do SO (produção usa join(dirname(input), ...)).
+    expect(result.keyframePath).toBe(join('/cache/att/12-ab', 'keyframe.jpg'));
   });
 
   it('respeita outputPath injetado (para testes/caller que controla o destino)', async () => {
@@ -463,7 +466,8 @@ describe('extractVideoKeyframe: 1 frame representativo no dir do anexo (M4-08)',
     if (result.status !== 'failed') throw new Error('esperava failed');
     expect(result.reason).toBe('erro-keyframe');
     expect(result.error).toContain('Invalid data');
-    expect(rm).toHaveBeenCalledWith('/cache/att/12-ab/keyframe.jpg');
+    // O JPEG parcial removido é o mesmo outputPath computado por join → usa join.
+    expect(rm).toHaveBeenCalledWith(join('/cache/att/12-ab', 'keyframe.jpg'));
   });
 
   it('timeout do runner → failed/timeout', async () => {

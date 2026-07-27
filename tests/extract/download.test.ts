@@ -13,7 +13,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdtempSync, readdirSync, readFileSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -142,7 +142,7 @@ describe('downloadAttachment: extensão sanitizada', () => {
       attachment,
       { cacheDir, instanceUrl: INSTANCE_URL },
     );
-    expect(path.endsWith('/original.pdf')).toBe(true);
+    expect(basename(path)).toBe('original.pdf');
   });
 
   it('usa .bin quando não há extensão', async () => {
@@ -152,7 +152,7 @@ describe('downloadAttachment: extensão sanitizada', () => {
       attachment,
       { cacheDir, instanceUrl: INSTANCE_URL },
     );
-    expect(path.endsWith('/original.bin')).toBe(true);
+    expect(basename(path)).toBe('original.bin');
   });
 
   it('usa .bin quando a extensão é inválida (não [a-z0-9]{1,8})', async () => {
@@ -162,7 +162,7 @@ describe('downloadAttachment: extensão sanitizada', () => {
       attachment,
       { cacheDir, instanceUrl: INSTANCE_URL },
     );
-    expect(path.endsWith('/original.bin')).toBe(true);
+    expect(basename(path)).toBe('original.bin');
   });
 
   it('usa .bin quando a extensão excede 8 caracteres', async () => {
@@ -172,7 +172,7 @@ describe('downloadAttachment: extensão sanitizada', () => {
       attachment,
       { cacheDir, instanceUrl: INSTANCE_URL },
     );
-    expect(path.endsWith('/original.bin')).toBe(true);
+    expect(basename(path)).toBe('original.bin');
   });
 });
 

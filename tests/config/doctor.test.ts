@@ -7,6 +7,8 @@
  * pdftotext, ffmpeg e whisper.cpp; estados found/ausente por binário; whisper sem
  * versão reportando o path como evidência; e o status do modelo GGUF (presente/ausente).
  */
+import { join } from 'node:path';
+
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -316,7 +318,9 @@ describe('core: diagnoseBinaries — modelo GGUF', () => {
       listDir: () => ['README.txt', 'ggml-base.gguf'],
     });
     expect(model.found).toBe(true);
-    expect(model.path).toBe('/cache/models/ggml-base.gguf');
+    // Produção computa join(whisperModelDir(), '<arquivo>.gguf') → usa join para
+    // casar o separador do SO (`\` no Windows, `/` no POSIX).
+    expect(model.path).toBe(join('/cache/models', 'ggml-base.gguf'));
   });
 
   it('ausente (dir sem .gguf): found=false com hint apontando o dir e o opt-in', async () => {

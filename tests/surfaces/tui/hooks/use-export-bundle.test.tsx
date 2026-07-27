@@ -12,7 +12,7 @@
  */
 import { Box, Text } from 'ink';
 import { render } from 'ink-testing-library';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('node:fs/promises', async (importOriginal) => {
@@ -104,9 +104,12 @@ describe('useExportBundle: formato md', () => {
     await runExport?.('md', '/tmp/export-dest');
 
     await vi.waitFor(() => expect(lastFrame()).toContain('status:success'));
-    expect(lastFrame()).toContain(`files:md=${join('/tmp/export-dest', '77.md')}`);
+    // Produção grava em join(resolve(expandHome(dest)), '<id>.<fmt>'); espelhamos o
+    // MESMO resolve (no Windows resolve('/x') prefixa a letra de drive, ex.: C:\x),
+    // garantindo o casamento em qualquer SO — join sozinho falharia lá.
+    expect(lastFrame()).toContain(`files:md=${resolve('/tmp/export-dest', '77.md')}`);
     expect(vi.mocked(writeFile)).toHaveBeenCalledWith(
-      join('/tmp/export-dest', '77.md'),
+      resolve('/tmp/export-dest', '77.md'),
       expect.any(String),
       'utf8',
     );
@@ -123,7 +126,7 @@ describe('useExportBundle: formato json', () => {
     await runExport?.('json', '/tmp/export-dest');
 
     await vi.waitFor(() => expect(lastFrame()).toContain('status:success'));
-    expect(lastFrame()).toContain(`files:json=${join('/tmp/export-dest', '77.json')}`);
+    expect(lastFrame()).toContain(`files:json=${resolve('/tmp/export-dest', '77.json')}`);
     const [, content] = vi.mocked(writeFile).mock.calls[0] ?? [];
     expect(() => JSON.parse(String(content))).not.toThrow();
   });
@@ -139,8 +142,8 @@ describe('useExportBundle: formato both', () => {
     await runExport?.('both', '/tmp/export-dest');
 
     await vi.waitFor(() => expect(lastFrame()).toContain('status:success'));
-    expect(lastFrame()).toContain(join('/tmp/export-dest', '77.md'));
-    expect(lastFrame()).toContain(join('/tmp/export-dest', '77.json'));
+    expect(lastFrame()).toContain(resolve('/tmp/export-dest', '77.md'));
+    expect(lastFrame()).toContain(resolve('/tmp/export-dest', '77.json'));
     expect(vi.mocked(writeFile)).toHaveBeenCalledTimes(2);
   });
 });
@@ -155,8 +158,10 @@ describe('useExportBundle: "~" expandido no destino', () => {
     await runExport?.('md', '~/exports');
 
     await vi.waitFor(() => expect(lastFrame()).toContain('status:success'));
+    // "~" é expandido para o home mockado e então resolvido (mesma cadeia da
+    // produção): resolve espelha o drive-prefix do Windows, join sozinho não.
     expect(vi.mocked(writeFile)).toHaveBeenCalledWith(
-      join('/home/tester', 'exports', '77.md'),
+      resolve('/home/tester', 'exports', '77.md'),
       expect.any(String),
       'utf8',
     );

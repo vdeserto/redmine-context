@@ -20,6 +20,13 @@ import { beforeAll, describe, expect, it } from 'vitest';
 /** Raiz do pacote (tests/packaging → raiz). */
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 
+/**
+ * Nome do executável do npm portável por SO: no Windows o npm é um shim
+ * `npm.cmd` (execFileSync sem `shell` não resolve PATHEXT, então `'npm'` daria
+ * ENOENT); no POSIX é `npm`. Evita `shell: true` (proibido pela lint rule do #83).
+ */
+const NPM = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+
 interface PackFileEntry {
   readonly path: string;
 }
@@ -39,10 +46,10 @@ beforeAll(() => {
 
   // Build explícito ANTES do pack (com --ignore-scripts) para que a saída do
   // tsc nunca contamine o JSON de `npm pack --json`. Determinístico.
-  execFileSync('npm', ['run', 'build'], { cwd: ROOT, stdio: 'pipe' });
+  execFileSync(NPM, ['run', 'build'], { cwd: ROOT, stdio: 'pipe' });
 
   const raw = execFileSync(
-    'npm',
+    NPM,
     ['pack', '--json', '--ignore-scripts', '--pack-destination', tmp],
     { cwd: ROOT, encoding: 'utf8' },
   );

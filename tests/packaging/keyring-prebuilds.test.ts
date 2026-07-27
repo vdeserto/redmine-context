@@ -26,6 +26,13 @@ import { describe, expect, it } from 'vitest';
 /** Raiz do pacote (tests/packaging → raiz). */
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 
+/**
+ * Nome do executável do npm portável por SO: no Windows o npm é um shim
+ * `npm.cmd` (execFileSync sem `shell` não resolve PATHEXT, então `'npm'` daria
+ * ENOENT); no POSIX é `npm`. Evita `shell: true` (proibido pela lint rule do #83).
+ */
+const NPM = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+
 interface Manifest {
   readonly dependencies?: Readonly<Record<string, string>>;
   readonly optionalDependencies?: Readonly<Record<string, string>>;
@@ -96,7 +103,7 @@ describe('keychain nativo: instalação sem node-gyp (#74)', () => {
     // `npm ls` sobre a árvore instalada (offline): se qualquer ferramenta de
     // compilação nativa estivesse presente, o keychain seria compilado no install.
     const out = execFileSync(
-      'npm',
+      NPM,
       ['ls', '--all', '--omit=dev', '--parseable'],
       { cwd: ROOT, encoding: 'utf8' },
     );
