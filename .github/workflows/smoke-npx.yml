@@ -1,0 +1,137 @@
+# Smoke npx — empacota (npm pack) e roda o CLI do TARBALL via npx em
+# macOS/Windows — issue #82 (M5-07), ADR-002.
+#
+# Prova o "caminho do usuário final" (npm i / npx do pacote publicável), que os
+# testes unitários do ci.yml (#77) não cobrem: o bin resolvido pelo npm (symlink
+# em POSIX, shim .cmd no Windows; guard realpath do #76) precisa realmente rodar
+# do tarball, não da árvore-fonte.
+#
+# Verifica:
+#   1. `npx <tarball> --help`  -> exit 0 e imprime o help.
+#   2. `npx <tarball> doctor`  -> DEGRADA graciosamente (ADR-002): os binários de
+#      mídia (ffmpeg/whisper.cpp/tesseract) e o modelo GGUF não estão nos runners,
+#      então o doctor reporta a ausência com instruções por SO e SAI SEM CRASH.
+#      Comportamento real do doctor (src/surfaces/cli/commands.ts::runDoctor):
+#      exit 0 se tudo presente, exit 1 se faltar algum. Como whisper.cpp e o
+#      modelo GGUF nunca estão nos runners, o exit é 1 e há linhas `[faltando]`.
+#      A asserção exige: header impresso + ao menos um `[faltando]` com hint
+#      (`instale com:`) + exit em {0,1} (qualquer outro código = crash -> falha).
+#
+# Este job é OBRIGATÓRIO: qualquer passo que falhe reprova o job e bloqueia o
+# release (tornar o check required é config de proteção de branch do repositório,
+# como documentado no ci.yml). NÃO edita o ci.yml (evita conflito com #77).
+
+name: Smoke npx
+
+on:
+  push:
+    branches:
+      - main
+      - 'milestone/**'
+  pull_request:
+    branches:
+      - main
+      - 'milestone/**'
+
+# Cancela runs redundantes do mesmo ref (economiza minutos de runner).
+concurrency:
+  group: smoke-npx-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  smoke-npx:
+    name: smoke-npx
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      # Não cancela os outros SOs se um falhar — cada SO reporta seu próprio status.
+      fail-fast: false
+      matrix:
+        # O AC exige macOS e Windows; ubuntu entra por paridade (o packaging já é
+        # exercitado no ci.yml, mas o smoke do npx cross-SO fica mais forte).
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+        shell: bash
+
+      - name: Build
+        run: npm run build
+        shell: bash
+
+      - name: Pack tarball
+        shell: bash
+        run: |
+          npm pack
+          TARBALL="$(ls redmine-context-*.tgz | head -n1)"
+          if [ -z "$TARBALL" ]; then
+            echo "::error::npm pack não gerou o tarball redmine-context-*.tgz"
+            exit 1
+          fi
+          echo "tarball: $TARBALL"
+          echo "TARBALL=$TARBALL" >> "$GITHUB_ENV"
+
+      - name: Smoke --help (exit 0 + imprime o help)
+        shell: bash
+        run: |
+          set +e
+          OUT="$(npx --yes "./$TARBALL" --help 2>&1)"
+          CODE=$?
+          set -e
+          printf '%s\n' "$OUT"
+          echo "help exit code: $CODE"
+          if [ "$CODE" -ne 0 ]; then
+            echo "::error::--help deveria sair com 0, mas saiu com $CODE"
+            exit 1
+          fi
+          if ! printf '%s' "$OUT" | grep -q "redmine-context"; then
+            echo "::error::--help não imprimiu o texto de ajuda esperado"
+            exit 1
+          fi
+          echo "--help OK (exit 0, help impresso)"
+
+      - name: Smoke doctor (degrada com hints por SO, sem crash)
+        shell: bash
+        run: |
+          set +e
+          OUT="$(npx --yes "./$TARBALL" doctor 2>&1)"
+          CODE=$?
+          set -e
+          printf '%s\n' "$OUT"
+          echo "doctor exit code: $CODE"
+          # Exit válido do doctor é 0 (tudo presente) ou 1 (faltando). Qualquer
+          # outro código indica crash/erro inesperado -> reprova.
+          if [ "$CODE" -ne 0 ] && [ "$CODE" -ne 1 ]; then
+            echo "::error::doctor crashou ou retornou exit inesperado: $CODE"
+            exit 1
+          fi
+          # Rodou de fato (header do relatório).
+          if ! printf '%s' "$OUT" | grep -q "Binários de mídia:"; then
+            echo "::error::doctor não imprimiu o cabeçalho do diagnóstico"
+            exit 1
+          fi
+          # Degradação graciosa: whisper.cpp e o modelo GGUF nunca estão nos
+          # runners, então TEM de haver ao menos uma linha [faltando]...
+          if ! printf '%s' "$OUT" | grep -q "\[faltando\]"; then
+            echo "::error::doctor não reportou nenhum binário ausente (degradação esperada nos runners)"
+            exit 1
+          fi
+          # ...com instrução de instalação por SO.
+          if ! printf '%s' "$OUT" | grep -q "instale com:"; then
+            echo "::error::doctor não imprimiu as instruções de instalação por SO"
+            exit 1
+          fi
+          echo "doctor degradou graciosamente com hints por SO (exit $CODE)"
