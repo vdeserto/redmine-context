@@ -1,9 +1,10 @@
-import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
+
+import { runOrThrow } from './exec-async';
 
 /**
  * Contrato de instalação do keychain nativo via prebuilds (M5-01, #74).
@@ -100,13 +101,14 @@ describe('keychain nativo: prebuilds via optionalDependencies (#74)', () => {
 });
 
 describe('keychain nativo: instalação sem node-gyp (#74)', () => {
-  it('não traz node-gyp/node-pre-gyp/prebuild na árvore de dependências', () => {
+  it('não traz node-gyp/node-pre-gyp/prebuild na árvore de dependências', async () => {
     // `npm ls` sobre a árvore instalada (offline): se qualquer ferramenta de
     // compilação nativa estivesse presente, o keychain seria compilado no install.
-    const out = execFileSync(
+    // Async (await) para não bloquear o event loop do worker do Vitest (#77).
+    const { stdout: out } = await runOrThrow(
       NPM_BIN,
       [...NPM_PREFIX, 'ls', '--all', '--omit=dev', '--parseable'],
-      { cwd: ROOT, encoding: 'utf8' },
+      { cwd: ROOT },
     );
     expect(out).not.toMatch(/node_modules\/(node-gyp|node-pre-gyp|@mapbox\/node-pre-gyp|prebuild(-install)?)(\/|$)/m);
   }, 60_000);

@@ -1,10 +1,11 @@
-import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+
+import { runCapture, runOrThrow } from './exec-async';
 
 /**
  * Teste de instalação limpa ponta a ponta (M5-02, #75).
@@ -64,17 +65,18 @@ let installStatus: number | null = null;
 /** Symlink do bin criado pelo npm: node_modules/.bin/redmine-context. */
 let binViaSymlink = '';
 
-beforeAll(() => {
+beforeAll(async () => {
   workDir = mkdtempSync(join(tmpdir(), 'rc-clean-install-'));
 
   // Build explícito ANTES do pack com --ignore-scripts: assim o `prepack` (que
-  // roda `tsc`) não roda de novo nem contamina o JSON de `npm pack --json`.
-  execFileSync(NPM_BIN, [...NPM_PREFIX, 'run', 'build'], { cwd: ROOT, stdio: 'pipe' });
+  // roda `tsc`) não roda de novo nem contamina o JSON de `npm pack --json`. Async
+  // (await) para não bloquear o event loop do worker do Vitest (#77).
+  await runOrThrow(NPM_BIN, [...NPM_PREFIX, 'run', 'build'], { cwd: ROOT });
 
-  const raw = execFileSync(
+  const { stdout: raw } = await runOrThrow(
     NPM_BIN,
     [...NPM_PREFIX, 'pack', '--json', '--ignore-scripts', '--pack-destination', workDir],
-    { cwd: ROOT, encoding: 'utf8' },
+    { cwd: ROOT },
   );
   const meta = (JSON.parse(raw) as readonly PackResult[])[0];
   if (meta === undefined) {
@@ -96,14 +98,16 @@ beforeAll(() => {
     )}\n`,
   );
 
-  // Instala o tarball local. spawnSync (não execFileSync) para capturar o LOG
-  // COMPLETO mesmo se o install falhar — precisamos do log para a asserção e do
-  // status para provar que o install em si teve sucesso.
+  // Instala o tarball local. runCapture (spawn async, NÃO execFileAsync) para
+  // capturar o LOG COMPLETO mesmo se o install falhar — precisamos do log para a
+  // asserção e do status para provar que o install em si teve sucesso; execFileAsync
+  // REJEITARIA em exit != 0 e perderíamos ambos. É async (await) para não bloquear o
+  // event loop do worker do Vitest (#77).
   // `--prefer-offline` usa o cache do npm (aquecido pelo `npm ci` do job) e só vai
   // à rede para packuments ausentes; os `--fetch-retries`/timeouts toleram blips de
   // rede num gate release-blocking (M1 do review). Hermetismo pleno (lockfile fixo no
   // consumer + `--offline`) fica como follow-up se surgir flakiness.
-  const install = spawnSync(
+  const install = await runCapture(
     NPM_BIN,
     [
       ...NPM_PREFIX,
@@ -122,10 +126,10 @@ beforeAll(() => {
       '--loglevel',
       'verbose',
     ],
-    { cwd: projDir, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 },
+    { cwd: projDir, maxBuffer: 64 * 1024 * 1024 },
   );
   installStatus = install.status;
-  installLog = `${install.stdout ?? ''}\n${install.stderr ?? ''}`;
+  installLog = `${install.stdout}\n${install.stderr}`;
 
   binViaSymlink = join(nodeBin, 'redmine-context');
 }, 300_000);
@@ -173,13 +177,13 @@ describe('instalação limpa: bin executável (npx) (#75)', () => {
     }
   });
 
-  it('roda --help pelo entrypoint instalado com exit 0 e imprime a ajuda', () => {
+  it('roda --help pelo entrypoint instalado com exit 0 e imprime a ajuda', async () => {
     // Unix: executa o próprio symlink (argv[1]=symlink, reproduz o npx e exercita o
     // guard de realpath do #76). Windows: o shim `.cmd` via `cmd /c` (sem shell:true
-    // — `cmd` é o programa; `/c` o argumento). execFileSync lança se exit != 0.
-    const out = isWindows
-      ? execFileSync('cmd', ['/c', `${binViaSymlink}.cmd`, '--help'], { encoding: 'utf8' })
-      : execFileSync(binViaSymlink, ['--help'], { encoding: 'utf8' });
+    // — `cmd` é o programa; `/c` o argumento). runOrThrow rejeita se exit != 0.
+    const { stdout: out } = isWindows
+      ? await runOrThrow('cmd', ['/c', `${binViaSymlink}.cmd`, '--help'])
+      : await runOrThrow(binViaSymlink, ['--help']);
     expect(out).toContain('Uso:');
     expect(out).toContain('redmine-context');
     // Rule #33 / ADR: nada de referências a ferramentas de IA na saída.

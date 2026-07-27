@@ -1,10 +1,11 @@
-import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { beforeAll, describe, expect, it } from 'vitest';
+
+import { runOrThrow } from './exec-async';
 
 /**
  * Smoke de empacotamento npm/npx (M5-03, #76).
@@ -42,17 +43,18 @@ let tarballFiles: readonly string[] = [];
 let extractedBin = '';
 let binViaSymlink = '';
 
-beforeAll(() => {
+beforeAll(async () => {
   const tmp = mkdtempSync(join(tmpdir(), 'rc-pack-'));
 
   // Build explícito ANTES do pack (com --ignore-scripts) para que a saída do
-  // tsc nunca contamine o JSON de `npm pack --json`. Determinístico.
-  execFileSync(NPM_BIN, [...NPM_PREFIX, 'run', 'build'], { cwd: ROOT, stdio: 'pipe' });
+  // tsc nunca contamine o JSON de `npm pack --json`. Determinístico. Async (await)
+  // para não bloquear o event loop do worker do Vitest (#77).
+  await runOrThrow(NPM_BIN, [...NPM_PREFIX, 'run', 'build'], { cwd: ROOT });
 
-  const raw = execFileSync(
+  const { stdout: raw } = await runOrThrow(
     NPM_BIN,
     [...NPM_PREFIX, 'pack', '--json', '--ignore-scripts', '--pack-destination', tmp],
-    { cwd: ROOT, encoding: 'utf8' },
+    { cwd: ROOT },
   );
   const meta = (JSON.parse(raw) as readonly PackResult[])[0];
   if (meta === undefined) {
@@ -64,7 +66,7 @@ beforeAll(() => {
   // exatamente os arquivos empacotados, como o npx faria após o download. Caminho
   // RELATIVO com `cwd: tmp`: um `C:\...tgz` absoluto faz o GNU tar (Git Bash no
   // runner Windows) interpretar `C:` como host remoto ("Cannot connect to C:").
-  execFileSync('tar', ['-xf', meta.filename], { cwd: tmp });
+  await runOrThrow('tar', ['-xf', meta.filename], { cwd: tmp });
   const pkgDir = join(tmp, 'package');
   // `junction` liga o dir sem exigir privilégio de symlink no Windows (no POSIX o
   // tipo é ignorado e vira um symlink normal).
@@ -117,11 +119,11 @@ describe('empacotamento: conteúdo do tarball (files/exports)', () => {
     }
   });
 
-  it('TOOL_VERSION do core está em sincronia com package.json', () => {
+  it('TOOL_VERSION do core está em sincronia com package.json', async () => {
     const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')) as {
       readonly version: string;
     };
-    const version = execFileSync('node', [binViaSymlink, '--version'], { encoding: 'utf8' });
+    const { stdout: version } = await runOrThrow('node', [binViaSymlink, '--version']);
     expect(version.trim()).toBe(pkg.version);
   });
 });
@@ -132,15 +134,15 @@ describe('empacotamento: bin executável (npx)', () => {
     expect(firstLine).toBe('#!/usr/bin/env node');
   });
 
-  it('roda --help do tarball com exit 0', () => {
-    // execFileSync lança se o exit code != 0; sucesso ⇒ exit 0.
-    const out = execFileSync('node', [binViaSymlink, '--help'], { encoding: 'utf8' });
+  it('roda --help do tarball com exit 0', async () => {
+    // runOrThrow rejeita se o exit code != 0; sucesso ⇒ exit 0.
+    const { stdout: out } = await runOrThrow('node', [binViaSymlink, '--help']);
     expect(out).toContain('Uso:');
     expect(out).not.toMatch(/claude|gpt|openai|copilot/i);
   }, 60_000);
 
-  it('roda --version do tarball com exit 0 e imprime semver', () => {
-    const out = execFileSync('node', [binViaSymlink, '--version'], { encoding: 'utf8' });
+  it('roda --version do tarball com exit 0 e imprime semver', async () => {
+    const { stdout: out } = await runOrThrow('node', [binViaSymlink, '--version']);
     expect(out.trim()).toMatch(/^\d+\.\d+\.\d+$/);
   }, 60_000);
 });
