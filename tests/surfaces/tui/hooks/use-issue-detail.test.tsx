@@ -49,6 +49,7 @@ import {
   useIssueDetail,
   type UseIssueDetailOptions,
 } from '../../../../src/surfaces/tui/hooks/use-issue-detail.js';
+import { InstanceProvider } from '../../../../src/surfaces/tui/instance.js';
 
 const BASE_URL = 'https://redmine.example';
 const API_KEY = 'super-secret-api-key-should-never-leak';
@@ -103,6 +104,27 @@ afterEach(() => {
   vi.mocked(core.normalizeIssue).mockReset();
   vi.mocked(useAuthGuard).mockReset();
   delete (globalThis as { __retry?: () => void }).__retry;
+});
+
+describe('useIssueDetail: segurança da instância persistida (#187)', () => {
+  it('origem config → resolveApiKey com allowEnvFallback:false (não usa a env-key)', async () => {
+    vi.mocked(core.resolveApiKey).mockResolvedValue(undefined);
+
+    render(
+      <InstanceProvider
+        value={{ url: BASE_URL, origin: 'config', clearPersisted: async () => undefined }}
+      >
+        <Harness issueId={42} options={{ env: { REDMINE_URL: BASE_URL } }} />
+      </InstanceProvider>,
+    );
+
+    await vi.waitFor(() => {
+      expect(core.resolveApiKey).toHaveBeenCalledWith(
+        BASE_URL,
+        expect.objectContaining({ allowEnvFallback: false }),
+      );
+    });
+  });
 });
 
 describe('useIssueDetail: sem issue selecionada', () => {
