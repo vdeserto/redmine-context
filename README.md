@@ -22,10 +22,84 @@ npm install -g redmine-context
 redmine-context --version
 ```
 
-> Os binários de mídia (`tesseract`, `ffmpeg`, `whisper.cpp`) **não** são
-> embutidos no pacote npm (ADR-002): são opcionais e instalados pelo próprio
-> usuário quando quiser OCR/transcrição. Rode `redmine-context doctor` para o
-> diagnóstico. Sem eles, o bundle de texto é gerado normalmente.
+> Os binários de mídia (`tesseract`, `ffmpeg`, `whisper.cpp`, `pdftotext`) **não**
+> são embutidos no pacote npm (ADR-002): são opcionais e instalados pelo próprio
+> usuário quando quiser OCR/transcrição/PDF (ver [Binários de mídia](#binários-de-mídia-opcionais-100-local)).
+> Rode `redmine-context doctor` para o diagnóstico. Sem eles, o bundle de texto é
+> gerado normalmente.
+
+### Binários de mídia (opcionais, 100% local)
+
+A extração de texto de anexos roda **100% na sua máquina**
+([ADR-002](documentation/adr/ADR-002-midia-100-local-politica-binarios.md)), por
+binários externos que **não** acompanham o pacote npm. Todos são **opcionais**:
+sem eles o bundle de texto sai normalmente (degradação graciosa) — apenas o texto
+daquela mídia fica ausente, com o motivo registrado no anexo. O
+[`doctor`](#troubleshooting-com-redmine-context-doctor) diz quais faltam e como
+instalar no seu SO.
+
+| Binário | Para quê | macOS (Homebrew) | Linux (apt / dnf) | Windows (winget) |
+|---|---|---|---|---|
+| `tesseract` | OCR de imagens (PNG/JPEG/GIF/WebP) | `brew install tesseract tesseract-lang` | `sudo apt install tesseract-ocr` · `sudo dnf install tesseract` | `winget install UB-Mannheim.TesseractOCR` |
+| `pdftotext` (poppler) | Texto de anexos PDF | `brew install poppler` | `sudo apt install poppler-utils` · `sudo dnf install poppler-utils` | `winget install oschwartz10612.Poppler` (ou `choco install poppler`) |
+| `ffmpeg` | Áudio/vídeo → faixa de áudio | `brew install ffmpeg` | `sudo apt install ffmpeg` · `sudo dnf install ffmpeg` | `winget install Gyan.FFmpeg` |
+| `whisper.cpp` | Transcrição de áudio | `brew install whisper-cpp` | `brew install whisper-cpp` (ou compile) | baixe as [releases](https://github.com/ggml-org/whisper.cpp/releases) |
+
+> Estes comandos são exatamente os que o `redmine-context doctor` sugere quando o
+> binário está ausente. No Windows, o `tesseract` também pode ser instalado
+> manualmente em `C:\Program Files\Tesseract-OCR`; o `tesseract-lang` (macOS) traz
+> o traineddata `por` — o OCR usa `por+eng` por padrão.
+
+#### Modelo do whisper.cpp (GGUF)
+
+Além do binário, a transcrição precisa de um **modelo GGUF** (ex.: `ggml-base`) no
+cache de modelos do usuário (via [`env-paths`](https://github.com/sindresorhus/env-paths),
+por SO):
+
+- **macOS**: `~/Library/Caches/redmine-context/models`
+- **Linux**: `~/.cache/redmine-context/models` (respeita `$XDG_CACHE_HOME`)
+- **Windows**: `%LOCALAPPDATA%\redmine-context\Cache\models`
+
+O `doctor` reporta o status do modelo junto com os binários.
+
+#### Download automático opt-in (`--download-binaries`)
+
+Onde existe **artefato estático oficial**, o opt-in `--download-binaries` pode
+obter o binário/modelo automaticamente (explícito e ruidoso; **nunca** no MCP
+headless): **ffmpeg** ([builds BtbN](https://github.com/BtbN/FFmpeg-Builds)),
+**whisper.cpp** ([releases](https://github.com/ggml-org/whisper.cpp/releases)) e o
+**modelo GGUF**. O **tesseract** não tem artefato estático oficial — instale-o
+pelo gerenciador do seu SO (tabela acima). Cada download tem SHA-256 pinado, URL
+fixa e escrita atômica
+([ADR-002](documentation/adr/ADR-002-midia-100-local-politica-binarios.md)).
+
+### Troubleshooting com `redmine-context doctor`
+
+`redmine-context doctor` é a ferramenta central de diagnóstico do ambiente de
+mídia. Ele localiza cada binário no `PATH` e em locais convencionais, lê a versão
+quando disponível e, para o que estiver ausente, imprime a instrução de instalação
+**do seu SO**:
+
+```bash
+redmine-context doctor
+```
+
+Saída (exemplo, macOS com o ffmpeg e o modelo faltando):
+
+```text
+Binários de mídia:
+  [ok] tesseract v5.5.0 (/opt/homebrew/bin/tesseract)
+  [ok] pdftotext v24.02.0 (/opt/homebrew/bin/pdftotext)
+  [faltando] ffmpeg — instale com: brew install ffmpeg (ou, no futuro, o opt-in `--download-binaries`; builds estáticos BtbN (github.com/BtbN/FFmpeg-Builds))
+  [faltando] whisper.cpp — instale com: brew install whisper-cpp (ou, no futuro, o opt-in `--download-binaries`; releases em github.com/ggml-org/whisper.cpp/releases)
+  [faltando] modelo whisper (GGUF) — instale com: baixe um modelo GGUF (ex.: ggml-base) para ~/Library/Caches/redmine-context/models (ou, no futuro, o opt-in `--download-binaries`, via #58)
+```
+
+- **Exit code**: `0` se todos os itens presentes, `1` se faltar algum — programável
+  em scripts/CI.
+- **Ordem do relatório**: `tesseract`, `pdftotext`, `ffmpeg`, `whisper.cpp`,
+  `modelo whisper (GGUF)`.
+- Degrada em `NO_COLOR`/saída não-TTY (texto puro, sem ANSI).
 
 ### Keychain do sistema: prebuilds e fallback
 
@@ -99,13 +173,25 @@ O subcomando `redmine-context mcp` sobe um servidor [MCP](https://modelcontextpr
 
 A instância vem sempre da configuração do processo (`REDMINE_URL` + cascata de credencial, `REDMINE_API_KEY` no modo headless): **nenhuma tool aceita URL/host arbitrário**. Erros 403/404 e credencial ausente retornam um erro MCP claro (`isError`). O stdout é reservado ao protocolo; logs vão para stderr.
 
-Registro no Claude:
+Registro no Claude (tudo após `--` é o comando do servidor stdio; `npx -y` roda a
+última versão publicada, sem instalar nada global):
 
 ```bash
 claude mcp add redmine-context -- npx -y redmine-context mcp
 ```
 
-Configure o ambiente do servidor com `REDMINE_URL` e `REDMINE_API_KEY` (ou rode `redmine-context login` para gravar a credencial na cascata).
+No Windows nativo (fora do WSL), o `npx` precisa do wrapper `cmd /c`:
+
+```bash
+claude mcp add redmine-context -- cmd /c npx -y redmine-context mcp
+```
+
+Passe a instância via `--env` (aplicado ao ambiente do servidor), por exemplo
+`claude mcp add redmine-context --env REDMINE_URL=https://redmine.example -- npx -y redmine-context mcp`.
+Configure o ambiente do servidor com `REDMINE_URL` e `REDMINE_API_KEY` (ou rode
+`redmine-context login` para gravar a credencial na cascata). Com a integração
+ativa, o cliente ganha as tools read-only `get_issue_context`, `search_issues` e
+`get_attachment_text` (detalhadas acima).
 
 ## Extração de mídia (OCR)
 
@@ -127,16 +213,13 @@ bundle. As extrações são cacheadas por `(instância, anexo, digest, versão+m
 do extrator)` ([ADR-004](documentation/adr/ADR-004-cache-duas-camadas.md)): um
 comentário novo **não** reprocessa o OCR, e CLI e MCP compartilham o mesmo cache.
 
-Verifique a instalação com o `doctor`:
+Verifique a instalação de todos os binários (tesseract, pdftotext, ffmpeg,
+whisper.cpp) e do modelo GGUF com o `doctor` — ver
+[Troubleshooting com `redmine-context doctor`](#troubleshooting-com-redmine-context-doctor):
 
 ```bash
-redmine-context doctor    # relatório dos binários de mídia (tesseract); exit 0 se ok, 1 se faltar
+redmine-context doctor    # exit 0 se tudo presente, 1 se faltar algum
 ```
-
-O `doctor` detecta o binário no `PATH` e em locais convencionais e, quando
-ausente, imprime a instrução de instalação do seu SO (ex.: `brew install tesseract`,
-`apt install tesseract-ocr`, `winget install UB-Mannheim.TesseractOCR`). Degrada
-naturalmente em `NO_COLOR`/não-TTY (texto puro, sem ANSI).
 
 
 ## TUI interativa
