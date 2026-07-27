@@ -83,6 +83,7 @@ ver [Ambiente de teste](#ambiente-de-teste) e [E2E](#e2e-dogfood-cli--mcp)).
 | `npm run build` | Compila para `dist/` |
 | `npm run seed` | Popula fixtures base no Redmine via REST (ver [Seed](#seed-de-fixtures)) |
 | `npm run e2e` | Roteiro E2E de dogfood (CLI + MCP) contra o Docker (ver [E2E](#e2e-dogfood-cli--mcp)) |
+| `npm run ci:e2e:up` | Sobe + espera healthy/one-shots + seed em 1 comando, p/ o CI (ver [CI](#subir-e-seedar-em-1-comando-ci)) |
 
 ## Estrutura
 
@@ -222,6 +223,24 @@ Config via ambiente (defaults combinam com o compose de teste):
 > zera de forma proativa e idempotente (`PUT /users/{id}.json`, mantendo a mesma
 > senha) para manter o admin utilizável em web + API.
 
+### Subir e seedar em 1 comando (CI)
+
+Para o job de E2E no CI (Linux, issue #80), o stack precisa ficar **pronto e
+seedado** em um único passo. `scripts/ci-e2e-up.sh` faz exatamente isso,
+**reutilizando** o compose, o `wait-for-healthy.sh` e o `seed.mjs` (sem fork):
+
+```bash
+npm run ci:e2e:up          # = bash scripts/ci-e2e-up.sh
+```
+
+Passos: `docker compose up -d` → `wait-for-healthy.sh postgres redmine` → poll de
+`docker compose ps -a` até os one-shots (`load-default-data`, `enable-rest-api`)
+saírem com código 0 → `npm run seed` (idempotente). O poll de `ps -a` é usado no
+lugar de `docker compose wait` porque este erra quando o container já saiu (só
+rastreia containers em execução). Em sucesso o stack fica **de pé** (o teardown,
+`down -v`, é responsabilidade do chamador). Re-executar é seguro: o seed não
+duplica. Aceita `COMPOSE_FILE`/`ONESHOT_TIMEOUT`/`TIMEOUT` e as variáveis do seed.
+
 ### E2E dogfood (CLI + MCP)
 
 Com Docker disponível, o roteiro E2E automatizado valida o fluxo real
@@ -269,4 +288,4 @@ O script `wait-for-healthy.sh` aceita `TIMEOUT`, `INTERVAL` e `COMPOSE_FILE`.
 > As credenciais acima são exclusivas do ambiente de teste (defaults no
 > compose/`.env.example`); não há credenciais hardcoded fora dele.
 
-> Nota (CI): o one-shot `enable-rest-api` roda após o Redmine ficar healthy; em pipelines, aguarde o exit 0 dele (`docker compose wait enable-rest-api`) antes do smoke test da API.
+> Nota (CI): o one-shot `enable-rest-api` roda após o Redmine ficar healthy; em pipelines, aguarde o exit 0 dele antes do smoke test da API — o `ci-e2e-up.sh` faz isso via poll de `docker compose ps -a` (não `docker compose wait`, que erra em containers já finalizados).
