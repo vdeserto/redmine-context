@@ -17,7 +17,41 @@ vi.mock('ink', () => ({ render }));
 vi.mock('../../../src/surfaces/tui/app.js', () => ({ App: (): null => null }));
 
 import type { SettingsStore } from '../../../src/index.js';
-import { runTui } from '../../../src/surfaces/tui/index.js';
+import { installAltScreen, runTui, type AltScreenProc } from '../../../src/surfaces/tui/index.js';
+
+const ALT_ENTER = '\x1b[?1049h';
+const ALT_LEAVE = '\x1b[?1049l';
+
+/** `process` fake: registra/dispara listeners e espiona `exit` — para o alt-screen. */
+function fakeProc(): AltScreenProc & {
+  emit(event: string): void;
+  count(event: string): number;
+  exit: ReturnType<typeof vi.fn>;
+} {
+  const listeners = new Map<string, Array<(...a: unknown[]) => void>>();
+  return {
+    on(event, listener) {
+      const arr = listeners.get(event) ?? [];
+      arr.push(listener);
+      listeners.set(event, arr);
+      return this;
+    },
+    off(event, listener) {
+      listeners.set(event, (listeners.get(event) ?? []).filter((l) => l !== listener));
+      return this;
+    },
+    exit: vi.fn() as unknown as (code?: number) => never,
+    emit(event) {
+      for (const l of [...(listeners.get(event) ?? [])]) l();
+    },
+    count(event) {
+      return (listeners.get(event) ?? []).length;
+    },
+  };
+}
+
+const writtenOf = (write: ReturnType<typeof vi.fn>): string =>
+  write.mock.calls.map((c) => String(c[0])).join('');
 
 /** Settings em memória — isola do arquivo real e da mutação de `process.env` (#187). */
 const settings: SettingsStore = {
@@ -60,6 +94,63 @@ describe('TUI: runTui', () => {
 
     await runTui({ env: {} as NodeJS.ProcessEnv, settings, stdout: pipeOut });
 
+    expect(write).not.toHaveBeenCalled();
+  });
+});
+
+describe('installAltScreen (B1: restauração à prova de sinal)', () => {
+  it('entra no alt-screen na instalação e RESTAURA em SIGTERM, encerrando o processo', () => {
+    const write = vi.fn();
+    const out = { write } as unknown as NodeJS.WriteStream;
+    const proc = fakeProc();
+
+    const dispose = installAltScreen(out, proc);
+    expect(writtenOf(write)).toContain(ALT_ENTER);
+
+    write.mockClear();
+    proc.emit('SIGTERM'); // sinal externo (kill / fechar aba / process manager)
+    expect(writtenOf(write)).toContain(ALT_LEAVE);
+    expect(proc.exit).toHaveBeenCalledWith(143);
+
+    // Idempotente: dispose depois do sinal não escreve a saída de novo.
+    write.mockClear();
+    dispose();
+    expect(write).not.toHaveBeenCalled();
+  });
+
+  it('cobre SIGINT e SIGHUP com os códigos convencionais', () => {
+    for (const [signal, code] of [
+      ['SIGINT', 130],
+      ['SIGHUP', 129],
+    ] as const) {
+      const write = vi.fn();
+      const proc = fakeProc();
+      installAltScreen({ write } as unknown as NodeJS.WriteStream, proc);
+      write.mockClear();
+      proc.emit(signal);
+      expect(writtenOf(write)).toContain(ALT_LEAVE);
+      expect(proc.exit).toHaveBeenCalledWith(code);
+    }
+  });
+
+  it('dispose (saída normal) restaura uma vez e remove TODOS os listeners', () => {
+    const write = vi.fn();
+    const proc = fakeProc();
+    const dispose = installAltScreen({ write } as unknown as NodeJS.WriteStream, proc);
+
+    write.mockClear();
+    dispose();
+    expect(writtenOf(write)).toContain(ALT_LEAVE);
+
+    // Sem vazar handlers de sinal/exit no `process`.
+    expect(proc.count('SIGTERM')).toBe(0);
+    expect(proc.count('SIGINT')).toBe(0);
+    expect(proc.count('SIGHUP')).toBe(0);
+    expect(proc.count('exit')).toBe(0);
+
+    // Idempotente.
+    write.mockClear();
+    dispose();
     expect(write).not.toHaveBeenCalled();
   });
 });

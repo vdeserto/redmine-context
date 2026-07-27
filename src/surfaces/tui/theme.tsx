@@ -1,11 +1,13 @@
 /**
  * Tema central da TUI (M2-02).
  *
- * Única fonte de literais de cor da TUI: toda tela consome cores via
- * {@link useTheme}, nunca com `color="magenta"` direto no JSX — a varredura
- * `tests/surfaces/tui/no-hardcoded-colors.test.ts` garante isso em CI.
- * Centralizar aqui torna trocar a paleta (ou dar suporte a temas
- * alternativos) uma mudança em um único arquivo.
+ * Fonte de literais de cor da TUI (junto de `palettes.ts`, #190, que guarda os
+ * hex das paletas como DADOS de objeto, não como props JSX): toda tela consome
+ * cores via {@link useTheme}, nunca com `color="magenta"` direto no JSX — a
+ * varredura `tests/surfaces/tui/no-hardcoded-colors.test.ts` garante isso em CI
+ * (ela pega `color=`/`backgroundColor=` com literal; as chaves `primary:` de
+ * `palettes.ts` não são props, por isso passam). Centralizar aqui/em `palettes.ts`
+ * torna trocar a paleta uma mudança localizada.
  *
  * ## Paleta e guideline de uso
  *
@@ -58,8 +60,8 @@ export interface Theme {
    */
   secondary?: string;
   /**
-   * Cor de FUNDO de painéis/realce (opcional, #190). Usada no full-screen e no
-   * item selecionado. Ausente ⇒ sem fundo (herda o do terminal).
+   * Cor de FUNDO da tela em full-screen (opcional, #190) — consumida só em
+   * `app.tsx` (o fill do `AppShell`). Ausente ⇒ sem fundo (herda o do terminal).
    */
   background?: string;
   /**

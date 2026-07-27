@@ -1,52 +1,72 @@
 /**
- * Integração da paleta no App (#190): navegar até Aparência e salvar PERSISTE a
- * paleta via o SettingsStore injetado (o controlador de tema é montado pelo App).
+ * Testes da paleta no App (#190) — foca no HOOK `useThemeControllerState` (a
+ * lógica real de aplicar/persistir), de forma DETERMINÍSTICA (sem dirigir o App
+ * inteiro por teclado, que é flaky entre SOs — ver #186). O fluxo de navegação
+ * por teclado até a tela Aparência já é coberto por `screens/appearance.test.tsx`.
  */
+import { Text } from 'ink';
 import { render } from 'ink-testing-library';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { SettingsStore } from '../../../src/index.js';
-import { App } from '../../../src/surfaces/tui/app.js';
-import { resetEscapeInterceptor } from '../../../src/surfaces/tui/hooks/use-escape-interceptor.js';
-import { DEFAULT_PALETTE_ID } from '../../../src/surfaces/tui/palettes.js';
+import { App, useThemeControllerState } from '../../../src/surfaces/tui/app.js';
+import { DEFAULT_PALETTE_ID, resolvePalette } from '../../../src/surfaces/tui/palettes.js';
+import { DEFAULT_THEME, type ThemeController } from '../../../src/surfaces/tui/theme.js';
 
-const ENTER = '\r';
-
-function settingsMock(): Pick<SettingsStore, 'setPaletteId'> & { setPaletteId: ReturnType<typeof vi.fn> } {
-  return { setPaletteId: vi.fn().mockResolvedValue(undefined) };
+/** Captura o estado do hook para poder acionar preview/select fora do render. */
+let captured: { theme: { primary: string }; controller: ThemeController } | undefined;
+function Probe({
+  initial,
+  settings,
+}: {
+  initial?: string;
+  settings?: Pick<SettingsStore, 'setPaletteId'>;
+}) {
+  const state = useThemeControllerState(initial, settings);
+  captured = state;
+  return <Text>{`id:${state.controller.paletteId}|primary:${state.theme.primary}`}</Text>;
 }
 
-/** Reenvia uma tecla até `done` (robusto ao timing do useInput). */
-async function pressUntil(stdin: { write(d: string): void }, key: string, done: () => boolean): Promise<void> {
-  await vi.waitFor(
-    () => {
-      if (done()) return;
-      stdin.write(key);
-      throw new Error('aguardando');
-    },
-    { timeout: 4000, interval: 40 },
-  );
-}
-
-afterEach(() => resetEscapeInterceptor());
-
-describe('App: paleta (#190)', () => {
-  it('renderiza com initialPaletteId sem quebrar (boot com paleta)', () => {
-    const { lastFrame } = render(<App initialPaletteId="dracula" settings={settingsMock()} />);
-    expect(lastFrame()).toContain('redmine-context'); // tela welcome
+describe('useThemeControllerState (#190)', () => {
+  it('sem paleta inicial → tema ANSI default e paletteId default', () => {
+    const { lastFrame } = render(<Probe />);
+    expect(lastFrame()).toContain(`id:${DEFAULT_PALETTE_ID}`);
+    expect(lastFrame()).toContain(`primary:${DEFAULT_THEME.primary}`); // 'cyan'
   });
 
-  it("tecla 'a' abre Aparência e Enter PERSISTE a paleta via settings", async () => {
-    const settings = settingsMock();
-    const { stdin, lastFrame } = render(<App settings={settings} />);
+  it('com paleta inicial → resolve o tema hex daquela paleta', () => {
+    const { lastFrame } = render(<Probe initial="dracula" />);
+    expect(lastFrame()).toContain('id:dracula');
+    expect(lastFrame()).toContain(`primary:${resolvePalette('dracula').theme.primary}`);
+  });
 
-    // welcome → aparência. Marcador: um LABEL de paleta (texto plano) — NÃO o
-    // título com gradiente, que quebra por caractere e pode partir em larguras
-    // pequenas do ink-testing-library (fonte de flake entre SOs).
-    await pressUntil(stdin, 'a', () => (lastFrame() ?? '').includes('Dracula'));
-    // Enter salva a paleta destacada (a atual, default) → persiste.
-    await pressUntil(stdin, ENTER, () => settings.setPaletteId.mock.calls.length > 0);
+  it('select troca o tema E PERSISTE via settings', async () => {
+    const settings = { setPaletteId: vi.fn().mockResolvedValue(undefined) };
+    const { lastFrame } = render(<Probe settings={settings} />);
+    await captured!.controller.select('dracula');
+    expect(settings.setPaletteId).toHaveBeenCalledWith('dracula');
+    await vi.waitFor(() => expect(lastFrame()).toContain('id:dracula'));
+  });
 
-    expect(settings.setPaletteId).toHaveBeenCalledWith(DEFAULT_PALETTE_ID);
+  it('preview troca o tema ao vivo SEM persistir', async () => {
+    const settings = { setPaletteId: vi.fn().mockResolvedValue(undefined) };
+    const { lastFrame } = render(<Probe settings={settings} />);
+    captured!.controller.preview('nord');
+    await vi.waitFor(() => expect(lastFrame()).toContain('id:nord'));
+    expect(settings.setPaletteId).not.toHaveBeenCalled();
+  });
+
+  it('select com settings ausente não quebra (persistência best-effort)', async () => {
+    const { lastFrame } = render(<Probe />);
+    await expect(captured!.controller.select('gruvbox-dark')).resolves.toBeUndefined();
+    await vi.waitFor(() => expect(lastFrame()).toContain('id:gruvbox-dark'));
+  });
+});
+
+describe('App: boot com paleta (#190)', () => {
+  it('renderiza com initialPaletteId sem quebrar', () => {
+    const settings = { setPaletteId: vi.fn().mockResolvedValue(undefined) };
+    const { lastFrame } = render(<App initialPaletteId="dracula" settings={settings} />);
+    expect(lastFrame()).toContain('redmine-context'); // tela welcome
   });
 });

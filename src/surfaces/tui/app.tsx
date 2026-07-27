@@ -57,6 +57,7 @@ import {
   ThemeControllerProvider,
   ThemeProvider,
   useTheme,
+  type Theme,
   type ThemeController,
 } from './theme.js';
 
@@ -105,12 +106,19 @@ export interface AppProps {
   fullScreen?: boolean;
 }
 
-export function App(props: AppProps = {}) {
-  const { initialPaletteId, settings, fullScreen = false } = props;
-  const navigation = useNavigationStack(INITIAL_SCREEN);
-  const onboardingCallbacks = useOnboardingCallbacks();
-
-  // Paleta ativa (#190): `undefined` ⇒ tema ANSI default (testes); um id ⇒ paleta hex.
+/**
+ * Estado do tema/paleta (#190) — extraído para teste determinístico (sem depender
+ * do teclado): mantém a paleta ativa, resolve o {@link Theme} e expõe o
+ * {@link ThemeController} (preview troca ao vivo; select troca + persiste best-effort).
+ *
+ * @param initialPaletteId - Paleta inicial; `undefined` ⇒ {@link DEFAULT_THEME} (testes).
+ * @param settings - Store para persistir a paleta no `select` (opcional).
+ * @returns O `theme` resolvido + o `controller`.
+ */
+export function useThemeControllerState(
+  initialPaletteId?: string,
+  settings?: Pick<SettingsStore, 'setPaletteId'>,
+): { theme: Theme; controller: ThemeController } {
   const [paletteId, setPaletteId] = useState<string | undefined>(initialPaletteId);
   const theme = paletteId !== undefined ? resolvePalette(paletteId).theme : DEFAULT_THEME;
 
@@ -130,6 +138,17 @@ export function App(props: AppProps = {}) {
     }),
     [paletteId, settings],
   );
+
+  return { theme, controller };
+}
+
+export function App(props: AppProps = {}) {
+  const { initialPaletteId, settings, fullScreen = false } = props;
+  const navigation = useNavigationStack(INITIAL_SCREEN);
+  const onboardingCallbacks = useOnboardingCallbacks();
+
+  // Paleta ativa (#190) — ver {@link useThemeControllerState}.
+  const { theme, controller } = useThemeControllerState(initialPaletteId, settings);
 
   return (
     <ThemeProvider theme={theme}>
@@ -231,7 +250,12 @@ function AppShell({ fullScreen = false }: { fullScreen?: boolean }) {
   return (
     <Box
       flexDirection="column"
-      {...(fill ? { height: rows, width: columns } : {})}
+      // Full-screen (#190): `minHeight` (NÃO `height` fixo) — o container CRESCE
+      // com o conteúdo quando ele é maior que a tela (o terminal corta o excesso,
+      // como antes), e só ENCHE até `rows` quando o conteúdo é menor (fundo cobre
+      // a tela). `height` fixo faria o Yoga ENCOLHER/AMOSTRAR linhas de listas
+      // longas (home/jobs), corrompendo o layout (achado B2 da review).
+      {...(fill ? { minHeight: rows, width: columns } : {})}
       {...(fill && theme.background !== undefined ? { backgroundColor: theme.background } : {})}
     >
       <Breadcrumb stack={stack} />

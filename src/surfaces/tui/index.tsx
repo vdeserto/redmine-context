@@ -27,6 +27,8 @@ export interface RunTuiDeps {
   settings?: SettingsStore;
   /** Stream de saída (para o alt-screen); default `process.stdout`. Injetável em testes. */
   stdout?: NodeJS.WriteStream;
+  /** `process` para os handlers de sinal do alt-screen; default `process`. Injetável em testes. */
+  proc?: AltScreenProc;
 }
 
 /**
@@ -87,7 +89,11 @@ export async function runTui(deps: RunTuiDeps = {}): Promise<number> {
   // Fora de TTY o `shouldRenderTui` (M2-03) já nem chega aqui.
   const out = deps.stdout ?? process.stdout;
   const fullScreen = out.isTTY === true;
-  if (fullScreen) enterAltScreen(out);
+  // `dispose` restaura o terminal na saída NORMAL (finally). Os handlers de sinal
+  // instalados por `installAltScreen` cobrem a saída NÃO cooperativa (SIGTERM/
+  // SIGHUP/SIGINT externos, fechar a aba) — sem eles o `finally` de uma Promise
+  // não roda e o terminal fica preso no alt-screen (achado B1 da review).
+  const dispose = fullScreen ? installAltScreen(out, deps.proc ?? process) : () => undefined;
 
   try {
     const { waitUntilExit } = render(
@@ -98,7 +104,7 @@ export async function runTui(deps: RunTuiDeps = {}): Promise<number> {
     );
     await waitUntilExit();
   } finally {
-    if (fullScreen) leaveAltScreen(out);
+    dispose();
   }
   return 0;
 }
@@ -111,6 +117,64 @@ function enterAltScreen(out: NodeJS.WriteStream): void {
 /** Restaura o buffer principal do terminal + mostra o cursor (ao sair). */
 function leaveAltScreen(out: NodeJS.WriteStream): void {
   out.write('\x1b[?25h\x1b[?1049l');
+}
+
+/** Subconjunto do `process` que `installAltScreen` usa (injetável em testes). */
+export interface AltScreenProc {
+  on(event: string, listener: (...args: unknown[]) => void): unknown;
+  off(event: string, listener: (...args: unknown[]) => void): unknown;
+  exit(code?: number): never;
+}
+
+/** Sinais que terminam o processo e para os quais restauramos o terminal. */
+const RESTORE_SIGNALS: ReadonlyArray<readonly [string, number]> = [
+  ['SIGINT', 130],
+  ['SIGTERM', 143],
+  ['SIGHUP', 129],
+];
+
+/**
+ * Entra no alt-screen e instala a restauração à prova de saída não cooperativa
+ * (#190, B1). Restaura em: saída normal (via o `dispose` retornado, chamado no
+ * `finally`), `process.exit`/fim natural (`'exit'`) e sinais de término
+ * (SIGINT/SIGTERM/SIGHUP) — nesses, restaura SÍNCRONO e então encerra com o código
+ * convencional. A restauração é IDEMPOTENTE (só escreve a sequência de saída uma vez).
+ *
+ * @param out - Stream do terminal.
+ * @param proc - `process` (ou um fake em testes).
+ * @returns `dispose()` — restaura + remove os listeners (saída normal).
+ */
+export function installAltScreen(out: NodeJS.WriteStream, proc: AltScreenProc): () => void {
+  enterAltScreen(out);
+
+  let restored = false;
+  const restore = (): void => {
+    if (restored) return;
+    restored = true;
+    leaveAltScreen(out);
+  };
+
+  const onExit = (): void => restore();
+  const signalHandlers = RESTORE_SIGNALS.map(([signal, code]) => {
+    const handler = (): void => {
+      restore();
+      cleanup();
+      proc.exit(code);
+    };
+    proc.on(signal, handler);
+    return [signal, handler] as const;
+  });
+  proc.on('exit', onExit);
+
+  function cleanup(): void {
+    proc.off('exit', onExit);
+    for (const [signal, handler] of signalHandlers) proc.off(signal, handler);
+  }
+
+  return () => {
+    restore();
+    cleanup();
+  };
 }
 
 /** Retorna a string aparada se não-vazia, senão `undefined`. */
