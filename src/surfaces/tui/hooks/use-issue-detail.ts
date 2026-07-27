@@ -39,6 +39,7 @@ import {
   type HttpClient,
   type Issue,
 } from '../../../index.js';
+import { useEnvFallbackAllowed } from '../instance.js';
 import { ReAuthAbortedError, useAuthGuard } from './use-auth-guard.js';
 
 /**
@@ -108,6 +109,8 @@ export function useIssueDetail(
   const normalize = options.normalizeIssue ?? normalizeIssue;
   // Mandatório (M2-13, #36): ver o JSDoc do módulo.
   const { guard } = useAuthGuard();
+  // SEGURANÇA (#187): origem config (URL persistida) → sem env-key instance-agnóstica.
+  const allowEnvFallback = useEnvFallbackAllowed();
 
   const [state, setState] = useState<IssueDetailState>(
     issueId === undefined ? { status: 'no-selection' } : { status: 'loading' },
@@ -137,7 +140,7 @@ export function useIssueDetail(
       return;
     }
 
-    const cascadeOptions: CredentialCascadeOptions = { env };
+    const cascadeOptions: CredentialCascadeOptions = { env, allowEnvFallback };
 
     void (async () => {
       try {
@@ -189,7 +192,7 @@ export function useIssueDetail(
     // são estáveis entre renders com as deps de produção — o efeito só
     // precisa refazer a busca quando `issueId` muda (nova issue selecionada)
     // ou `reloadToken` muda (retry).
-  }, [issueId, env, resolve, buildClient, fetchIssue, normalize, guard, reloadToken]);
+  }, [issueId, env, allowEnvFallback, resolve, buildClient, fetchIssue, normalize, guard, reloadToken]);
 
   return { state, retry };
 }

@@ -22,9 +22,17 @@ vi.mock('../../../../src/index.js', async (importOriginal) => {
 });
 
 import * as core from '../../../../src/index.js';
-import { RedmineAuthError } from '../../../../src/index.js';
+import { RedmineAuthError, type SettingsStore } from '../../../../src/index.js';
 import { useOnboardingCallbacks } from '../../../../src/surfaces/tui/hooks/use-onboarding-callbacks.js';
 import type { OnboardingLoginOutcome } from '../../../../src/surfaces/tui/screens/onboarding/onboarding-context.js';
+
+// Settings em memória (#187): isola do arquivo real — o onboarding persiste a
+// instância no sucesso; sem esta injeção o hook usaria `defaultSettingsStore()`.
+const settingsMock = {
+  getInstanceUrl: vi.fn().mockResolvedValue(undefined),
+  setInstanceUrl: vi.fn().mockResolvedValue(undefined),
+  clearInstanceUrl: vi.fn().mockResolvedValue(undefined),
+} satisfies SettingsStore;
 
 const BASE_URL = 'https://redmine.example';
 const USERNAME = 'alice';
@@ -52,7 +60,7 @@ function Harness({
   password?: string;
   apiKey?: string;
 }) {
-  const callbacks = useOnboardingCallbacks();
+  const callbacks = useOnboardingCallbacks(settingsMock);
   const [outcome, setOutcome] = useState<OnboardingLoginOutcome | undefined>(undefined);
 
   useEffect(() => {
@@ -73,6 +81,9 @@ afterEach(() => {
   vi.mocked(core.loginWithPassword).mockReset();
   vi.mocked(core.validateApiKey).mockReset();
   vi.mocked(core.createCredentialCascade).mockReset();
+  settingsMock.setInstanceUrl.mockClear();
+  settingsMock.getInstanceUrl.mockClear();
+  settingsMock.clearInstanceUrl.mockClear();
 });
 
 describe('useOnboardingCallbacks: login por senha — sucesso', () => {
@@ -89,6 +100,8 @@ describe('useOnboardingCallbacks: login por senha — sucesso', () => {
       expect.objectContaining({ baseUrl: BASE_URL, username: USERNAME, password: PASSWORD }),
     );
     expect(set).toHaveBeenCalledWith(BASE_URL, RESOLVED_API_KEY);
+    // Persiste a instância (#187) para os próximos boots da TUI não caírem no onboarding.
+    expect(settingsMock.setInstanceUrl).toHaveBeenCalledWith(BASE_URL);
     expect(JSON.parse(lastFrame() ?? '{}')).toEqual({ kind: 'success', user: USER });
   });
 

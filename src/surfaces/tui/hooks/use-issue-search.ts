@@ -36,6 +36,7 @@ import {
   RedmineForbiddenError,
   type CredentialCascadeOptions,
 } from '../../../index.js';
+import { useEnvFallbackAllowed } from '../instance.js';
 import { ReAuthAbortedError, useAuthGuard } from './use-auth-guard.js';
 
 /** Debounce (ms) default aplicado a `query` antes de disparar a busca. */
@@ -124,6 +125,8 @@ export function useIssueSearch(
   // Fix do padrão #120 (use-my-issues.ts): qualquer chamada autenticada ao
   // core passa por `guard()` — 401 dispara o re-login e retoma a busca.
   const { guard } = useAuthGuard();
+  // SEGURANÇA (#187): origem config (URL persistida) → sem env-key instance-agnóstica.
+  const allowEnvFallback = useEnvFallbackAllowed();
 
   const [state, setState] = useState<IssueSearchState>({ status: 'idle' });
   const [debouncedQuery, setDebouncedQuery] = useState(query);
@@ -161,7 +164,7 @@ export function useIssueSearch(
       return;
     }
 
-    const cascadeOptions: CredentialCascadeOptions = { env };
+    const cascadeOptions: CredentialCascadeOptions = { env, allowEnvFallback };
 
     void (async () => {
       try {
@@ -221,7 +224,7 @@ export function useIssueSearch(
     // com as deps de produção (defaults do módulo, ou `process.env`, ou a
     // identidade estável de `useAuthGuard().guard`) — o efeito só precisa
     // refazer a busca quando `debouncedQuery`/`statusFilter` mudam.
-  }, [debouncedQuery, statusFilter, env, resolve, runSearch, guard]);
+  }, [debouncedQuery, statusFilter, env, allowEnvFallback, resolve, runSearch, guard]);
 
   // Handler ESTÁVEL (useCallback via ref indireta não é necessário aqui: sem
   // dependências externas mutáveis, `clear` já é estável por construção).

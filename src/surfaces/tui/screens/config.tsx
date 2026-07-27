@@ -17,9 +17,17 @@ import { Box, Text, useInput } from 'ink';
 
 import { createCredentialCascade, describeCredentialSource } from '../../../index.js';
 import { useDoctorStatus } from '../hooks/use-doctor-status.js';
+import { useInstance } from '../instance.js';
 import { useNavigation } from '../navigation.js';
 import { symbols } from '../symbols.js';
 import { useTheme } from '../theme.js';
+
+/** Rótulo legível da origem da instância (#187). */
+function originLabel(origin: 'env' | 'config' | 'none'): string {
+  if (origin === 'env') return 'via REDMINE_URL';
+  if (origin === 'config') return 'salva neste dispositivo';
+  return '';
+}
 
 /** Estados do fluxo de logout desta tela. */
 type LogoutState = 'idle' | 'working' | 'done' | 'error';
@@ -29,6 +37,7 @@ export function ConfigScreen() {
   const { pop, resetTo } = useNavigation();
   const theme = useTheme();
   const status = useDoctorStatus();
+  const instance = useInstance();
   const [logoutState, setLogoutState] = useState<LogoutState>('idle');
   const [envStillPresent, setEnvStillPresent] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined);
@@ -38,6 +47,15 @@ export function ConfigScreen() {
     void (async () => {
       try {
         await createCredentialCascade({ env: process.env }).delete(instanceUrl);
+        // Também remove a URL persistida (#187) para não reconfigurar sozinha no
+        // próximo boot. Isolado em try próprio: a parte CRÍTICA (a credencial) já
+        // foi removida acima, então uma falha ao limpar o settings.json NÃO deve
+        // marcar o logout como erro total — degrada silenciosamente.
+        try {
+          await instance.clearPersisted();
+        } catch {
+          // Best-effort: a credencial já foi removida; settings.json fica para a próxima.
+        }
         // Env é somente-leitura: se ainda resolver a credencial, avisa (sem expor a key).
         const remaining = await describeCredentialSource(instanceUrl, { env: process.env });
         setEnvStillPresent(remaining === 'env');
@@ -74,7 +92,10 @@ export function ConfigScreen() {
       <Box marginTop={1} flexDirection="column">
         <Text>
           <Text color={theme.muted}>Instância: </Text>
-          {status.instanceUrl ?? 'não configurada (defina REDMINE_URL)'}
+          {status.instanceUrl ?? 'não configurada (defina REDMINE_URL ou faça login)'}
+          {status.instanceUrl !== undefined && instance.origin !== 'none' ? (
+            <Text color={theme.muted}> ({originLabel(instance.origin)})</Text>
+          ) : null}
         </Text>
         <Text>
           <Text color={theme.muted}>Credencial: </Text>

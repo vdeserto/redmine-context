@@ -130,6 +130,15 @@ export {
   type CredentialSourceKind,
 } from './config/index.js';
 
+// Persistência da URL da instância (#187) — fallback além de REDMINE_URL/--url.
+export {
+  defaultSettingsStore,
+  resolveInstanceUrl,
+  type InstanceUrlOrigin,
+  type ResolvedInstanceUrl,
+  type SettingsStore,
+} from './config/index.js';
+
 // Diagnóstico de binários de mídia (M3-11 #53, M4-01 #57) — núcleo do comando
 // `doctor` (CLI) e da seção "Binários de mídia" da TUI. Detecção de tesseract,
 // ffmpeg e whisper.cpp + status do modelo GGUF, com hint de instalação por SO

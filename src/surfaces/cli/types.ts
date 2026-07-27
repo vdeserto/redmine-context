@@ -5,6 +5,8 @@
  * `commands.ts` (handlers) e manter cada arquivo com um propósito único.
  */
 
+import type { SettingsStore } from '../../index.js';
+
 /** Dependências injetáveis do CLI — permitem testar I/O e prompts sem tocar o processo real. */
 export interface RunDeps {
   /** Escreve no canal de saída (stdout) — recebe o bundle. */
@@ -23,6 +25,12 @@ export interface RunDeps {
    * Opcional: nos testes, ausência equivale a `false` (não-TTY).
    */
   isTTY?: boolean;
+  /**
+   * Store da URL da instância persistida (#187): o `login` a grava e `issue`/`login`
+   * a usam como fallback além de `--url`/`REDMINE_URL`. Opcional: ausente nos testes
+   * (sem persistência), presente na execução real (`defaultSettingsStore`).
+   */
+  settings?: SettingsStore;
 }
 
 /** Resultado do parse manual de `argv`: posicionais + flags. */

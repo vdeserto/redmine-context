@@ -40,9 +40,11 @@ import {
 } from '../../../../src/surfaces/tui/hooks/use-auth-guard.js';
 import {
   useIssueSearch,
+
   type SearchStatusFilter,
   type UseIssueSearchOptions,
 } from '../../../../src/surfaces/tui/hooks/use-issue-search.js';
+import { InstanceProvider } from '../../../../src/surfaces/tui/instance.js';
 
 const BASE_URL = 'https://redmine.example';
 const API_KEY = 'super-secret-api-key-should-never-leak';
@@ -111,6 +113,29 @@ describe('useIssueSearch: idle inicial', () => {
     const { lastFrame } = render(<Harness />);
     expect(lastFrame()).toContain('status:idle');
     expect(core.fetchIssueSearch).not.toHaveBeenCalled();
+  });
+});
+
+describe('useIssueSearch: segurança da instância persistida (#187)', () => {
+  it('origem config → resolveApiKey com allowEnvFallback:false (não usa a env-key)', async () => {
+    vi.mocked(core.resolveApiKey).mockResolvedValue(undefined);
+
+    render(
+      <InstanceProvider
+        value={{ url: BASE_URL, origin: 'config', clearPersisted: async () => undefined }}
+      >
+        <Harness />
+      </InstanceProvider>,
+    );
+
+    setQuery('bug');
+
+    await vi.waitFor(() => {
+      expect(core.resolveApiKey).toHaveBeenCalledWith(
+        BASE_URL,
+        expect.objectContaining({ allowEnvFallback: false }),
+      );
+    });
   });
 });
 

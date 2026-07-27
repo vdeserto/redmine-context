@@ -131,11 +131,13 @@ Do login ao contexto da issue no seu LLM, em três passos:
 #    keychain do sistema (preferido) → arquivo 0600 → REDMINE_API_KEY (env).
 #    Credenciais antigas em arquivo migram para o keychain automaticamente.
 #    (senha ou, em contas com 2FA, cole a api_key quando solicitado).
+#    Também SALVA a instância como default: depois do login, o --url/REDMINE_URL
+#    passam a ser opcionais na CLI e na TUI (precedência: --url → REDMINE_URL → salva).
 redmine-context login --url https://redmine.example
 
 # 2) issue — imprime o bundle Markdown completo da issue em stdout
 #    (descrição + histórico + custom fields + anexos + relações + pai/filhos).
-redmine-context issue 42 --url https://redmine.example
+redmine-context issue 42            # usa a instância salva no login (ou --url/REDMINE_URL)
 #    --json grava/emite o bundle JSON canônico; --out <dir> grava em arquivo.
 #    --extract liga o OCR dos anexos de imagem e embute o texto no bundle
 #    (requer tesseract; ver Extração de mídia abaixo).
