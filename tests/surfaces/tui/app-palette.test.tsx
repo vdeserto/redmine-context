@@ -40,8 +40,10 @@ describe('App: paleta (#190)', () => {
     const settings = settingsMock();
     const { stdin, lastFrame } = render(<App settings={settings} />);
 
-    // welcome → aparência
-    await pressUntil(stdin, 'a', () => (lastFrame() ?? '').includes('paleta de cores'));
+    // welcome → aparência. Marcador: um LABEL de paleta (texto plano) — NÃO o
+    // título com gradiente, que quebra por caractere e pode partir em larguras
+    // pequenas do ink-testing-library (fonte de flake entre SOs).
+    await pressUntil(stdin, 'a', () => (lastFrame() ?? '').includes('Dracula'));
     // Enter salva a paleta destacada (a atual, default) → persiste.
     await pressUntil(stdin, ENTER, () => settings.setPaletteId.mock.calls.length > 0);
 
