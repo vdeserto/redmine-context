@@ -26,12 +26,13 @@ import { describe, expect, it } from 'vitest';
 /** Raiz do pacote (tests/packaging → raiz). */
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 
-/**
- * Nome do executável do npm portável por SO: no Windows o npm é um shim
- * `npm.cmd` (execFileSync sem `shell` não resolve PATHEXT, então `'npm'` daria
- * ENOENT); no POSIX é `npm`. Evita `shell: true` (proibido pela lint rule do #83).
- */
-const NPM = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+// Reinvoca o npm cross-SO via `node <npm-cli.js>` (npm_execpath é setado pelo
+// `npm test`) — evita o shim `npm.cmd` do Windows, que dá EINVAL em
+// execFileSync sem `shell` (e a lint rule do #83 proíbe `shell: true`).
+const NPM_CLI = process.env.npm_execpath;
+const NPM_VIA_NODE = typeof NPM_CLI === 'string' && NPM_CLI.endsWith('.js');
+const NPM_BIN = NPM_VIA_NODE ? process.execPath : (NPM_CLI ?? 'npm');
+const NPM_PREFIX: readonly string[] = NPM_VIA_NODE && NPM_CLI !== undefined ? [NPM_CLI] : [];
 
 interface Manifest {
   readonly dependencies?: Readonly<Record<string, string>>;
@@ -103,8 +104,8 @@ describe('keychain nativo: instalação sem node-gyp (#74)', () => {
     // `npm ls` sobre a árvore instalada (offline): se qualquer ferramenta de
     // compilação nativa estivesse presente, o keychain seria compilado no install.
     const out = execFileSync(
-      NPM,
-      ['ls', '--all', '--omit=dev', '--parseable'],
+      NPM_BIN,
+      [...NPM_PREFIX, 'ls', '--all', '--omit=dev', '--parseable'],
       { cwd: ROOT, encoding: 'utf8' },
     );
     expect(out).not.toMatch(/node_modules\/(node-gyp|node-pre-gyp|@mapbox\/node-pre-gyp|prebuild(-install)?)(\/|$)/m);
