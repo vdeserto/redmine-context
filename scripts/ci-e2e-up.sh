@@ -40,6 +40,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 COMPOSE_FILE="${COMPOSE_FILE:-$ROOT/docker/docker-compose.yml}"
 ONESHOT_TIMEOUT="${ONESHOT_TIMEOUT:-180}"
+# Definido com default para ser repassado explícito ao wait-for-healthy (evita
+# depender de o TIMEOUT estar exportado no ambiente; sob `set -u` seria unbound).
+TIMEOUT="${TIMEOUT:-300}"
 
 # One-shot services that must exit 0 before the REST API is fully usable.
 ONE_SHOTS=(load-default-data enable-rest-api)
@@ -84,7 +87,7 @@ compose up -d
 
 # 2) Wait for the core services to become healthy (reuses the M1 helper).
 log "waiting for core services (postgres, redmine) to be healthy..."
-COMPOSE_FILE="$COMPOSE_FILE" "$SCRIPT_DIR/../docker/wait-for-healthy.sh" postgres redmine
+COMPOSE_FILE="$COMPOSE_FILE" TIMEOUT="$TIMEOUT" "$ROOT/docker/wait-for-healthy.sh" postgres redmine
 
 # 3) Wait for the one-shots to finish and assert they exited 0. Without this,
 #    the seed could race the REST-API enablement / default-data load.

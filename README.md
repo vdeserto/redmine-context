@@ -233,11 +233,13 @@ seedado** em um único passo. `scripts/ci-e2e-up.sh` faz exatamente isso,
 npm run ci:e2e:up          # = bash scripts/ci-e2e-up.sh
 ```
 
-Passos: `docker compose up -d` → `wait-for-healthy.sh postgres redmine` →
-`docker compose wait load-default-data enable-rest-api` (garante que os one-shots
-saíram com código 0) → `npm run seed` (idempotente). Em sucesso o stack fica **de
-pé** (o teardown, `down -v`, é responsabilidade do chamador). Re-executar é seguro:
-o seed não duplica. Aceita `COMPOSE_FILE`/`TIMEOUT` e as variáveis do seed.
+Passos: `docker compose up -d` → `wait-for-healthy.sh postgres redmine` → poll de
+`docker compose ps -a` até os one-shots (`load-default-data`, `enable-rest-api`)
+saírem com código 0 → `npm run seed` (idempotente). O poll de `ps -a` é usado no
+lugar de `docker compose wait` porque este erra quando o container já saiu (só
+rastreia containers em execução). Em sucesso o stack fica **de pé** (o teardown,
+`down -v`, é responsabilidade do chamador). Re-executar é seguro: o seed não
+duplica. Aceita `COMPOSE_FILE`/`ONESHOT_TIMEOUT`/`TIMEOUT` e as variáveis do seed.
 
 ### E2E dogfood (CLI + MCP)
 
@@ -286,4 +288,4 @@ O script `wait-for-healthy.sh` aceita `TIMEOUT`, `INTERVAL` e `COMPOSE_FILE`.
 > As credenciais acima são exclusivas do ambiente de teste (defaults no
 > compose/`.env.example`); não há credenciais hardcoded fora dele.
 
-> Nota (CI): o one-shot `enable-rest-api` roda após o Redmine ficar healthy; em pipelines, aguarde o exit 0 dele (`docker compose wait enable-rest-api`) antes do smoke test da API.
+> Nota (CI): o one-shot `enable-rest-api` roda após o Redmine ficar healthy; em pipelines, aguarde o exit 0 dele antes do smoke test da API — o `ci-e2e-up.sh` faz isso via poll de `docker compose ps -a` (não `docker compose wait`, que erra em containers já finalizados).
