@@ -55,8 +55,16 @@ jobs:
 
       - name: Ensure base ref is available
         shell: bash
-        run: git fetch --no-tags --depth=1 origin main
+        # Usa a base REAL do PR (main OU milestone/**), não `main` fixo — senão o
+        # diff de um PR para milestone/** seria calculado contra a base errada.
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: git fetch --no-tags --depth=1 origin "$BASE_REF"
 
       - name: Verify changeset present
         shell: bash
-        run: npx changeset status --since=origin/main
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        # Só arquivos publicáveis (changedFilePatterns em .changeset/config.json:
+        # src/**, package.json) exigem changeset; docs/CI/tests passam.
+        run: npx changeset status --since="origin/$BASE_REF"
