@@ -1,0 +1,438 @@
+{
+  "schemaVersion": "1.0",
+  "recordedWith": "scripts/record-fixtures.mjs",
+  "note": "Fixtures HTTP do Redmine seedado (projeto rc-fixtures) para REPLAY OFFLINE (issue #81, M5-06). Segredos redigidos: nenhuma api_key/senha/Authorization real. URL base reescrita para https://redmine.example. Regravar com: npm run ci:e2e:up && npm run record:fixtures.",
+  "baseUrl": "https://redmine.example",
+  "baseIssueIds": [
+    1,
+    2,
+    3
+  ],
+  "attachment": {
+    "issueId": 1,
+    "attachmentId": 1,
+    "filename": "fixture-note.txt",
+    "downloadPath": "/attachments/download/1/fixture-note.txt"
+  },
+  "interactions": [
+    {
+      "method": "GET",
+      "path": "/issues/1.json",
+      "query": {
+        "include": "journals,attachments,relations,children"
+      },
+      "status": 200,
+      "statusText": "OK",
+      "bodyKind": "json",
+      "body": {
+        "issue": {
+          "id": 1,
+          "project": {
+            "id": 1,
+            "name": "RC Fixtures"
+          },
+          "tracker": {
+            "id": 1,
+            "name": "Bug"
+          },
+          "status": {
+            "id": 1,
+            "name": "New",
+            "is_closed": false
+          },
+          "priority": {
+            "id": 2,
+            "name": "Normal"
+          },
+          "author": {
+            "id": 1,
+            "name": "Redmine Admin"
+          },
+          "subject": "RC Fixture: issue base 1",
+          "description": "Issue base 1 gerada pelo seed (rc-fixtures). Texto simples para smoke tests.",
+          "start_date": "2026-07-27",
+          "due_date": null,
+          "done_ratio": 0,
+          "is_private": false,
+          "estimated_hours": null,
+          "total_estimated_hours": 0,
+          "spent_hours": 0,
+          "total_spent_hours": 0,
+          "custom_fields": [
+            {
+              "id": 1,
+              "name": "Severidade",
+              "value": "Alta"
+            }
+          ],
+          "created_on": "2026-07-27T01:52:16Z",
+          "updated_on": "2026-07-27T01:52:18Z",
+          "closed_on": null,
+          "children": [
+            {
+              "id": 3,
+              "tracker": {
+                "id": 1,
+                "name": "Bug"
+              },
+              "subject": "RC Fixture: issue base 3"
+            }
+          ],
+          "attachments": [
+            {
+              "id": 1,
+              "filename": "fixture-note.txt",
+              "filesize": 49,
+              "content_type": "text/plain",
+              "description": "",
+              "content_url": "https://redmine.example/attachments/download/1/fixture-note.txt",
+              "author": {
+                "id": 1,
+                "name": "Redmine Admin"
+              },
+              "created_on": "2026-07-27T01:52:18Z"
+            }
+          ],
+          "relations": [
+            {
+              "id": 1,
+              "issue_id": 1,
+              "issue_to_id": 2,
+              "relation_type": "relates",
+              "delay": null
+            }
+          ],
+          "journals": [
+            {
+              "id": 1,
+              "user": {
+                "id": 1,
+                "name": "Redmine Admin"
+              },
+              "notes": "[seed] Comentário de fixture na issue base 1 (parent, com anexo e relation).",
+              "created_on": "2026-07-27T01:52:17Z",
+              "updated_on": "2026-07-27T01:52:17Z",
+              "private_notes": false,
+              "details": []
+            },
+            {
+              "id": 2,
+              "user": {
+                "id": 1,
+                "name": "Redmine Admin"
+              },
+              "notes": "",
+              "created_on": "2026-07-27T01:52:17Z",
+              "updated_on": "2026-07-27T01:52:17Z",
+              "private_notes": false,
+              "details": [
+                {
+                  "property": "cf",
+                  "name": "1",
+                  "old_value": "",
+                  "new_value": "Alta"
+                }
+              ]
+            },
+            {
+              "id": 8,
+              "user": {
+                "id": 1,
+                "name": "Redmine Admin"
+              },
+              "notes": "",
+              "created_on": "2026-07-27T01:52:17Z",
+              "updated_on": "2026-07-27T01:52:17Z",
+              "private_notes": false,
+              "details": [
+                {
+                  "property": "attr",
+                  "name": "child_id",
+                  "old_value": null,
+                  "new_value": "3"
+                }
+              ]
+            },
+            {
+              "id": 9,
+              "user": {
+                "id": 1,
+                "name": "Redmine Admin"
+              },
+              "notes": "",
+              "created_on": "2026-07-27T01:52:18Z",
+              "updated_on": "2026-07-27T01:52:18Z",
+              "private_notes": false,
+              "details": [
+                {
+                  "property": "relation",
+                  "name": "relates",
+                  "old_value": null,
+                  "new_value": "2"
+                }
+              ]
+            },
+            {
+              "id": 11,
+              "user": {
+                "id": 1,
+                "name": "Redmine Admin"
+              },
+              "notes": "",
+              "created_on": "2026-07-27T01:52:18Z",
+              "updated_on": "2026-07-27T01:52:18Z",
+              "private_notes": false,
+              "details": [
+                {
+                  "property": "attachment",
+                  "name": "1",
+                  "old_value": null,
+                  "new_value": "fixture-note.txt"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/issues/2.json",
+      "query": {
+        "include": "journals,attachments,relations,children"
+      },
+      "status": 200,
+      "statusText": "OK",
+      "bodyKind": "json",
+      "body": {
+        "issue": {
+          "id": 2,
+          "project": {
+            "id": 1,
+            "name": "RC Fixtures"
+          },
+          "tracker": {
+            "id": 1,
+            "name": "Bug"
+          },
+          "status": {
+            "id": 1,
+            "name": "New",
+            "is_closed": false
+          },
+          "priority": {
+            "id": 2,
+            "name": "Normal"
+          },
+          "author": {
+            "id": 1,
+            "name": "Redmine Admin"
+          },
+          "subject": "RC Fixture: issue base 2",
+          "description": "Issue base 2 gerada pelo seed (rc-fixtures). Descrição com **markdown** leve.",
+          "start_date": "2026-07-27",
+          "due_date": null,
+          "done_ratio": 0,
+          "is_private": false,
+          "estimated_hours": null,
+          "total_estimated_hours": null,
+          "spent_hours": 0,
+          "total_spent_hours": 0,
+          "custom_fields": [
+            {
+              "id": 1,
+              "name": "Severidade",
+              "value": "Média"
+            }
+          ],
+          "created_on": "2026-07-27T01:52:16Z",
+          "updated_on": "2026-07-27T01:52:17Z",
+          "closed_on": null,
+          "attachments": [],
+          "relations": [
+            {
+              "id": 1,
+              "issue_id": 1,
+              "issue_to_id": 2,
+              "relation_type": "relates",
+              "delay": null
+            }
+          ],
+          "journals": [
+            {
+              "id": 3,
+              "user": {
+                "id": 1,
+                "name": "Redmine Admin"
+              },
+              "notes": "[seed] Comentário de fixture na issue base 2 (alvo da relation).",
+              "created_on": "2026-07-27T01:52:17Z",
+              "updated_on": "2026-07-27T01:52:17Z",
+              "private_notes": false,
+              "details": []
+            },
+            {
+              "id": 4,
+              "user": {
+                "id": 1,
+                "name": "Redmine Admin"
+              },
+              "notes": "",
+              "created_on": "2026-07-27T01:52:17Z",
+              "updated_on": "2026-07-27T01:52:17Z",
+              "private_notes": false,
+              "details": [
+                {
+                  "property": "cf",
+                  "name": "1",
+                  "old_value": "",
+                  "new_value": "Média"
+                }
+              ]
+            },
+            {
+              "id": 10,
+              "user": {
+                "id": 1,
+                "name": "Redmine Admin"
+              },
+              "notes": "",
+              "created_on": "2026-07-27T01:52:18Z",
+              "updated_on": "2026-07-27T01:52:18Z",
+              "private_notes": false,
+              "details": [
+                {
+                  "property": "relation",
+                  "name": "relates",
+                  "old_value": null,
+                  "new_value": "1"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/issues/3.json",
+      "query": {
+        "include": "journals,attachments,relations,children"
+      },
+      "status": 200,
+      "statusText": "OK",
+      "bodyKind": "json",
+      "body": {
+        "issue": {
+          "id": 3,
+          "project": {
+            "id": 1,
+            "name": "RC Fixtures"
+          },
+          "tracker": {
+            "id": 1,
+            "name": "Bug"
+          },
+          "status": {
+            "id": 1,
+            "name": "New",
+            "is_closed": false
+          },
+          "priority": {
+            "id": 2,
+            "name": "Normal"
+          },
+          "author": {
+            "id": 1,
+            "name": "Redmine Admin"
+          },
+          "parent": {
+            "id": 1
+          },
+          "subject": "RC Fixture: issue base 3",
+          "description": "Issue base 3 gerada pelo seed (rc-fixtures). Usada para validar contagens via GET.",
+          "start_date": "2026-07-27",
+          "due_date": null,
+          "done_ratio": 0,
+          "is_private": false,
+          "estimated_hours": null,
+          "total_estimated_hours": null,
+          "spent_hours": 0,
+          "total_spent_hours": 0,
+          "custom_fields": [
+            {
+              "id": 1,
+              "name": "Severidade",
+              "value": "Baixa"
+            }
+          ],
+          "created_on": "2026-07-27T01:52:16Z",
+          "updated_on": "2026-07-27T01:52:17Z",
+          "closed_on": null,
+          "attachments": [],
+          "journals": [
+            {
+              "id": 5,
+              "user": {
+                "id": 1,
+                "name": "Redmine Admin"
+              },
+              "notes": "[seed] Comentário de fixture na issue base 3 (child da issue base 1).",
+              "created_on": "2026-07-27T01:52:17Z",
+              "updated_on": "2026-07-27T01:52:17Z",
+              "private_notes": false,
+              "details": []
+            },
+            {
+              "id": 6,
+              "user": {
+                "id": 1,
+                "name": "Redmine Admin"
+              },
+              "notes": "",
+              "created_on": "2026-07-27T01:52:17Z",
+              "updated_on": "2026-07-27T01:52:17Z",
+              "private_notes": false,
+              "details": [
+                {
+                  "property": "cf",
+                  "name": "1",
+                  "old_value": "",
+                  "new_value": "Baixa"
+                }
+              ]
+            },
+            {
+              "id": 7,
+              "user": {
+                "id": 1,
+                "name": "Redmine Admin"
+              },
+              "notes": "",
+              "created_on": "2026-07-27T01:52:17Z",
+              "updated_on": "2026-07-27T01:52:17Z",
+              "private_notes": false,
+              "details": [
+                {
+                  "property": "attr",
+                  "name": "parent_id",
+                  "old_value": null,
+                  "new_value": "1"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/attachments/download/1/fixture-note.txt",
+      "query": {},
+      "status": 200,
+      "statusText": "OK",
+      "bodyKind": "base64",
+      "body": "QW5leG8gZGUgZml4dHVyZSBnZXJhZG8gcGVsbyBzZWVkIChyYy1maXh0dXJlcykuCg=="
+    }
+  ]
+}
