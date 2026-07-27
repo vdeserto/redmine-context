@@ -45,3 +45,15 @@ export function InstanceProvider({
 export function useInstance(): InstanceInfo {
   return useContext(InstanceContext);
 }
+
+/**
+ * `true` se a credencial de AMBIENTE (`REDMINE_API_KEY`) pode ser usada nesta
+ * sessão. SEGURANÇA (#187): quando a instância veio de fonte MUTÁVEL (`settings.json`
+ * persistido, origem `config`), retorna `false` — a env-key é instance-agnóstica e
+ * não pode ser enviada a uma URL controlável por arquivo. Espelha o `allowEnvFallback`
+ * já aplicado na CLI (`issue`) e no MCP; deve ser passado no `CredentialCascadeOptions`
+ * de TODA resolução de credencial da TUI.
+ */
+export function useEnvFallbackAllowed(): boolean {
+  return useInstance().origin !== 'config';
+}

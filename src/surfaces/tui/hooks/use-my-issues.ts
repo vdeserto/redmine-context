@@ -39,6 +39,7 @@ import {
   type HttpClient,
   type RedmineIssuePayload,
 } from '../../../index.js';
+import { useEnvFallbackAllowed } from '../instance.js';
 import { ReAuthAbortedError, useAuthGuard } from './use-auth-guard.js';
 
 /** Issue resumida exibida numa linha da lista da home — só os campos usados por `IssueRow`. */
@@ -133,6 +134,9 @@ export function useMyIssues(options: UseMyIssuesOptions = {}): UseMyIssuesResult
   // (identidade estável, `useCallback` sem deps em `use-auth-guard.ts`) trata
   // 401 disparando o re-login e retomando a operação automaticamente.
   const { guard } = useAuthGuard();
+  // SEGURANÇA (#187): se a instância veio da persistida (origem config), a
+  // REDMINE_API_KEY instance-agnóstica NÃO pode ser usada (só credencial pinada).
+  const allowEnvFallback = useEnvFallbackAllowed();
 
   const [state, setState] = useState<MyIssuesState>({ status: 'loading' });
   const [reloadToken, setReloadToken] = useState(0);
@@ -154,7 +158,7 @@ export function useMyIssues(options: UseMyIssuesOptions = {}): UseMyIssuesResult
       return;
     }
 
-    const cascadeOptions: CredentialCascadeOptions = { env };
+    const cascadeOptions: CredentialCascadeOptions = { env, allowEnvFallback };
 
     void (async () => {
       try {
@@ -209,7 +213,7 @@ export function useMyIssues(options: UseMyIssuesOptions = {}): UseMyIssuesResult
     // entre renders com as deps de produção (defaults do módulo, ou
     // `process.env`, ou a identidade estável de `useAuthGuard().guard`) — o
     // efeito só precisa refazer a busca quando `reloadToken` muda (retry).
-  }, [env, resolve, buildClient, fetchIssues, guard, reloadToken]);
+  }, [env, allowEnvFallback, resolve, buildClient, fetchIssues, guard, reloadToken]);
 
   return { state, retry };
 }

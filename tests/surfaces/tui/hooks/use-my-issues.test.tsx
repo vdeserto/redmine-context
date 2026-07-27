@@ -44,6 +44,7 @@ import {
   type UseAuthGuardResult,
 } from '../../../../src/surfaces/tui/hooks/use-auth-guard.js';
 import { useMyIssues, type UseMyIssuesOptions } from '../../../../src/surfaces/tui/hooks/use-my-issues.js';
+import { InstanceProvider } from '../../../../src/surfaces/tui/instance.js';
 
 const BASE_URL = 'https://redmine.example';
 const API_KEY = 'super-secret-api-key-should-never-leak';
@@ -96,6 +97,29 @@ afterEach(() => {
   delete (globalThis as { __retry?: () => void }).__retry;
 });
 
+describe('useMyIssues: segurança da instância persistida (#187)', () => {
+  it('origem config (URL persistida) → resolveApiKey com allowEnvFallback:false (não usa a env-key)', async () => {
+    vi.mocked(core.resolveApiKey).mockResolvedValue(undefined); // pinada ausente → sem credencial
+    vi.mocked(core.createHttpClient).mockReturnValue(FAKE_HTTP_CLIENT);
+    vi.mocked(core.listIssues).mockResolvedValue([]);
+
+    render(
+      <InstanceProvider
+        value={{ url: BASE_URL, origin: 'config', clearPersisted: async () => undefined }}
+      >
+        <Harness options={{ env: { REDMINE_URL: BASE_URL } }} />
+      </InstanceProvider>,
+    );
+
+    await vi.waitFor(() => {
+      expect(core.resolveApiKey).toHaveBeenCalledWith(
+        BASE_URL,
+        expect.objectContaining({ allowEnvFallback: false }),
+      );
+    });
+  });
+});
+
 describe('useMyIssues: carregando → sucesso', () => {
   it('começa em loading e resolve para loaded com as issues mapeadas', async () => {
     vi.mocked(core.resolveApiKey).mockResolvedValue(API_KEY);
@@ -116,6 +140,8 @@ describe('useMyIssues: carregando → sucesso', () => {
     });
     expect(lastFrame()).toContain('issues:1:Corrigir bug X:Nova,2:Implementar Y:Em andamento');
     expect(core.resolveApiKey).toHaveBeenCalledWith(BASE_URL, expect.objectContaining({ env: expect.anything() }));
+    // Origem NÃO-config (default) → env-key permitida (retrocompatível).
+    expect(core.resolveApiKey).toHaveBeenCalledWith(BASE_URL, expect.objectContaining({ allowEnvFallback: true }));
     expect(core.createHttpClient).toHaveBeenCalledWith(
       expect.objectContaining({ baseUrl: BASE_URL, apiKey: API_KEY }),
     );

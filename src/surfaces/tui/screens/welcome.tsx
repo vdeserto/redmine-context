@@ -20,6 +20,7 @@ import { useCallback, useRef, useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 
 import { resolveApiKey, TOOL_NAME, TOOL_VERSION } from '../../../index.js';
+import { useEnvFallbackAllowed } from '../instance.js';
 import { useNavigation } from '../navigation.js';
 import { useTheme } from '../theme.js';
 
@@ -45,6 +46,10 @@ export function WelcomeScreen() {
   navigateRef.current = navigate;
   const checkingRef = useRef(checking);
   checkingRef.current = checking;
+  // SEGURANÇA (#187): instância de origem `config` (URL persistida) não pode usar a
+  // env-key instance-agnóstica. Ref pelo padrão de handler estável desta tela.
+  const allowEnvFallbackRef = useRef(true);
+  allowEnvFallbackRef.current = useEnvFallbackAllowed();
 
   const handleInput = useCallback((input: string, key: { return: boolean; ctrl: boolean }) => {
     // Reason: o Ink reporta Ctrl+<letra> com o MESMO `input` da letra solta
@@ -69,7 +74,10 @@ export function WelcomeScreen() {
       }
       setChecking(true);
       void (async () => {
-        const apiKey = await resolveApiKey(instanceUrl, { env: process.env }).catch(() => undefined);
+        const apiKey = await resolveApiKey(instanceUrl, {
+          env: process.env,
+          allowEnvFallback: allowEnvFallbackRef.current,
+        }).catch(() => undefined);
         setChecking(false);
         navigateRef.current(apiKey !== undefined ? 'home' : 'onboarding-url');
       })();
