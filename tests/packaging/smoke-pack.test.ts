@@ -61,18 +61,25 @@ beforeAll(() => {
   tarballFiles = meta.files.map((entry) => entry.path);
 
   // Extrai o tarball e liga os node_modules já instalados (sem rede): rodamos
-  // exatamente os arquivos empacotados, como o npx faria após o download.
-  execFileSync('tar', ['-xf', join(tmp, meta.filename), '-C', tmp]);
+  // exatamente os arquivos empacotados, como o npx faria após o download. Caminho
+  // RELATIVO com `cwd: tmp`: um `C:\...tgz` absoluto faz o GNU tar (Git Bash no
+  // runner Windows) interpretar `C:` como host remoto ("Cannot connect to C:").
+  execFileSync('tar', ['-xf', meta.filename], { cwd: tmp });
   const pkgDir = join(tmp, 'package');
-  symlinkSync(join(ROOT, 'node_modules'), join(pkgDir, 'node_modules'), 'dir');
+  // `junction` liga o dir sem exigir privilégio de symlink no Windows (no POSIX o
+  // tipo é ignorado e vira um symlink normal).
+  symlinkSync(join(ROOT, 'node_modules'), join(pkgDir, 'node_modules'), 'junction');
   extractedBin = join(pkgDir, 'dist', 'surfaces', 'cli', 'main.js');
-  // CRÍTICO (#76): o npm expõe o bin como SYMLINK (node_modules/.bin/redmine-context)
-  // — é assim que `npx`/`npm i -g` invocam. Executamos o bin por um symlink análogo
-  // (NÃO pelo realpath) para reproduzir a divergência argv[1]=symlink vs.
-  // import.meta.url=realpath. Rodar o realpath direto MASCARARIA o bug do guard de
-  // auto-invocação (o CLI sairia vazio via npx). O guard resolve o realpath de argv[1].
-  binViaSymlink = join(tmp, 'redmine-context');
-  symlinkSync(extractedBin, binViaSymlink);
+  // No POSIX executamos o bin por um SYMLINK (reproduz argv[1]=symlink vs.
+  // import.meta.url=realpath, exercitando o guard do #76). No Windows, symlink de
+  // ARQUIVO exige privilégio e o shim do npm já passa o realpath ao node (o guard é
+  // trivial lá), então rodamos o realpath direto.
+  if (process.platform === 'win32') {
+    binViaSymlink = extractedBin;
+  } else {
+    binViaSymlink = join(tmp, 'redmine-context');
+    symlinkSync(extractedBin, binViaSymlink);
+  }
 }, 180_000);
 
 describe('empacotamento: conteúdo do tarball (files/exports)', () => {
