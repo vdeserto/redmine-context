@@ -44,18 +44,40 @@ export type AttachmentExtractionStatus = ExtractionStatus;
 const TEXT_CONTENT_TYPE_PREFIX = 'text/';
 
 /**
- * Deriva o {@link AttachmentExtractionStatus} de um anexo no M2 — heurística
- * de apresentação baseada SOMENTE em `content_type`, sem nenhuma extração real
- * (ver o JSDoc do módulo). Só produz `text`/`pending`/`unsupported`; os demais
- * valores da união são reservados para quando o core (M3/M4) passar a
- * fornecer o status de verdade.
+ * `content_type` (ou prefixo) com EXTRATOR disponível no pipeline hoje (imagem via
+ * tesseract; PDF via pdftotext; áudio/vídeo via whisper+ffmpeg; OOXML docx/xlsx/pptx
+ * puro-JS). Esses anexos são `pending` (extraíveis; o texto sai com `--extract` /
+ * `get_attachment_text`), NÃO `unsupported`. A decisão FINAL é por magic bytes na
+ * extração — aqui é só a apresentação a partir do `content_type` do Redmine, então
+ * `application/zip` e `application/octet-stream` (genéricos) entram como pending e o
+ * magic decide de verdade.
+ */
+function isExtractableContentType(contentType: string): boolean {
+  return (
+    contentType.startsWith('image/') ||
+    contentType.startsWith('audio/') ||
+    contentType.startsWith('video/') ||
+    contentType === 'application/pdf' ||
+    contentType === 'application/zip' ||
+    contentType.startsWith('application/vnd.openxmlformats-officedocument.') ||
+    contentType === 'application/octet-stream'
+  );
+}
+
+/**
+ * Deriva o {@link AttachmentExtractionStatus} de um anexo — heurística de
+ * apresentação a partir SOMENTE do `content_type` (sem extração de fato na tela de
+ * detalhe). Produz `text` (texto puro), `pending` (extraível: imagem/PDF/áudio/
+ * vídeo/OOXML — o texto sai com `--extract`) ou `unsupported` (sem extrator: ex.:
+ * Office binário antigo `.doc`, executáveis, tipos desconhecidos).
  *
  * @param attachment - Recorte do anexo com o único campo relevante aqui.
  * @returns O status derivado.
  * @example
- * deriveAttachmentExtractionStatus({ content_type: 'text/plain' }) // 'text'
- * deriveAttachmentExtractionStatus({ content_type: undefined })    // 'pending'
- * deriveAttachmentExtractionStatus({ content_type: 'image/png' })  // 'unsupported'
+ * deriveAttachmentExtractionStatus({ content_type: 'text/plain' })       // 'text'
+ * deriveAttachmentExtractionStatus({ content_type: 'application/pdf' })   // 'pending'
+ * deriveAttachmentExtractionStatus({ content_type: 'image/png' })        // 'pending'
+ * deriveAttachmentExtractionStatus({ content_type: 'application/x-msdownload' }) // 'unsupported'
  */
 export function deriveAttachmentExtractionStatus(
   attachment: Pick<Attachment, 'content_type'>,
@@ -63,6 +85,7 @@ export function deriveAttachmentExtractionStatus(
   const { content_type: contentType } = attachment;
   if (contentType === undefined) return 'pending';
   if (contentType.startsWith(TEXT_CONTENT_TYPE_PREFIX)) return 'text';
+  if (isExtractableContentType(contentType)) return 'pending';
   return 'unsupported';
 }
 

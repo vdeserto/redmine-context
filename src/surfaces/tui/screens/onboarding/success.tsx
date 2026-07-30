@@ -49,11 +49,11 @@ export function OnboardingSuccessScreen() {
       borderStyle="double"
       borderColor={theme.accent}
     >
-      <Text bold color={theme.accent}>
+      <Text color={theme.accent}>
         {symbols.star} Login concluído com sucesso! {symbols.star}
       </Text>
       <Box marginTop={1}>
-        <Text bold color={theme.primary}>
+        <Text color={theme.primary}>
           {symbols.tick} Bem-vindo{user !== undefined ? `, ${user.name}` : ''}!
         </Text>
       </Box>
@@ -65,7 +65,7 @@ export function OnboardingSuccessScreen() {
       <Box marginTop={1}>
         <Text color={theme.muted}>
           Pressione{' '}
-          <Text bold color={theme.accent}>
+          <Text color={theme.accent}>
             Enter
           </Text>{' '}
           para começar.

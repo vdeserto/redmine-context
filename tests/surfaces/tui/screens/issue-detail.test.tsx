@@ -381,7 +381,7 @@ describe('TUI: IssueDetailScreen — anexos (#32)', () => {
     expect(frame).toContain('texto');
   });
 
-  it('anexo binário conhecido (ex.: imagem) mostra badge "não suportado"', () => {
+  it('anexo EXTRAÍVEL (ex.: imagem) mostra badge "pendente" (há extrator; #190)', () => {
     mockState({
       status: 'loaded',
       issue: issueWithAttachments([
@@ -400,6 +400,26 @@ describe('TUI: IssueDetailScreen — anexos (#32)', () => {
     expect(frame).toContain('foto.png');
     expect(frame).toContain('1.5KB');
     expect(frame).toContain('image/png');
+    expect(frame).toContain('pendente');
+  });
+
+  it('anexo SEM extrator (ex.: .doc binário) mostra badge "não suportado"', () => {
+    mockState({
+      status: 'loaded',
+      issue: issueWithAttachments([
+        {
+          id: 3,
+          filename: 'antigo.doc',
+          filesize: 2048,
+          content_type: 'application/msword',
+          created_on: '2024-01-01T10:00:00Z',
+          content_url: 'https://example.test/attachments/3',
+        },
+      ]),
+    });
+    const { lastFrame } = renderDetail();
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('antigo.doc');
     expect(frame).toContain('não suportado');
   });
 

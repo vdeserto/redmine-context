@@ -20,8 +20,10 @@ describe('paletas (#190)', () => {
       for (const token of REQUIRED_TOKENS) {
         expect(palette.theme[token], `${palette.id}.${token}`).toMatch(HEX6);
       }
-      // Tokens de riqueza (#190): fundo hex + ramp de gradiente com ≥ 2 paradas.
+      // Tokens de riqueza (#190): fundo + texto (legibilidade em qualquer terminal,
+      // via OSC) + ramp de gradiente com ≥ 2 paradas.
       expect(palette.theme.background, `${palette.id}.background`).toMatch(HEX6);
+      expect(palette.theme.text, `${palette.id}.text`).toMatch(HEX6);
       expect((palette.theme.gradient ?? []).length).toBeGreaterThanOrEqual(2);
       for (const g of palette.theme.gradient ?? []) expect(g).toMatch(HEX6);
     }
@@ -41,5 +43,21 @@ describe('paletas (#190)', () => {
   it('resolvePalette com id desconhecido ou undefined cai na default', () => {
     expect(resolvePalette('paleta-inexistente').id).toBe(DEFAULT_PALETTE_ID);
     expect(resolvePalette(undefined).id).toBe(DEFAULT_PALETTE_ID);
+  });
+
+  it('inclui paletas CLARAS e ESCURAS (fundo claro vs escuro)', () => {
+    // Heurística simples de luminância do fundo para separar claras de escuras.
+    const isLight = (hex: string): boolean => {
+      const n = Number.parseInt(hex.slice(1), 16);
+      const [r, g, b] = [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+      return 0.299 * r + 0.587 * g + 0.114 * b > 128;
+    };
+    const light = PALETTES.filter((p) => isLight(p.theme.background as string));
+    const dark = PALETTES.filter((p) => !isLight(p.theme.background as string));
+    expect(light.length).toBeGreaterThanOrEqual(3);
+    expect(dark.length).toBeGreaterThanOrEqual(3);
+    // Numa paleta clara, o texto é escuro (contraste), e vice-versa.
+    for (const p of light) expect(isLight(p.theme.text as string)).toBe(false);
+    for (const p of dark) expect(isLight(p.theme.text as string)).toBe(true);
   });
 });

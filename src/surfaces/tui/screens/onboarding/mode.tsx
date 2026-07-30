@@ -47,14 +47,14 @@ export function OnboardingModeScreen() {
 
   return (
     <Box flexDirection="column" paddingX={1} paddingY={1} borderStyle="round" borderColor={theme.border}>
-      <Text bold color={theme.primary}>
+      <Text color={theme.primary}>
         Como você quer entrar?
       </Text>
       <Box marginTop={1} flexDirection="column">
         {MODE_OPTIONS.map((option, index) => {
           const isSelected = index === selectedIndex;
           return (
-            <Text key={option.mode} color={isSelected ? theme.primary : theme.muted} bold={isSelected}>
+            <Text key={option.mode} color={isSelected ? theme.primary : theme.muted}>
               {isSelected ? symbols.pointer : ' '} {option.label}
             </Text>
           );
@@ -62,15 +62,15 @@ export function OnboardingModeScreen() {
       </Box>
       <Box marginTop={1}>
         <Text color={theme.muted}>
-          <Text bold color={theme.accent}>
+          <Text color={theme.accent}>
             {`${glyphs.arrowUp}${glyphs.arrowDown}/j/k`}
           </Text>{' '}
           navegam,{' '}
-          <Text bold color={theme.accent}>
+          <Text color={theme.accent}>
             Enter
           </Text>{' '}
           confirma,{' '}
-          <Text bold color={theme.accent}>
+          <Text color={theme.accent}>
             Esc
           </Text>{' '}
           volta.

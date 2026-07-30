@@ -41,7 +41,7 @@ export function Breadcrumb({ stack }: BreadcrumbProps) {
     }
 
     segments.push(
-      <Text key={`title-${index}`} bold={isCurrent} color={isCurrent ? theme.primary : theme.muted}>
+      <Text key={`title-${index}`} color={isCurrent ? theme.primary : theme.muted}>
         {SCREENS[name].title}
       </Text>,
     );

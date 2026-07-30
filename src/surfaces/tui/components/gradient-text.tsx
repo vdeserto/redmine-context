@@ -59,12 +59,15 @@ export function rampColors(colors: readonly string[], steps: number): string[] {
  *
  * @param props.children - Texto a colorir.
  * @param props.colors - Ramp de cores (hex); vazia ⇒ sem cor.
- * @param props.bold - Negrito (default `true`, para títulos).
+ * @param props.bold - Negrito (default `false`, #190). Em alguns terminais
+ *   (ex.: Terminal.app do macOS) o atributo BOLD ignora o fg truecolor e
+ *   renderiza "preto", ilegível sobre o bg escuro do OSC — por isso o padrão
+ *   é sem negrito; o destaque do gradiente já vem da própria ramp de cores.
  */
 export function GradientText({
   children,
   colors,
-  bold = true,
+  bold = false,
 }: {
   children: string;
   colors: readonly string[];

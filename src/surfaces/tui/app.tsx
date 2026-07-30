@@ -30,11 +30,13 @@
  * se a home registrou um interceptor (busca aberta), ele é quem trata o Esc
  * e o `pop()`/abandono de re-auth abaixo é pulado nesse ciclo.
  */
-import { useCallback, useMemo, useRef, useState } from 'react';
-import { Box, Text, useApp, useInput } from 'ink';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Box, Text, useApp, useInput, useStdout } from 'ink';
 
 import type { SettingsStore } from '../../index.js';
 import { Breadcrumb } from './components/breadcrumb.js';
+import { TerminalSizeProvider, useTerminalHeight } from './hooks/use-terminal-width.js';
+import { applyTerminalColors } from './terminal-colors.js';
 import { ReAuthAbortedError } from './hooks/use-auth-guard.js';
 import { consumeEscapeInterceptor } from './hooks/use-escape-interceptor.js';
 import { useExitGuard } from './hooks/use-exit-guard.js';
@@ -147,10 +149,20 @@ export function App(props: AppProps = {}) {
   // Paleta ativa (#190) — ver {@link useThemeControllerState}.
   const { theme, controller } = useThemeControllerState(initialPaletteId, settings);
 
+  // Aplica as cores da paleta como default do terminal (OSC) sempre que ela muda
+  // (troca ao vivo na tela Aparência) — o fundo cobre a tela e todo texto sem cor
+  // explícita fica legível. Só em TTY real; nos testes (`ink-testing-library`) o
+  // stdout não é TTY, então não escreve nada.
+  const { stdout } = useStdout();
+  useEffect(() => {
+    if (stdout?.isTTY === true) applyTerminalColors(stdout, theme);
+  }, [theme, stdout]);
+
   return (
-    <ThemeProvider theme={theme}>
-      <ThemeControllerProvider value={controller}>
-        <NavigationProvider value={navigation}>
+    <TerminalSizeProvider>
+      <ThemeProvider theme={theme}>
+        <ThemeControllerProvider value={controller}>
+          <NavigationProvider value={navigation}>
           <OnboardingProvider callbacks={onboardingCallbacks}>
             {/* #31: sobrevive ao remount de `home.tsx`/`issue-detail.tsx` — ver o
                 JSDoc de `./screens/home-selection.tsx` para o contrato completo. */}
@@ -168,8 +180,9 @@ export function App(props: AppProps = {}) {
             </HomeSelectionProvider>
           </OnboardingProvider>
         </NavigationProvider>
-      </ThemeControllerProvider>
-    </ThemeProvider>
+        </ThemeControllerProvider>
+      </ThemeProvider>
+    </TerminalSizeProvider>
   );
 }
 
@@ -184,6 +197,11 @@ function AppShell() {
   const { reAuth, abortReAuth } = useOnboarding();
   const theme = useTheme();
   const { armed } = useExitGuard(exit);
+  // Full-screen (#190): o app ocupa a altura TODA do terminal. `minHeight` (não
+  // `height` fixo) evita a amostragem do Yoga em listas longas (achado B2). As
+  // telas usam um espaçador (`flexGrow`) antes dos atalhos para ancorá-los no
+  // rodapé, estilo nano/nvim/tmux.
+  const rows = useTerminalHeight();
 
   // Handler ESTÁVEL (refs + useCallback): identidade nova a cada render faz o
   // useInput des/re-subscrever no efeito pós-commit, abrindo janelas em que
@@ -239,20 +257,21 @@ function AppShell() {
 
   const Screen = SCREENS[current].component;
 
-  // Full-screen é o ALT-SCREEN (o `runTui` liga o buffer alternativo em TTY): o
-  // app ocupa a tela inteira e restaura ao sair, como vim/htop. NÃO pintamos um
-  // fundo sólido nem forçamos altura fixa — isso deixava uma emenda no topo, um
-  // retângulo que não chegava ao rodapé e artefatos de layout (#190 polish). O
-  // conteúdo fica no topo e as cores vêm dos tokens da paleta (texto/bordas).
+  // Full-screen = alt-screen (runTui) + fundo/texto via OSC (cobrem a tela toda)
+  // + este container com a ALTURA do terminal (`minHeight`). O breadcrumb fica no
+  // topo e a tela ocupa o resto (`flexGrow`); cada tela ancora seus atalhos no
+  // rodapé com um espaçador `flexGrow` (estilo nano/nvim/tmux).
   return (
-    <Box flexDirection="column">
+    <Box flexDirection="column" minHeight={rows}>
       <Breadcrumb stack={stack} />
       {armed ? (
         <Box paddingX={1} marginBottom={1}>
           <Text color={theme.warning}>{symbols.warning} Pressione Ctrl+C de novo para sair.</Text>
         </Box>
       ) : null}
-      <Screen />
+      <Box flexGrow={1} flexDirection="column">
+        <Screen />
+      </Box>
     </Box>
   );
 }

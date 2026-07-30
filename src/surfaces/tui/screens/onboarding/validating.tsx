@@ -87,7 +87,7 @@ export function OnboardingValidatingScreen() {
   if (networkError !== undefined) {
     return (
       <Box flexDirection="column" paddingX={1} paddingY={1} borderStyle="round" borderColor={theme.border}>
-        <Text bold color={theme.danger}>
+        <Text color={theme.danger}>
           {symbols.cross} Não foi possível entrar
         </Text>
         <Box marginTop={1}>
@@ -99,7 +99,7 @@ export function OnboardingValidatingScreen() {
         <Box marginTop={1}>
           <Text color={theme.muted}>
             Pressione{' '}
-            <Text bold color={theme.accent}>
+            <Text color={theme.accent}>
               Esc
             </Text>{' '}
             para voltar e tentar novamente.

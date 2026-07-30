@@ -17,7 +17,9 @@ import { render } from 'ink';
 import { defaultSettingsStore, type SettingsStore } from '../../index.js';
 import { App } from './app.js';
 import { InstanceProvider, type InstanceInfo, type InstanceOrigin } from './instance.js';
-import { DEFAULT_PALETTE_ID } from './palettes.js';
+import { DEFAULT_PALETTE_ID, resolvePalette } from './palettes.js';
+import { applyTerminalColors, resetTerminalColors } from './terminal-colors.js';
+import type { Theme } from './theme.js';
 
 /** Dependências injetáveis do `runTui` (default: processo real). */
 export interface RunTuiDeps {
@@ -93,7 +95,8 @@ export async function runTui(deps: RunTuiDeps = {}): Promise<number> {
   // instalados por `installAltScreen` cobrem a saída NÃO cooperativa (SIGTERM/
   // SIGHUP/SIGINT externos, fechar a aba) — sem eles o `finally` de uma Promise
   // não roda e o terminal fica preso no alt-screen (achado B1 da review).
-  const dispose = fullScreen ? installAltScreen(out, deps.proc ?? process) : () => undefined;
+  const bootTheme = resolvePalette(paletteId).theme;
+  const dispose = fullScreen ? installAltScreen(out, deps.proc ?? process, bootTheme) : () => undefined;
 
   try {
     const { waitUntilExit } = render(
@@ -109,14 +112,21 @@ export async function runTui(deps: RunTuiDeps = {}): Promise<number> {
   return 0;
 }
 
-/** Sequência ANSI para entrar no buffer de tela alternativo + limpar + esconder cursor. */
-function enterAltScreen(out: NodeJS.WriteStream): void {
-  out.write('\x1b[?1049h\x1b[H\x1b[2J\x1b[?25l');
+/**
+ * Entra no alt-screen, aplica as cores da paleta como default do terminal (OSC,
+ * ANTES do clear — a tela é limpa já com o fundo temático), limpa e esconde o cursor.
+ */
+function enterAltScreen(out: NodeJS.WriteStream, theme?: Theme): void {
+  out.write('\x1b[?1049h');
+  if (theme !== undefined) applyTerminalColors(out, theme);
+  out.write('\x1b[H\x1b[2J\x1b[?25l');
 }
 
-/** Restaura o buffer principal do terminal + mostra o cursor (ao sair). */
-function leaveAltScreen(out: NodeJS.WriteStream): void {
-  out.write('\x1b[?25h\x1b[?1049l');
+/** Restaura cursor + cores default do terminal + buffer principal (ao sair). */
+function leaveAltScreen(out: NodeJS.WriteStream, theme?: Theme): void {
+  out.write('\x1b[?25h');
+  if (theme !== undefined) resetTerminalColors(out);
+  out.write('\x1b[?1049l');
 }
 
 /** Subconjunto do `process` que `installAltScreen` usa (injetável em testes). */
@@ -142,16 +152,21 @@ const RESTORE_SIGNALS: ReadonlyArray<readonly [string, number]> = [
  *
  * @param out - Stream do terminal.
  * @param proc - `process` (ou um fake em testes).
+ * @param theme - Paleta ativa no boot (aplica fundo/texto default via OSC).
  * @returns `dispose()` — restaura + remove os listeners (saída normal).
  */
-export function installAltScreen(out: NodeJS.WriteStream, proc: AltScreenProc): () => void {
-  enterAltScreen(out);
+export function installAltScreen(
+  out: NodeJS.WriteStream,
+  proc: AltScreenProc,
+  theme?: Theme,
+): () => void {
+  enterAltScreen(out, theme);
 
   let restored = false;
   const restore = (): void => {
     if (restored) return;
     restored = true;
-    leaveAltScreen(out);
+    leaveAltScreen(out, theme);
   };
 
   const onExit = (): void => restore();

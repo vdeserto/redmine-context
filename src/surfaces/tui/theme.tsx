@@ -60,12 +60,19 @@ export interface Theme {
    */
   secondary?: string;
   /**
-   * Cor de FUNDO da paleta (opcional, #190). RESERVADA — hoje NÃO é consumida:
-   * o full-screen usa o alt-screen sem pintar um fundo sólido (pintar deixava uma
-   * emenda no topo e um retângulo que não cobria a tela toda — #190 polish). Fica
-   * na paleta para um eventual modo "fundo temático" opt-in no futuro.
+   * Cor de FUNDO da paleta (opcional, #190). Aplicada como fundo DEFAULT do
+   * terminal (OSC 11) ao entrar em full-screen — cobre a tela inteira sem pintar
+   * um Box (evita emenda/altura fixa). Ausente ⇒ herda o fundo do terminal.
    */
   background?: string;
+  /**
+   * Cor de TEXTO padrão da paleta (opcional, #190). Aplicada como foreground
+   * DEFAULT do terminal (OSC 10) ao entrar em full-screen — assim TODO texto sem
+   * cor explícita (ex.: o assunto da issue) fica legível sobre o {@link background}
+   * (nada de "preto sobre escuro" no terminal claro do usuário). Ausente ⇒ herda o
+   * foreground do terminal.
+   */
+  text?: string;
   /**
    * Ramp de cores (2+ hex) para efeitos de GRADIENTE em títulos/breadcrumb
    * (opcional, #190). Ausente ⇒ texto sólido em {@link Theme.primary}.

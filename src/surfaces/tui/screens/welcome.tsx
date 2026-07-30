@@ -105,12 +105,12 @@ export function WelcomeScreen() {
       </Box>
       <Box marginTop={1}>
         <Text color={theme.muted}>
-          Pressione <Text bold color={theme.accent}>Enter</Text> para continuar,{' '}
-          <Text bold color={theme.accent}>?</Text> para atalhos,{' '}
-          <Text bold color={theme.accent}>d</Text> para o doctor,{' '}
-          <Text bold color={theme.accent}>c</Text> para configuração,{' '}
-          <Text bold color={theme.accent}>a</Text> para aparência,{' '}
-          <Text bold color={theme.accent}>q</Text> para sair.
+          Pressione <Text color={theme.accent}>Enter</Text> para continuar,{' '}
+          <Text color={theme.accent}>?</Text> para atalhos,{' '}
+          <Text color={theme.accent}>d</Text> para o doctor,{' '}
+          <Text color={theme.accent}>c</Text> para configuração,{' '}
+          <Text color={theme.accent}>a</Text> para aparência,{' '}
+          <Text color={theme.accent}>q</Text> para sair.
         </Text>
       </Box>
     </Box>
