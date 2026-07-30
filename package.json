@@ -4,6 +4,32 @@
   "description": "Consumidor de Redmine que entrega contexto completo de issues (texto + mídia extraída localmente) para qualquer LLM",
   "type": "module",
   "license": "MIT",
+  "author": "Victor Deserto",
+  "keywords": [
+    "redmine",
+    "mcp",
+    "model-context-protocol",
+    "llm",
+    "context",
+    "cli",
+    "tui",
+    "ink",
+    "ocr",
+    "transcription",
+    "issue-tracker"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vdeserto/redmine-context.git"
+  },
+  "homepage": "https://github.com/vdeserto/redmine-context#readme",
+  "bugs": {
+    "url": "https://github.com/vdeserto/redmine-context/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "bin": {
     "redmine-context": "dist/surfaces/cli/main.js"
   },
