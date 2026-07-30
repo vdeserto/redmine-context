@@ -1,6 +1,8 @@
 # redmine-context
 
-## 0.2.0
+## 1.0.0
+
+Primeiro release público estável.
 
 ### Minor Changes
 
