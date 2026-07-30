@@ -30,11 +30,13 @@
  * se a home registrou um interceptor (busca aberta), ele é quem trata o Esc
  * e o `pop()`/abandono de re-auth abaixo é pulado nesse ciclo.
  */
-import { useCallback, useMemo, useRef, useState } from 'react';
-import { Box, Text, useApp, useInput } from 'ink';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Box, Text, useApp, useInput, useStdout } from 'ink';
 
 import type { SettingsStore } from '../../index.js';
 import { Breadcrumb } from './components/breadcrumb.js';
+import { TerminalSizeProvider, useTerminalHeight } from './hooks/use-terminal-width.js';
+import { applyTerminalColors } from './terminal-colors.js';
 import { ReAuthAbortedError } from './hooks/use-auth-guard.js';
 import { consumeEscapeInterceptor } from './hooks/use-escape-interceptor.js';
 import { useExitGuard } from './hooks/use-exit-guard.js';
@@ -48,7 +50,6 @@ import {
   useOnboarding,
   type OnboardingReAuth,
 } from './screens/onboarding/onboarding-context.js';
-import { useStdoutDimensions } from './hooks/use-stdout-dimensions.js';
 import { DEFAULT_PALETTE_ID, resolvePalette } from './palettes.js';
 import { INITIAL_SCREEN, SCREENS, type ScreenName } from './screen.js';
 import { symbols } from './symbols.js';
@@ -102,8 +103,6 @@ export interface AppProps {
   initialPaletteId?: string;
   /** Store para PERSISTIR a paleta escolhida (#190). Ausente ⇒ persistência é no-op. */
   settings?: Pick<SettingsStore, 'setPaletteId'>;
-  /** Preenche a altura do terminal (full-screen, #190). Só o `runTui` liga em TTY. */
-  fullScreen?: boolean;
 }
 
 /**
@@ -143,17 +142,27 @@ export function useThemeControllerState(
 }
 
 export function App(props: AppProps = {}) {
-  const { initialPaletteId, settings, fullScreen = false } = props;
+  const { initialPaletteId, settings } = props;
   const navigation = useNavigationStack(INITIAL_SCREEN);
   const onboardingCallbacks = useOnboardingCallbacks();
 
   // Paleta ativa (#190) — ver {@link useThemeControllerState}.
   const { theme, controller } = useThemeControllerState(initialPaletteId, settings);
 
+  // Aplica as cores da paleta como default do terminal (OSC) sempre que ela muda
+  // (troca ao vivo na tela Aparência) — o fundo cobre a tela e todo texto sem cor
+  // explícita fica legível. Só em TTY real; nos testes (`ink-testing-library`) o
+  // stdout não é TTY, então não escreve nada.
+  const { stdout } = useStdout();
+  useEffect(() => {
+    if (stdout?.isTTY === true) applyTerminalColors(stdout, theme);
+  }, [theme, stdout]);
+
   return (
-    <ThemeProvider theme={theme}>
-      <ThemeControllerProvider value={controller}>
-        <NavigationProvider value={navigation}>
+    <TerminalSizeProvider>
+      <ThemeProvider theme={theme}>
+        <ThemeControllerProvider value={controller}>
+          <NavigationProvider value={navigation}>
           <OnboardingProvider callbacks={onboardingCallbacks}>
             {/* #31: sobrevive ao remount de `home.tsx`/`issue-detail.tsx` — ver o
                 JSDoc de `./screens/home-selection.tsx` para o contrato completo. */}
@@ -165,14 +174,15 @@ export function App(props: AppProps = {}) {
                     (primeiro produtor real) e `./screens/jobs.tsx` (painel) —
                     ver o JSDoc de `./job-registry.tsx` para o contrato completo. */}
                 <JobRegistryProvider>
-                  <AppShell fullScreen={fullScreen} />
+                  <AppShell />
                 </JobRegistryProvider>
               </LoadedIssueProvider>
             </HomeSelectionProvider>
           </OnboardingProvider>
         </NavigationProvider>
-      </ThemeControllerProvider>
-    </ThemeProvider>
+        </ThemeControllerProvider>
+      </ThemeProvider>
+    </TerminalSizeProvider>
   );
 }
 
@@ -181,17 +191,17 @@ export function App(props: AppProps = {}) {
  * tela atual. Só existe dentro dos providers de `App` — depende de
  * `useTheme()`/`useNavigation()`.
  */
-function AppShell({ fullScreen = false }: { fullScreen?: boolean }) {
+function AppShell() {
   const { exit } = useApp();
   const { current, pop, popTo, stack } = useNavigation();
   const { reAuth, abortReAuth } = useOnboarding();
   const theme = useTheme();
   const { armed } = useExitGuard(exit);
-  // Full-screen (#190): preenche a altura/largura do terminal (alt-screen ligado
-  // pelo runTui) e pinta o fundo temático. Só quando há dimensões reais (TTY);
-  // nos testes (`ink-testing-library`) `rows` é undefined ⇒ layout normal.
-  const { rows, columns } = useStdoutDimensions();
-  const fill = fullScreen && rows !== undefined;
+  // Full-screen (#190): o app ocupa a altura TODA do terminal. `minHeight` (não
+  // `height` fixo) evita a amostragem do Yoga em listas longas (achado B2). As
+  // telas usam um espaçador (`flexGrow`) antes dos atalhos para ancorá-los no
+  // rodapé, estilo nano/nvim/tmux.
+  const rows = useTerminalHeight();
 
   // Handler ESTÁVEL (refs + useCallback): identidade nova a cada render faz o
   // useInput des/re-subscrever no efeito pós-commit, abrindo janelas em que
@@ -247,24 +257,21 @@ function AppShell({ fullScreen = false }: { fullScreen?: boolean }) {
 
   const Screen = SCREENS[current].component;
 
+  // Full-screen = alt-screen (runTui) + fundo/texto via OSC (cobrem a tela toda)
+  // + este container com a ALTURA do terminal (`minHeight`). O breadcrumb fica no
+  // topo e a tela ocupa o resto (`flexGrow`); cada tela ancora seus atalhos no
+  // rodapé com um espaçador `flexGrow` (estilo nano/nvim/tmux).
   return (
-    <Box
-      flexDirection="column"
-      // Full-screen (#190): `minHeight` (NÃO `height` fixo) — o container CRESCE
-      // com o conteúdo quando ele é maior que a tela (o terminal corta o excesso,
-      // como antes), e só ENCHE até `rows` quando o conteúdo é menor (fundo cobre
-      // a tela). `height` fixo faria o Yoga ENCOLHER/AMOSTRAR linhas de listas
-      // longas (home/jobs), corrompendo o layout (achado B2 da review).
-      {...(fill ? { minHeight: rows, width: columns } : {})}
-      {...(fill && theme.background !== undefined ? { backgroundColor: theme.background } : {})}
-    >
+    <Box flexDirection="column" minHeight={rows}>
       <Breadcrumb stack={stack} />
       {armed ? (
         <Box paddingX={1} marginBottom={1}>
           <Text color={theme.warning}>{symbols.warning} Pressione Ctrl+C de novo para sair.</Text>
         </Box>
       ) : null}
-      <Screen />
+      <Box flexGrow={1} flexDirection="column">
+        <Screen />
+      </Box>
     </Box>
   );
 }

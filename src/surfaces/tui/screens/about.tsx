@@ -37,13 +37,13 @@ export function AboutScreen() {
 
   return (
     <Box flexDirection="column" paddingX={1} paddingY={1}>
-      <Text bold color={theme.primary}>
+      <Text color={theme.primary}>
         Atalhos
       </Text>
       <Box marginTop={1} flexDirection="column">
         {SHORTCUTS.map((shortcut) => (
           <Text key={shortcut.key}>
-            <Text bold color={theme.accent}>
+            <Text color={theme.accent}>
               {shortcut.key}
             </Text>{' '}
             {shortcut.description}
@@ -53,7 +53,7 @@ export function AboutScreen() {
       <Box marginTop={1}>
         <Text color={theme.muted}>
           Pressione{' '}
-          <Text bold color={theme.accent}>
+          <Text color={theme.accent}>
             b
           </Text>{' '}
           para voltar.

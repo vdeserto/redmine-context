@@ -88,8 +88,8 @@ export function AppearanceScreen() {
           const swatches = [t.primary, t.secondary ?? t.primary, t.accent, t.success, t.warning, t.danger];
           return (
             <Box key={palette.id}>
-              <Box width={22}>
-                <Text color={selected ? theme.primary : theme.muted} bold={selected}>
+              <Box width={30}>
+                <Text color={selected ? theme.primary : theme.muted}>
                   {selected ? symbols.pointer : ' '} {palette.label}
                 </Text>
               </Box>
@@ -109,11 +109,11 @@ export function AppearanceScreen() {
       <Box marginTop={1}>
         <Text color={theme.muted}>
           {symbols.arrowUp}/{symbols.arrowDown} pré-visualiza {symbols.pointerSmall}{' '}
-          <Text bold color={theme.accent}>
+          <Text color={theme.accent}>
             Enter
           </Text>{' '}
           salva {symbols.pointerSmall}{' '}
-          <Text bold color={theme.accent}>
+          <Text color={theme.accent}>
             Esc
           </Text>{' '}
           cancela

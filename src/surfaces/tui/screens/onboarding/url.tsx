@@ -107,7 +107,7 @@ export function OnboardingUrlScreen() {
 
   return (
     <Box flexDirection="column" paddingX={1} paddingY={1} borderStyle="round" borderColor={theme.border}>
-      <Text bold color={theme.primary}>
+      <Text color={theme.primary}>
         URL do Redmine
       </Text>
       <Box marginTop={1}>
@@ -124,11 +124,11 @@ export function OnboardingUrlScreen() {
       <Box marginTop={1}>
         <Text color={theme.muted}>
           Pressione{' '}
-          <Text bold color={theme.accent}>
+          <Text color={theme.accent}>
             Enter
           </Text>{' '}
           para confirmar,{' '}
-          <Text bold color={theme.accent}>
+          <Text color={theme.accent}>
             Esc
           </Text>{' '}
           para voltar.

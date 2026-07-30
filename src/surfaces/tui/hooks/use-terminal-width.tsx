@@ -17,8 +17,12 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from '
 
 /** Largura assumida quando `process.stdout.columns` está indisponível (ex.: saída não-TTY). */
 export const DEFAULT_TERMINAL_WIDTH = 80;
+/** Altura assumida quando `process.stdout.rows` está indisponível. */
+export const DEFAULT_TERMINAL_HEIGHT = 24;
 
 const TerminalWidthContext = createContext<number | undefined>(undefined);
+/** Altura atual (linhas), provida pelo {@link TerminalSizeProvider}; `undefined` fora dele. */
+const TerminalHeightContext = createContext<number | undefined>(undefined);
 
 /** Lê a largura atual do stdout do processo, com fallback para {@link DEFAULT_TERMINAL_WIDTH}. */
 function readProcessColumns(): number {
@@ -26,33 +30,58 @@ function readProcessColumns(): number {
   return typeof columns === 'number' && columns > 0 ? columns : DEFAULT_TERMINAL_WIDTH;
 }
 
+/** Lê a altura atual do stdout do processo, com fallback para {@link DEFAULT_TERMINAL_HEIGHT}. */
+function readProcessRows(): number {
+  const rows = process.stdout.rows;
+  return typeof rows === 'number' && rows > 0 ? rows : DEFAULT_TERMINAL_HEIGHT;
+}
+
 /**
  * Provider de largura FIXA — usado pelos testes (injeta 80/60 sem depender do
- * `process.stdout` real). Fora de testes, a árvore da TUI (`../app.tsx`) NÃO
- * usa este provider: `useTerminalWidth()` lê o stdout real diretamente
- * quando nenhum provider está presente.
+ * `process.stdout` real). Fora de testes, a árvore da TUI (`../app.tsx`) usa o
+ * {@link TerminalSizeProvider} (uma única assinatura de `resize`).
  */
 export function TerminalWidthProvider({ width, children }: { width: number; children: ReactNode }) {
   return <TerminalWidthContext.Provider value={width}>{children}</TerminalWidthContext.Provider>;
 }
 
 /**
+ * Provider de TAMANHO do terminal (largura + altura) com UMA ÚNICA assinatura do
+ * evento `resize` do stdout (#190 fix). Montado no topo da TUI (`../app.tsx`) para
+ * que `useTerminalWidth`/`useTerminalHeight` leiam do contexto em vez de cada
+ * consumidor (ex.: cada linha da lista) assinar o próprio `resize` — o que
+ * estourava o limite de 10 listeners do EventEmitter (MaxListenersExceededWarning).
+ */
+export function TerminalSizeProvider({ children }: { children: ReactNode }) {
+  const [size, setSize] = useState(() => ({ width: readProcessColumns(), height: readProcessRows() }));
+  useEffect(() => {
+    const onResize = (): void => setSize({ width: readProcessColumns(), height: readProcessRows() });
+    process.stdout.on('resize', onResize);
+    return () => {
+      process.stdout.off('resize', onResize);
+    };
+  }, []);
+  return (
+    <TerminalWidthContext.Provider value={size.width}>
+      <TerminalHeightContext.Provider value={size.height}>{children}</TerminalHeightContext.Provider>
+    </TerminalWidthContext.Provider>
+  );
+}
+
+/**
  * Largura atual do terminal, em colunas.
  *
- * Usa o {@link TerminalWidthProvider} mais próximo se houver (testes); senão
- * lê `process.stdout.columns` e assina o evento `resize` do stdout real para
- * atualizar em runtime — telas que dependem desta largura para orçar
- * truncamento (ver `../truncate.ts`) re-renderizam automaticamente quando o
- * usuário redimensiona o terminal.
+ * Usa o provider mais próximo se houver ({@link TerminalSizeProvider} em produção
+ * ou {@link TerminalWidthProvider} nos testes); senão (sem provider) lê o stdout
+ * real e assina o `resize` — caminho de fallback para uso isolado.
  */
 export function useTerminalWidth(): number {
   const injected = useContext(TerminalWidthContext);
   const [width, setWidth] = useState(readProcessColumns);
 
   useEffect(() => {
-    // Reason: com um provider injetado (testes), a largura é a fonte da
-    // verdade — não assina o stdout real, que nos testes não representa o
-    // terminal simulado.
+    // Com um provider (produção via TerminalSizeProvider, ou testes), a largura é
+    // a fonte da verdade — não assina o stdout real por consumidor.
     if (injected !== undefined) return;
     const handleResize = () => setWidth(readProcessColumns());
     process.stdout.on('resize', handleResize);
@@ -62,4 +91,12 @@ export function useTerminalWidth(): number {
   }, [injected]);
 
   return injected ?? width;
+}
+
+/**
+ * Altura atual do terminal, em linhas. Lê do {@link TerminalSizeProvider}; sem ele
+ * (uso isolado/testes) cai no fallback {@link DEFAULT_TERMINAL_HEIGHT}.
+ */
+export function useTerminalHeight(): number {
+  return useContext(TerminalHeightContext) ?? DEFAULT_TERMINAL_HEIGHT;
 }

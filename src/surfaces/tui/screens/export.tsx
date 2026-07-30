@@ -95,9 +95,9 @@ function FormatRow({ label, selected, focused }: { label: string; selected: bool
   return (
     <Box>
       <Text color={theme.primary}>{selected ? `${symbols.pointerSmall} ` : '  '}</Text>
-      <Text bold={selected} color={selected && focused ? theme.primary : theme.muted}>
-        {label}
-      </Text>
+      {/* Sem BOLD na seleção (#190): o bold pode virar "preto" ilegível em alguns
+          terminais; destaque só por cor + a setinha. */}
+      <Text color={selected && focused ? theme.primary : theme.muted}>{label}</Text>
     </Box>
   );
 }
@@ -205,7 +205,7 @@ export function ExportScreen() {
 
   return (
     <Box flexDirection="column" paddingX={1} paddingY={1}>
-      <Text bold color={theme.primary}>
+      <Text color={theme.primary}>
         Exportar bundle
       </Text>
 
@@ -282,15 +282,15 @@ export function ExportScreen() {
         <Text color={theme.muted}>
           {state.status === 'idle' ? (
             <>
-              <Text bold color={theme.accent}>
+              <Text color={theme.accent}>
                 {`${glyphs.arrowUp}/${glyphs.arrowDown}`}
               </Text>{' '}
               escolhe o formato,{' '}
-              <Text bold color={theme.accent}>
+              <Text color={theme.accent}>
                 Tab
               </Text>{' '}
               alterna formato/destino,{' '}
-              <Text bold color={theme.accent}>
+              <Text color={theme.accent}>
                 Enter
               </Text>{' '}
               exporta,{' '}
@@ -298,13 +298,13 @@ export function ExportScreen() {
           ) : null}
           {state.status === 'error' ? (
             <>
-              <Text bold color={theme.accent}>
+              <Text color={theme.accent}>
                 r
               </Text>{' '}
               tenta de novo,{' '}
             </>
           ) : null}
-          <Text bold color={theme.accent}>
+          <Text color={theme.accent}>
             b
           </Text>{' '}
           volta ao detalhe.

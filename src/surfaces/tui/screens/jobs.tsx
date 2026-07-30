@@ -61,7 +61,9 @@ function JobRow({ job, selected, theme }: { job: Job; selected: boolean; theme: 
         <Text color={jobStatusColor(theme, job.status)}>{icon}</Text>
       )}
       <Text> </Text>
-      <Text bold={selected}>{job.label}</Text>
+      {/* Sem BOLD na seleção: em alguns terminais o bold ignora o fg truecolor e
+          vira "preto" ilegível (#190). Destaque só por cor + a setinha. */}
+      <Text {...(selected ? { color: theme.primary } : {})}>{job.label}</Text>
       <Text color={theme.muted}> [{jobStatusLabel(job.status)}]</Text>
       {selected ? (
         <Text color={theme.muted}>
@@ -111,7 +113,7 @@ export function JobsScreen() {
 
   return (
     <Box flexDirection="column" paddingX={1} paddingY={1}>
-      <Text bold color={theme.primary}>
+      <Text color={theme.primary}>
         Jobs da sessão
       </Text>
 
@@ -129,15 +131,15 @@ export function JobsScreen() {
 
       <Box marginTop={1}>
         <Text color={theme.muted}>
-          <Text bold color={theme.accent}>
+          <Text color={theme.accent}>
             {`${glyphs.arrowUp}/${glyphs.arrowDown}`}
           </Text>{' '}
           navega,{' '}
-          <Text bold color={theme.accent}>
+          <Text color={theme.accent}>
             Ctrl+C
           </Text>{' '}
           cancela o job selecionado (se cancelável),{' '}
-          <Text bold color={theme.accent}>
+          <Text color={theme.accent}>
             b
           </Text>{' '}
           volta.

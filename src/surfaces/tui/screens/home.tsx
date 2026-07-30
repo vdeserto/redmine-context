@@ -103,7 +103,14 @@ function IssueRow({ issue, selected }: { issue: MyIssue; selected: boolean }) {
     <Box>
       <Text color={theme.primary}>{selected ? `${symbols.pointerSmall} ` : '  '}</Text>
       <Text color={theme.muted}>#{issue.id} </Text>
-      <Text bold={selected}>{truncate(issue.subject, subjectBudget)} </Text>
+      {/* SEGURANÇA de contraste (#190): em alguns terminais (ex.: Terminal.app do
+          macOS) o atributo BOLD (SGR 1) ignora o fg truecolor e renderiza "preto",
+          ilegível sobre o bg escuro do OSC. Por isso a seleção NÃO usa bold — só a
+          cor `theme.primary` + a setinha (`symbols.pointerSmall`) a destacam. O
+          não-selecionado mantém a cor de texto padrão. */}
+      <Text {...(selected ? { color: theme.primary } : {})}>
+        {truncate(issue.subject, subjectBudget)}{' '}
+      </Text>
       <Text color={statusColor(theme, issue.statusName)}>[{issue.statusName}]</Text>
     </Box>
   );
@@ -219,9 +226,9 @@ export function HomeScreen() {
   const searchState = search.state;
 
   return (
-    <Box flexDirection="column" paddingX={1} paddingY={1}>
+    <Box flexGrow={1} flexDirection="column" paddingX={1} paddingY={1}>
       <Box>
-        <Text bold color={theme.primary}>
+        <Text color={theme.primary}>
           Minhas issues
         </Text>
         <Text color={theme.muted}> [{STATUS_FILTER_LABELS[statusFilter]}]</Text>
@@ -307,7 +314,7 @@ export function HomeScreen() {
               </Text>
               <Text color={theme.muted}>
                 Pressione{' '}
-                <Text bold color={theme.accent}>
+                <Text color={theme.accent}>
                   r
                 </Text>{' '}
                 para tentar de novo.
@@ -322,7 +329,7 @@ export function HomeScreen() {
               </Text>
               <Text color={theme.muted}>
                 Pressione{' '}
-                <Text bold color={theme.accent}>
+                <Text color={theme.accent}>
                   r
                 </Text>{' '}
                 para tentar de novo.
@@ -348,38 +355,40 @@ export function HomeScreen() {
         </>
       )}
 
+      {/* Espaçador: ancora os atalhos no RODAPÉ (estilo nano/nvim/tmux). */}
+      <Box flexGrow={1} />
       <Box marginTop={1}>
         <Text color={theme.muted}>
           {isSearching ? (
             <>
-              <Text bold color={theme.accent}>
+              <Text color={theme.accent}>
                 Esc
               </Text>{' '}
               fecha a busca,{' '}
-              <Text bold color={theme.accent}>
+              <Text color={theme.accent}>
                 f
               </Text>{' '}
               cicla o filtro.
             </>
           ) : (
             <>
-              <Text bold color={theme.accent}>
+              <Text color={theme.accent}>
                 {`${glyphs.arrowUp}/${glyphs.arrowDown}`}
               </Text>{' '}
               navega,{' '}
-              <Text bold color={theme.accent}>
+              <Text color={theme.accent}>
                 Enter
               </Text>{' '}
               abre a issue,{' '}
-              <Text bold color={theme.accent}>
+              <Text color={theme.accent}>
                 /
               </Text>{' '}
               busca,{' '}
-              <Text bold color={theme.accent}>
+              <Text color={theme.accent}>
                 t
               </Text>{' '}
               jobs,{' '}
-              <Text bold color={theme.accent}>
+              <Text color={theme.accent}>
                 Esc
               </Text>{' '}
               volta.

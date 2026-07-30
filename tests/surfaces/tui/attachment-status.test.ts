@@ -27,11 +27,32 @@ describe('TUI: deriveAttachmentExtractionStatus', () => {
     expect(deriveAttachmentExtractionStatus({ content_type: undefined })).toBe('pending');
   });
 
-  it('content_type binário conhecido (imagem/pdf/áudio/vídeo) → "unsupported" no M2', () => {
-    expect(deriveAttachmentExtractionStatus({ content_type: 'image/png' })).toBe('unsupported');
-    expect(deriveAttachmentExtractionStatus({ content_type: 'application/pdf' })).toBe('unsupported');
-    expect(deriveAttachmentExtractionStatus({ content_type: 'audio/mpeg' })).toBe('unsupported');
-    expect(deriveAttachmentExtractionStatus({ content_type: 'video/mp4' })).toBe('unsupported');
+  it('tipos EXTRAÍVEIS (imagem/pdf/áudio/vídeo/OOXML/zip/octet-stream) → "pending" (#190)', () => {
+    // Há extrator para todos: imagem (tesseract), pdf (pdftotext), áudio/vídeo
+    // (whisper+ffmpeg), OOXML (docx/xlsx/pptx). O texto sai com `--extract`.
+    for (const contentType of [
+      'image/png',
+      'image/jpeg',
+      'application/pdf',
+      'audio/mpeg',
+      'video/mp4',
+      'application/zip', // docx/xlsx/pptx são zip; o magic decide
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'application/octet-stream', // genérico do Redmine → o magic decide
+    ]) {
+      expect(deriveAttachmentExtractionStatus({ content_type: contentType }), contentType).toBe(
+        'pending',
+      );
+    }
+  });
+
+  it('tipos SEM extrator → "unsupported" (Office binário antigo, executáveis)', () => {
+    expect(deriveAttachmentExtractionStatus({ content_type: 'application/msword' })).toBe(
+      'unsupported',
+    );
+    expect(deriveAttachmentExtractionStatus({ content_type: 'application/x-msdownload' })).toBe(
+      'unsupported',
+    );
   });
 });
 

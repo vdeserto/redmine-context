@@ -46,6 +46,7 @@ import { ScrollView } from '../components/scroll-view.js';
 import { glyphs } from '../glyphs.js';
 import { humanizeFileSize } from '../format-file-size.js';
 import { useIssueDetail } from '../hooks/use-issue-detail.js';
+import { useTerminalHeight } from '../hooks/use-terminal-width.js';
 import { useNavigation } from '../navigation.js';
 import { statusColor } from '../status-color.js';
 import { symbols } from '../symbols.js';
@@ -53,8 +54,16 @@ import { useTheme, type Theme } from '../theme.js';
 import { useHomeSelection } from './home-selection.js';
 import { useLoadedIssue } from './loaded-issue-context.js';
 
-/** Altura (em linhas) da viewport rolável de descrição + journals. */
-const CONTENT_HEIGHT = 10;
+/**
+ * Overhead de linhas FORA da viewport de descrição (breadcrumb + título + meta +
+ * rodapé + paddings). A viewport cresce com o terminal: `altura - OVERHEAD`
+ * (#190). Com a altura default dos testes (24) dá 10 — o valor histórico — então
+ * os snapshots/asserções de rolagem seguem iguais; em terminal real a descrição
+ * usa quase toda a tela e só rola quando passa DE VERDADE.
+ */
+const CONTENT_OVERHEAD_ROWS = 14;
+/** Piso da viewport (terminais muito baixos). */
+const CONTENT_MIN_HEIGHT = 6;
 
 /** Placeholder discreto para campos ausentes (assignee, autor/data de journal, old/new value). ASCII no Windows legado (#84). */
 const EMPTY_PLACEHOLDER = glyphs.emptyPlaceholder;
@@ -63,7 +72,7 @@ const EMPTY_PLACEHOLDER = glyphs.emptyPlaceholder;
 function IssueMeta({ issue, theme }: { issue: Issue; theme: Theme }) {
   return (
     <Box flexDirection="column">
-      <Text bold color={theme.primary}>
+      <Text color={theme.primary}>
         #{issue.id} {issue.subject}
       </Text>
       <Box>
@@ -96,7 +105,7 @@ function buildAttachmentRow(attachment: Attachment, theme: Theme): ReactNode {
       <Text color={theme.muted}>
         ({humanizeFileSize(attachment.filesize)} {glyphs.middleDot} {attachment.content_type ?? EMPTY_PLACEHOLDER})
       </Text>{' '}
-      <Text bold color={attachmentStatusColor(theme, status)}>
+      <Text color={attachmentStatusColor(theme, status)}>
         [{attachmentStatusLabel(status)}]
       </Text>
     </Text>
@@ -106,7 +115,7 @@ function buildAttachmentRow(attachment: Attachment, theme: Theme): ReactNode {
 /** Constrói as linhas da seção de anexos (após os journals): cabeçalho + 1 linha por anexo, ou "(nenhum)". */
 function buildAttachmentRows(issue: Issue, theme: Theme): ReactNode[] {
   const rows: ReactNode[] = [
-    <Text bold color={theme.primary} key="attachments-header">
+    <Text color={theme.primary} key="attachments-header">
       Anexos
     </Text>,
   ];
@@ -129,7 +138,7 @@ function buildContentRows(issue: Issue, theme: Theme): ReactNode[] {
   const rows: ReactNode[] = [];
 
   rows.push(
-    <Text bold color={theme.primary} key="desc-header">
+    <Text color={theme.primary} key="desc-header">
       Descrição
     </Text>,
   );
@@ -147,7 +156,7 @@ function buildContentRows(issue: Issue, theme: Theme): ReactNode[] {
   rows.push(<Text key="desc-spacer"> </Text>);
 
   rows.push(
-    <Text bold color={theme.primary} key="journals-header">
+    <Text color={theme.primary} key="journals-header">
       Histórico
     </Text>,
   );
@@ -200,7 +209,7 @@ function Footer({ showRetry, showExport }: { showRetry: boolean; showExport: boo
         {showRetry ? (
           <>
             Pressione{' '}
-            <Text bold color={theme.accent}>
+            <Text color={theme.accent}>
               r
             </Text>{' '}
             para tentar de novo,{' '}
@@ -209,18 +218,18 @@ function Footer({ showRetry, showExport }: { showRetry: boolean; showExport: boo
         {showExport ? (
           <>
             Pressione{' '}
-            <Text bold color={theme.accent}>
+            <Text color={theme.accent}>
               e
             </Text>{' '}
             para exportar,{' '}
           </>
         ) : null}
         Pressione{' '}
-        <Text bold color={theme.accent}>
+        <Text color={theme.accent}>
           t
         </Text>{' '}
         para ver os jobs,{' '}
-        <Text bold color={theme.accent}>
+        <Text color={theme.accent}>
           b
         </Text>{' '}
         para voltar.
@@ -240,6 +249,9 @@ export function IssueDetailScreen() {
   const { selectedIssueId } = useHomeSelection();
   const { state, retry } = useIssueDetail(selectedIssueId);
   const { setIssue } = useLoadedIssue();
+  // Viewport de descrição CRESCE com o terminal (#190) — só rola quando o conteúdo
+  // passa da tela de verdade, em vez de uma janelinha fixa com espaço vazio embaixo.
+  const contentHeight = Math.max(CONTENT_MIN_HEIGHT, useTerminalHeight() - CONTENT_OVERHEAD_ROWS);
 
   // Espelha a issue carregada no contexto leve consumido por `./export.js`
   // (#33) — ver o JSDoc do módulo e de `./loaded-issue-context.js` para a
@@ -280,8 +292,8 @@ export function IssueDetailScreen() {
   });
 
   return (
-    <Box flexDirection="column" paddingX={1} paddingY={1}>
-      <Text bold color={theme.primary}>
+    <Box flexGrow={1} flexDirection="column" paddingX={1} paddingY={1}>
+      <Text color={theme.primary}>
         Detalhe da issue
       </Text>
 
@@ -333,11 +345,13 @@ export function IssueDetailScreen() {
         <Box marginTop={1} flexDirection="column">
           <IssueMeta issue={state.issue} theme={theme} />
           <Box marginTop={1}>
-            <ScrollView lines={buildContentRows(state.issue, theme)} height={CONTENT_HEIGHT} />
+            <ScrollView lines={buildContentRows(state.issue, theme)} height={contentHeight} />
           </Box>
         </Box>
       ) : null}
 
+      {/* Espaçador: empurra os atalhos para o RODAPÉ (estilo nano/nvim/tmux). */}
+      <Box flexGrow={1} />
       <Footer
         showRetry={
           state.status === 'error-network' ||

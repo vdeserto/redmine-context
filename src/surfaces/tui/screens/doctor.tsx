@@ -152,8 +152,8 @@ export function DoctorScreen() {
   const connectivity = connectivityRow(status.connectivity, status.connectivityDetail);
 
   return (
-    <Box flexDirection="column" paddingX={1} paddingY={1}>
-      <Text bold color={theme.primary}>
+    <Box flexGrow={1} flexDirection="column" paddingX={1} paddingY={1}>
+      <Text color={theme.primary}>
         Doctor
       </Text>
       <Box marginTop={1} flexDirection="column">
@@ -164,10 +164,11 @@ export function DoctorScreen() {
         <StatusRow label="Conectividade" value={connectivity.value} tone={connectivity.tone} />
       </Box>
       <MediaBinariesSection />
+      <Box flexGrow={1} />
       <Box marginTop={1}>
         <Text color={theme.muted}>
           Pressione{' '}
-          <Text bold color={theme.accent}>
+          <Text color={theme.accent}>
             b
           </Text>{' '}
           para voltar.

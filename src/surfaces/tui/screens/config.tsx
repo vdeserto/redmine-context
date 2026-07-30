@@ -86,7 +86,7 @@ export function ConfigScreen() {
 
   return (
     <Box flexDirection="column" paddingX={1} paddingY={1}>
-      <Text bold color={theme.primary}>
+      <Text color={theme.primary}>
         Configuração
       </Text>
       <Box marginTop={1} flexDirection="column">
@@ -137,11 +137,11 @@ export function ConfigScreen() {
         <Box marginTop={1}>
           <Text color={theme.muted}>
             Pressione{' '}
-            <Text bold color={theme.accent}>
+            <Text color={theme.accent}>
               l
             </Text>{' '}
             para fazer logout (remove a credencial salva),{' '}
-            <Text bold color={theme.accent}>
+            <Text color={theme.accent}>
               b
             </Text>{' '}
             para voltar.
