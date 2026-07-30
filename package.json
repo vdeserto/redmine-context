@@ -1,6 +1,6 @@
 {
   "name": "redmine-context",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Consumidor de Redmine que entrega contexto completo de issues (texto + mídia extraída localmente) para qualquer LLM",
   "type": "module",
   "license": "MIT",
