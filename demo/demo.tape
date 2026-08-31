@@ -6,6 +6,11 @@
 #   npm run seed        # cria as fixtures, incl. o anexo demo/fixture-error.png
 #   npm run build
 #
+# Credencial (o ttyd herda o ambiente do processo vhs):
+#   export REDMINE_API_KEY=$(curl -s -u admin:admin \
+#     http://localhost:3080/users/current.json | python3 -c \
+#     'import json,sys; print(json.load(sys.stdin)["user"]["api_key"])')
+#
 # Gravar (a partir da raiz do repo):
 #   vhs demo/demo.tape
 #
@@ -24,6 +29,7 @@ Set Theme "Catppuccin Mocha"
 Set TypingSpeed 55ms
 
 Hide
+# REDMINE_URL/REDMINE_API_KEY vêm do ambiente de quem roda o vhs (ver cabeçalho).
 Type "export REDMINE_URL=http://localhost:3080" Enter
 Type "alias redmine-context='node dist/surfaces/cli/main.js --insecure'" Enter
 Type "clear" Enter
@@ -32,9 +38,11 @@ Show
 Sleep 800ms
 
 # --- Ato 1: a issue tem um print anexado, e o print é opaco -------------------
+# O recorte ancora em 'Nome:' porque o filename também aparece no histórico
+# ("Anexo #2: ∅ → fixture-error.png") e um grep pelo nome puro pegaria aquela linha.
 Type "# uma issue do Redmine com um print de erro anexado" Enter
 Sleep 1s
-Type "redmine-context issue 1 | grep -A4 'Anexos'" Enter
+Type "redmine-context issue 1 | grep -A3 'Nome:.*fixture-error'" Enter
 Sleep 3s
 
 Type "# o print é só um arquivo. o texto dentro dele some." Enter
@@ -45,8 +53,8 @@ Type "clear" Enter
 Show
 
 # --- Ato 2: o mesmo comando com --extract ------------------------------------
-Type "redmine-context issue 1 --extract | grep -A16 'fixture-error.png'" Enter
-Sleep 5s
+Type "redmine-context issue 1 --extract | grep -A14 'Nome:.*fixture-error'" Enter
+Sleep 6s
 
 Type "# o stack trace saiu de dentro da imagem." Enter
 Sleep 2s

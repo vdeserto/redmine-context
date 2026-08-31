@@ -2,6 +2,13 @@
 
 Consumidor de Redmine que entrega contexto completo de issues — texto e mídia (áudio/vídeo/imagem) extraída **100% localmente** — para qualquer LLM, via MCP server, CLI e TUI.
 
+![Demo: um print anexado a uma issue vira contexto pesquisável, sem nada sair da máquina](demo/redmine-context.gif)
+
+O print de erro anexado na issue é opaco para qualquer ferramenta. Com `--extract`,
+o `tesseract` roda **na sua máquina** e o stack trace passa a fazer parte do
+contexto — o mesmo bundle que o MCP entrega ao seu LLM. Nada é enviado para
+lugar nenhum. O roteiro dessa gravação é reprodutível: [`demo/demo.tape`](demo/demo.tape).
+
 > Planejamento: `documentation/development/PLAN.md` · Backlog: `documentation/development/BACKLOG.md` · Decisões: `documentation/adr/`
 
 ## Requisitos
