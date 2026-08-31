@@ -666,6 +666,22 @@ describe('MCP: get_last handler', () => {
     expect(deps.logs).toContain('Listando');
   });
 
+  // Guard defensivo: um stream que termina sem `result` não pode virar resposta
+  // vazia de sucesso — o cliente precisa saber que nada foi produzido.
+  it('stream sem resultado: devolve isError em vez de conteúdo vazio', async () => {
+    vi.mocked(core.resolveApiKey).mockResolvedValue('key');
+    vi.mocked(core.fetchLastIssues).mockReturnValue(
+      (async function* () {
+        yield { kind: 'progress', stage: 'list', message: 'Listando' };
+      })() as AsyncIterable<CoreEvent<LastIssuesResult>>,
+    );
+
+    const result = await createGetLastHandler(makeDeps())({});
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain('não produziu um bundle');
+  });
+
   // 401 vira mensagem orientada, não stack trace cru.
   it('401: devolve isError com mensagem de autenticação', async () => {
     vi.mocked(core.resolveApiKey).mockResolvedValue('key');

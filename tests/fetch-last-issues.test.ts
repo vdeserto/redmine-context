@@ -168,6 +168,28 @@ describe('fetchLastIssues: saída', () => {
   });
 });
 
+describe('fetchLastIssues: falhas (RULES #25 — failure case)', () => {
+  // A superfície mapeia erro→exit code/isError pelo TIPO; engolir aqui quebraria
+  // esse contrato e devolveria um bundle vazio como se fosse sucesso.
+  it('propaga erro da listagem sem emitir resultado', async () => {
+    vi.mocked(client.listIssues).mockRejectedValue(new Error('falha de rede'));
+
+    await expect(drain(fetchLastIssues({ ...BASE, format: 'md' }))).rejects.toThrow('falha de rede');
+    expect(client.getIssue).not.toHaveBeenCalled();
+  });
+
+  // Falha no meio do empacotamento (ex.: 404 numa issue que sumiu entre a
+  // listagem e o get) também precisa subir, não render um bundle parcial.
+  it('propaga erro do empacotamento de uma issue', async () => {
+    vi.mocked(client.listIssues).mockResolvedValue([issuePayload(1), issuePayload(2)]);
+    vi.mocked(client.getIssue).mockRejectedValue(new Error('404'));
+
+    await expect(
+      drain(fetchLastIssues({ ...BASE, format: 'md', count: 2 })),
+    ).rejects.toThrow('404');
+  });
+});
+
 describe('fetchLastIssues: instância sem issues', () => {
   // Edge case: instância vazia não é erro — devolve conteúdo legível e nenhum id.
   it('markdown: devolve um aviso legível e nenhum id', async () => {

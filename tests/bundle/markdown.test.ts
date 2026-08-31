@@ -259,6 +259,35 @@ describe('journal details: rótulos legíveis e ids resolvidos', () => {
     expect(md).toContain('- Status: #1 → Em andamento (#2)');
   });
 
+  // Cobre os demais atributos com ref no contrato (assigned_to é OPCIONAL —
+  // ausente na issue, cairia em `undefined` e não pode nomear nada).
+  it('nomeia o responsável e o autor pelo estado atual', () => {
+    const md = withDetails([
+      { property: 'attr', name: 'assigned_to_id', old_value: null, new_value: '6' },
+      { property: 'attr', name: 'author_id', old_value: '5', new_value: '5' },
+    ]);
+    expect(md).toContain('- Responsável: ∅ → Bruno Ops (#6)');
+    expect(md).toContain('- Autor: Ana Dev (#5) → Ana Dev (#5)');
+  });
+
+  it('nomeia projeto e tracker pelo estado atual', () => {
+    const md = withDetails([
+      { property: 'attr', name: 'project_id', old_value: '9', new_value: '1' },
+      { property: 'attr', name: 'tracker_id', old_value: '9', new_value: '1' },
+    ]);
+    expect(md).toContain('- Projeto: #9 → Core (#1)');
+    expect(md).toContain('- Tracker: #9 → Bug (#1)');
+  });
+
+  it('não nomeia responsável quando a issue não tem um', () => {
+    const issue = fullIssue();
+    delete issue.assigned_to;
+    issue.journals[1]!.details = [
+      { property: 'attr', name: 'assigned_to_id', old_value: null, new_value: '6' },
+    ];
+    expect(buildMarkdownBundle(issue, META)).toContain('- Responsável: ∅ → #6');
+  });
+
   // Valor histórico sem correspondência atual continua id — mas marcado com `#`,
   // que é o ponto: nunca sair como número solto.
   it('marca com # o id que não corresponde ao estado atual', () => {
