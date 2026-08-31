@@ -1,6 +1,17 @@
+import { createRequire } from 'node:module';
+
 export const TOOL_NAME = 'redmine-context';
-// Manter em sincronia com package.json (validado por tests/packaging/smoke-pack.test.ts).
-export const TOOL_VERSION = '1.0.0';
+
+// A versão é LIDA do package.json, nunca copiada à mão: o bump do changesets
+// altera só o manifesto, e uma constante literal aqui ficava para trás a cada
+// release (foi o que aconteceu no 1.0.0, com o gate de empacotamento reprovando).
+// `../package.json` resolve tanto de `src/` (dev/testes) quanto de `dist/` (pacote
+// publicado — o npm sempre inclui o manifesto no tarball).
+const requireJson = createRequire(import.meta.url);
+const pkg = requireJson('../package.json') as { version: string };
+
+/** Versão da ferramenta, sempre igual à `version` do package.json. */
+export const TOOL_VERSION = pkg.version;
 
 // Superfície pública do core: contrato de tipos + padrão de progresso (ADR-005).
 // As superfícies devem consumir o core somente por aqui / por ./contract.js.
