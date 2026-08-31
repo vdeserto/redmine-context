@@ -71,6 +71,18 @@ export interface SearchIssuesArgs {
   limit?: number | undefined;
 }
 
+/** Argumentos da tool `get_last` já validados pelo schema zod. */
+export interface GetLastArgs {
+  /** Critério de ordenação. Default: `updated`. */
+  order?: core.LastIssuesOrder | undefined;
+  /** Quantas issues empacotar. Default: 1; teto {@link core.LAST_MAX_COUNT}. */
+  count?: number | undefined;
+  /** Formato de saída: `markdown` (padrão) ou `json`. */
+  format?: McpFormat | undefined;
+  /** Extrai o texto (OCR) dos anexos e o embute nos bundles. Default: `false`. */
+  extract_attachments?: boolean | undefined;
+}
+
 /**
  * Dependências injetáveis do server MCP — permitem testar o handler sem tocar o
  * processo real nem a rede. Os defaults (ver {@link defaultMcpDeps}) apontam para
@@ -81,6 +93,8 @@ export interface McpServerDeps {
   fetchIssueBundle: typeof core.fetchIssueBundle;
   /** Orquestração de busca (filtros + full-text best-effort) do core. */
   searchIssues: typeof core.fetchIssueSearch;
+  /** Orquestração das últimas issues (ordem + bundle completo) do core. */
+  fetchLastIssues: typeof core.fetchLastIssues;
   /**
    * Orquestração get → normalize → extração CACHE-FIRST de UM anexo (M4-11 #70):
    * devolve o texto já cacheado na hora e `processing` (sem bloquear) para mídia
@@ -126,6 +140,9 @@ export const SEARCH_TOOL_NAME = 'search_issues';
 
 /** Nome canônico da tool de texto de anexo. */
 export const ATTACHMENT_TOOL_NAME = 'get_attachment_text';
+
+/** Nome canônico da tool das últimas issues. */
+export const LAST_TOOL_NAME = 'get_last';
 
 /** Limite default de resultados da tool `search_issues` (documentado no schema). */
 export const SEARCH_DEFAULT_LIMIT = 25;
@@ -181,6 +198,35 @@ const SEARCH_INPUT_SCHEMA = {
     .max(SEARCH_MAX_LIMIT)
     .optional()
     .describe(`Máximo de resultados paginados (default ${SEARCH_DEFAULT_LIMIT}, teto ${SEARCH_MAX_LIMIT})`),
+} as const;
+
+/** Schema zod da tool `get_last` (read-only, sem URL/host). */
+const LAST_INPUT_SCHEMA = {
+  order: z
+    .enum(['updated', 'created', 'priority'])
+    .optional()
+    .describe(
+      `Critério de ordenação: 'updated' (padrão — mexida mais recente), 'created' (entrada mais recente) ou 'priority' (mais urgente, desempatando pela mais recente)`,
+    ),
+  count: z
+    .number()
+    .int()
+    .positive()
+    .max(core.LAST_MAX_COUNT)
+    .optional()
+    .describe(
+      `Quantas issues empacotar (default ${core.LAST_DEFAULT_COUNT}, teto ${core.LAST_MAX_COUNT}). Cada item é um bundle COMPLETO — prefira search_issues para visões amplas.`,
+    ),
+  format: z
+    .enum(['markdown', 'json'])
+    .optional()
+    .describe("Formato de saída: 'markdown' (padrão) ou 'json' (sempre um array)"),
+  extract_attachments: z
+    .boolean()
+    .optional()
+    .describe(
+      'Extrai o texto (OCR) dos anexos de imagem e o embute nos bundles. Default: false (adiciona latência de download+OCR).',
+    ),
 } as const;
 
 /** Extrai uma mensagem legível de um erro desconhecido. */
@@ -401,6 +447,61 @@ export function createSearchIssuesHandler(
 }
 
 /**
+ * Cria o handler da tool `get_last`, testável isoladamente.
+ *
+ * Resolve a instância/credencial da env (nunca de argumentos) e delega à
+ * orquestração `fetchLastIssues`: ordena por `updated`/`created`/`priority` e
+ * devolve o BUNDLE COMPLETO das mais recentes — o atalho de um passo para
+ * "me dá a última issue", sem exigir que o cliente descubra o id antes.
+ *
+ * Usa `cacheFirst: true` como as demais tools: responde na hora com o texto de
+ * anexo já cacheado e marca o restante como `processing`, sem bloquear no OCR.
+ *
+ * @param deps - Ver {@link McpServerDeps}.
+ * @returns Função assíncrona que recebe os argumentos e devolve um CallToolResult.
+ * @example
+ * const handler = createGetLastHandler(defaultMcpDeps());
+ * const result = await handler({ order: 'priority', count: 3 });
+ */
+export function createGetLastHandler(
+  deps: McpServerDeps,
+): (args: GetLastArgs) => Promise<CallToolResult> {
+  return async (args: GetLastArgs): Promise<CallToolResult> => {
+    const resolved = await resolveInstance(deps);
+    if (!isResolved(resolved)) return resolved;
+    const { baseUrl, apiKey } = resolved;
+
+    const format: BundleFormat = args.format === 'json' ? 'json' : 'md';
+    try {
+      let content: string | undefined;
+      for await (const event of deps.fetchLastIssues({
+        baseUrl,
+        apiKey,
+        format,
+        order: args.order,
+        count: args.count,
+        toolVersion: deps.toolVersion,
+        insecure: deps.insecure ?? false,
+        extractAttachments: args.extract_attachments ?? false,
+        cacheFirst: true,
+      })) {
+        if (event.kind === 'progress') {
+          deps.log?.(event.message);
+        } else {
+          content = event.value.content;
+        }
+      }
+      if (content === undefined) {
+        return errorResult('A operação não produziu um bundle.');
+      }
+      return textResult(content);
+    } catch (error) {
+      return errorResult(typedSearchErrorMessage(error));
+    }
+  };
+}
+
+/**
  * Traduz erros da extração de anexo em mensagens claras e tipadas.
  *
  * 404/403/401 do Redmine e o {@link core.AttachmentNotFoundError} recebem texto
@@ -496,6 +597,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   const handler = createGetIssueContextHandler(deps);
   const searchHandler = createSearchIssuesHandler(deps);
   const attachmentHandler = createGetAttachmentTextHandler(deps);
+  const lastHandler = createGetLastHandler(deps);
 
   server.registerTool(
     TOOL_NAME,
@@ -533,6 +635,18 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     (args) => attachmentHandler(args),
   );
 
+  server.registerTool(
+    LAST_TOOL_NAME,
+    {
+      title: 'Últimas issues do Redmine',
+      description:
+        'Retorna o contexto completo das issues mais recentes da instância configurada (REDMINE_URL), ordenadas por updated (padrão), created ou priority. Atalho de um passo quando o id ainda não é conhecido — considera apenas issues abertas; use search_issues para filtros (projeto, status, responsável). Read-only.',
+      inputSchema: LAST_INPUT_SCHEMA,
+      annotations: { readOnlyHint: true, openWorldHint: true },
+    },
+    (args) => lastHandler(args),
+  );
+
   return server;
 }
 
@@ -541,6 +655,7 @@ export function defaultMcpDeps(): McpServerDeps {
   return {
     fetchIssueBundle: core.fetchIssueBundle,
     searchIssues: core.fetchIssueSearch,
+    fetchLastIssues: core.fetchLastIssues,
     fetchAttachmentText: core.fetchAttachmentTextCacheFirst,
     resolveApiKey: core.resolveApiKey,
     env: process.env,

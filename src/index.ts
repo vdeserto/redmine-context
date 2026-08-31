@@ -60,6 +60,19 @@ export {
 // Primitiva full-text `/search.json` (usada pela orquestração acima).
 export { searchIssues, type SearchIssuesOptions, type SearchIssuesPage } from './client/index.js';
 
+// Orquestração "últimas issues" (tool MCP `get_last` e comando CLI `last`):
+// ordena por updated/created/priority e devolve o BUNDLE COMPLETO das mais
+// recentes — atalho de um passo, sem exigir o id antes.
+export {
+  fetchLastIssues,
+  LAST_DEFAULT_ORDER,
+  LAST_DEFAULT_COUNT,
+  LAST_MAX_COUNT,
+  type LastIssuesOrder,
+  type FetchLastIssuesOptions,
+  type LastIssuesResult,
+} from './fetch-last-issues.js';
+
 // Client HTTP base (auth por api_key + retry) — usado por telas que precisam
 // montar suas próprias chamadas ao core sem uma orquestração pronta (ex.: a
 // home da TUI, #29, que lista "minhas issues" via `listIssues` abaixo).

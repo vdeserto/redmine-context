@@ -59,22 +59,31 @@ function stringFlag(parsed: ParsedArgs, name: string): string | undefined {
   return typeof value === 'string' ? value : undefined;
 }
 
-/**
- * Comando `issue <id>`: resolve credencial pela cascata, empacota e emite o
- * bundle (stdout ou `--out <dir>`), com progresso em stderr.
- *
- * @param parsed - Argumentos parseados (posicional `<id>` + flags).
- * @param deps - Dependências injetáveis (I/O, env).
- * @returns Exit code do processo.
- */
-export async function runIssue(parsed: ParsedArgs, deps: RunDeps): Promise<number> {
-  const idRaw = parsed.positionals[1];
-  const issueId = Number(idRaw);
-  if (idRaw === undefined || !Number.isInteger(issueId) || issueId <= 0) {
-    deps.stderr(`Id de issue inválido: ${idRaw ?? '(ausente)'}. Uso: redmine-context issue <id>\n`);
-    return EXIT.GENERIC;
-  }
+/** Instância + credencial já resolvidas para um comando da CLI. */
+interface CliInstance {
+  /** URL base efetiva da instância Redmine. */
+  baseUrl: string;
+  /** api_key resolvida pela cascata (keychain → arquivo → env). */
+  apiKey: string;
+  /** `true` quando `--insecure` permite http:// sem TLS. */
+  insecure: boolean;
+}
 
+/**
+ * Resolve instância e credencial para os comandos que falam com o Redmine.
+ *
+ * Ponto ÚNICO dessa cascata na CLI: `issue` e `last` a compartilham para que a
+ * regra de segurança do `allowEnvFallback` (#187) não possa divergir entre
+ * comandos.
+ *
+ * @param parsed - Argumentos parseados (usa `--url` e `--insecure`).
+ * @param deps - Dependências injetáveis (I/O, env, settings).
+ * @returns A instância resolvida, ou o exit code a devolver em caso de falha.
+ */
+async function resolveInstanceAndKey(
+  parsed: ParsedArgs,
+  deps: RunDeps,
+): Promise<CliInstance | number> {
   // Instância: --url → REDMINE_URL → URL persistida no login (#187).
   const persistedUrl = deps.settings ? await deps.settings.getInstanceUrl() : undefined;
   const resolved = core.resolveInstanceUrl({
@@ -110,6 +119,29 @@ export async function runIssue(parsed: ParsedArgs, deps: RunDeps): Promise<numbe
     deps.stderr(`Nenhuma credencial encontrada para ${baseUrl}.\nRode: redmine-context login\n`);
     return EXIT.AUTH;
   }
+
+  return { baseUrl, apiKey, insecure };
+}
+
+/**
+ * Comando `issue <id>`: resolve credencial pela cascata, empacota e emite o
+ * bundle (stdout ou `--out <dir>`), com progresso em stderr.
+ *
+ * @param parsed - Argumentos parseados (posicional `<id>` + flags).
+ * @param deps - Dependências injetáveis (I/O, env).
+ * @returns Exit code do processo.
+ */
+export async function runIssue(parsed: ParsedArgs, deps: RunDeps): Promise<number> {
+  const idRaw = parsed.positionals[1];
+  const issueId = Number(idRaw);
+  if (idRaw === undefined || !Number.isInteger(issueId) || issueId <= 0) {
+    deps.stderr(`Id de issue inválido: ${idRaw ?? '(ausente)'}. Uso: redmine-context issue <id>\n`);
+    return EXIT.GENERIC;
+  }
+
+  const instance = await resolveInstanceAndKey(parsed, deps);
+  if (typeof instance === 'number') return instance;
+  const { baseUrl, apiKey, insecure } = instance;
 
   const format: BundleFormat = parsed.flags.get('json') === true ? 'json' : 'md';
   const outDir = stringFlag(parsed, 'out');
@@ -147,6 +179,87 @@ export async function runIssue(parsed: ParsedArgs, deps: RunDeps): Promise<numbe
     } else {
       deps.stdout(content);
     }
+    return 0;
+  } catch (error) {
+    deps.stderr(`${messageOf(error)}\n`);
+    return exitCodeForError(error);
+  }
+}
+
+/** Ordens aceitas pelo `--order` do comando `last` (espelha `LastIssuesOrder`). */
+const LAST_ORDERS = ['updated', 'created', 'priority'] as const;
+
+/** Type guard de `--order` contra {@link LAST_ORDERS}. */
+function isLastOrder(value: string): value is core.LastIssuesOrder {
+  return (LAST_ORDERS as readonly string[]).includes(value);
+}
+
+/**
+ * Comando `last`: emite o bundle completo das issues mais recentes, sem exigir
+ * que o usuário saiba o id.
+ *
+ * A ordem é um parâmetro com default: `updated` (mexida mais recente), `created`
+ * (entrada mais recente) ou `priority` (mais urgente, desempatando pela mais
+ * recente). Considera apenas issues ABERTAS — o `search_issues` do MCP é a
+ * superfície com filtros (projeto, status, responsável).
+ *
+ * Sem `--out`: o conteúdo (potencialmente vários bundles) vai para stdout, e o
+ * progresso para stderr, como no `issue`.
+ *
+ * @param parsed - Argumentos parseados (`--order`, `--count`, `--json`, `--extract`).
+ * @param deps - Dependências injetáveis (I/O, env).
+ * @returns Exit code do processo.
+ */
+export async function runLast(parsed: ParsedArgs, deps: RunDeps): Promise<number> {
+  const orderRaw = stringFlag(parsed, 'order');
+  if (orderRaw !== undefined && !isLastOrder(orderRaw)) {
+    deps.stderr(`Ordem inválida: ${orderRaw}. Use: ${LAST_ORDERS.join(', ')}.\n`);
+    return EXIT.GENERIC;
+  }
+
+  const countRaw = stringFlag(parsed, 'count');
+  let count: number | undefined;
+  if (countRaw !== undefined) {
+    const value = Number(countRaw);
+    if (!Number.isInteger(value) || value < 1 || value > core.LAST_MAX_COUNT) {
+      deps.stderr(
+        `Valor inválido para --count: ${countRaw}. Use um inteiro entre 1 e ${core.LAST_MAX_COUNT}.\n`,
+      );
+      return EXIT.GENERIC;
+    }
+    count = value;
+  }
+
+  const instance = await resolveInstanceAndKey(parsed, deps);
+  if (typeof instance === 'number') return instance;
+  const { baseUrl, apiKey, insecure } = instance;
+
+  const format: BundleFormat = parsed.flags.get('json') === true ? 'json' : 'md';
+  const extractAttachments = parsed.flags.get('extract') === true;
+
+  try {
+    let content: string | undefined;
+    for await (const event of core.fetchLastIssues({
+      baseUrl,
+      apiKey,
+      format,
+      order: orderRaw,
+      count,
+      toolVersion: core.TOOL_VERSION,
+      insecure,
+      extractAttachments,
+    })) {
+      if (event.kind === 'progress') {
+        deps.stderr(`... ${event.message}\n`);
+      } else {
+        content = event.value.content;
+      }
+    }
+    if (content === undefined) {
+      deps.stderr('Operação não produziu um bundle.\n');
+      return EXIT.GENERIC;
+    }
+    deps.stdout(content);
     return 0;
   } catch (error) {
     deps.stderr(`${messageOf(error)}\n`);

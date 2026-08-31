@@ -11,6 +11,7 @@ vi.mock('../../../src/index.js', async (importOriginal) => {
   return {
     ...actual,
     fetchIssueBundle: vi.fn(),
+    fetchLastIssues: vi.fn(),
     resolveApiKey: vi.fn(),
     loginWithPassword: vi.fn(),
     createCredentialCascade: vi.fn(),
@@ -325,6 +326,82 @@ describe('CLI: comando issue', () => {
       const code = await run(['issue', '42', '--url', 'https://x'], h.deps);
       expect(code).toBe(expected);
     }
+  });
+});
+
+describe('CLI: comando last', () => {
+  /** Stream de últimas issues: um progresso + o resultado. */
+  function lastStream(content: string, format: 'md' | 'json' = 'md') {
+    return (async function* () {
+      yield { kind: 'progress', stage: 'list', message: 'Listando as 1 issue(s)' };
+      yield { kind: 'result', value: { issueIds: [42], order: 'updated', format, content } };
+    })() as AsyncIterable<CoreEvent<core.LastIssuesResult>>;
+  }
+
+  it('imprime o bundle em stdout e o progresso em stderr', async () => {
+    vi.mocked(core.resolveApiKey).mockResolvedValue('key');
+    vi.mocked(core.fetchLastIssues).mockReturnValue(lastStream('MD-BODY'));
+    const h = harness();
+
+    const code = await run(['last', '--url', 'https://redmine.example'], h.deps);
+
+    expect(code).toBe(0);
+    expect(h.stdout()).toBe('MD-BODY');
+    expect(h.stderr()).toContain('Listando');
+    expect(core.fetchLastIssues).toHaveBeenCalledWith(
+      expect.objectContaining({ format: 'md', baseUrl: 'https://redmine.example', apiKey: 'key' }),
+    );
+  });
+
+  it('repassa --order e --count ao core', async () => {
+    vi.mocked(core.resolveApiKey).mockResolvedValue('key');
+    vi.mocked(core.fetchLastIssues).mockReturnValue(lastStream('MD'));
+    const h = harness();
+
+    const code = await run(
+      ['last', '--order', 'priority', '--count', '3', '--url', 'https://x'],
+      h.deps,
+    );
+
+    expect(code).toBe(0);
+    expect(core.fetchLastIssues).toHaveBeenCalledWith(
+      expect.objectContaining({ order: 'priority', count: 3 }),
+    );
+  });
+
+  it('--json seleciona o formato JSON', async () => {
+    vi.mocked(core.resolveApiKey).mockResolvedValue('key');
+    vi.mocked(core.fetchLastIssues).mockReturnValue(lastStream('[]', 'json'));
+    const h = harness();
+
+    const code = await run(['last', '--json', '--url', 'https://x'], h.deps);
+
+    expect(code).toBe(0);
+    expect(core.fetchLastIssues).toHaveBeenCalledWith(expect.objectContaining({ format: 'json' }));
+  });
+
+  // Uso inválido falha ANTES de tocar a rede/credencial — erro cedo e barato.
+  it('--order inválido: exit 1, mensagem com as opções e nenhuma chamada ao core', async () => {
+    const h = harness();
+
+    const code = await run(['last', '--order', 'xpto', '--url', 'https://x'], h.deps);
+
+    expect(code).toBe(1);
+    expect(h.stderr()).toContain('Ordem inválida');
+    expect(h.stderr()).toContain('priority');
+    expect(core.fetchLastIssues).not.toHaveBeenCalled();
+  });
+
+  // Diferente do core (que reduz silenciosamente), a CLI recusa: na linha de
+  // comando o valor foi digitado, então vale avisar em vez de mudar por baixo.
+  it.each([['0'], ['99'], ['abc']])('--count inválido (%s): exit 1', async (value) => {
+    const h = harness();
+
+    const code = await run(['last', '--count', value, '--url', 'https://x'], h.deps);
+
+    expect(code).toBe(1);
+    expect(h.stderr()).toContain('--count');
+    expect(core.fetchLastIssues).not.toHaveBeenCalled();
   });
 });
 

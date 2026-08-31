@@ -9,7 +9,8 @@
 // fixtures), sobe o MCP server como subprocess e chama `get_issue_context` via
 // um cliente JSON-RPC stdio mínimo (initialize → initialized → tools/call),
 // compara MCP vs CLI byte-a-byte, mede o tempo issue→bundle (cache quente),
-// testa a recusa de http:// sem --insecure e faz o teardown (down -v).
+// exercita `last`/`get_last` (ordem, contagem e paridade MCP vs CLI), testa a
+// recusa de http:// sem --insecure e faz o teardown (down -v).
 //
 // Os helpers comuns (run/api/cliIssue/MCP/grep/expectativas) vêm de
 // scripts/lib/e2e-shared.mjs (dedup — gap #87). Este arquivo mantém só o que é
@@ -50,10 +51,11 @@ const NO_TEARDOWN = /^(1|true)$/i.test(process.env.E2E_NO_TEARDOWN ?? '');
 /** Loga uma linha em stderr (o eslint proíbe console; script de infra). */
 const log = (/** @type {string} */ msg) => process.stderr.write(`[e2e] ${msg}\n`);
 
-const { fetchAdminApiKey, resolveIds, cliIssue, mcpGetIssueContext, grepAll } = createE2E({
-  log,
-  mcpClientName: 'e2e-mcp-client',
-});
+const { fetchAdminApiKey, resolveIds, cliIssue, cliLast, mcpGetIssueContext, mcpGetLast, grepAll } =
+  createE2E({
+    log,
+    mcpClientName: 'e2e-mcp-client',
+  });
 
 /** Roda um `docker compose` sobre o compose de teste (com stderr espelhado). */
 function compose(/** @type {string[]} */ args, /** @type {{ env?: NodeJS.ProcessEnv }} */ opts = {}) {
@@ -159,7 +161,48 @@ async function main() {
       log(`MCP == CLI para a issue ${id} (byte-idêntico, ${mcp.text.length} bytes)`);
     }
 
-    // 9) Segurança: http:// sem --insecure deve ser recusado (exit != 0).
+    // 9) get_last / CLI last: ordem, contagem e paridade MCP vs CLI.
+    // `created` desc é o critério ESTÁVEL aqui: o seed cria as 3 fixtures em
+    // sequência, então a de maior id é sempre a mais nova. (`updated` dependeria
+    // da ordem de enriquecimento e tornaria a asserção frágil.)
+    const newestId = Math.max(...ids);
+    const lastCli = await cliLast(apiKey, ['--order', 'created', '--count', '3']);
+    if (lastCli.code !== 0) fail(`CLI last saiu ${lastCli.code}: ${lastCli.stderr}`);
+    if (!lastCli.stdout.startsWith(`# Issue #${newestId}`)) {
+      fail(`last --order created não começou pela issue mais nova (#${newestId})`);
+    }
+    for (const id of ids) {
+      if (!lastCli.stdout.includes(`# Issue #${id}`)) {
+        fail(`last --count 3 não trouxe a issue ${id}`);
+      }
+    }
+    log(`CLI last --order created --count 3: 3 bundles, mais nova primeiro (#${newestId}) OK`);
+
+    const mcpLast = await mcpGetLast(apiKey, { order: 'created', count: 3, format: 'markdown' });
+    if (mcpLast.isError) fail(`MCP get_last retornou isError: ${mcpLast.text}`);
+    if (mcpLast.text !== lastCli.stdout) {
+      process.stderr.write(`\n[MCP get_last]\n${mcpLast.text}\n[CLI last]\n${lastCli.stdout}\n`);
+      fail('MCP get_last != CLI last (bundles divergem)');
+    }
+    log(`MCP get_last == CLI last (byte-idêntico, ${mcpLast.text.length} bytes)`);
+
+    // Contrato do formato json de `last`: SEMPRE array, mesmo com um único item.
+    const lastJson = await cliLast(apiKey, ['--json']);
+    if (lastJson.code !== 0) fail(`CLI last --json saiu ${lastJson.code}: ${lastJson.stderr}`);
+    /** @type {unknown} */
+    let parsedLast;
+    try {
+      parsedLast = JSON.parse(lastJson.stdout);
+    } catch {
+      process.stderr.write(`\n[last --json]\n${lastJson.stdout}\n`);
+      fail('last --json não produziu JSON válido');
+    }
+    if (!Array.isArray(parsedLast) || parsedLast.length !== 1) {
+      fail(`last --json: esperava um array de 1 bundle, obtive ${JSON.stringify(parsedLast).slice(0, 120)}`);
+    }
+    log('CLI last --json: array JSON válido com 1 bundle OK');
+
+    // 10) Segurança: http:// sem --insecure deve ser recusado (exit != 0).
     const insecureTest = await run('node', [CLI, 'issue', String(ids[0]), '--url', BASE], {
       env: { REDMINE_API_KEY: apiKey },
       timeoutMs: 120000,
@@ -171,7 +214,10 @@ async function main() {
     log(`segurança OK: http:// recusado (exit ${insecureTest.code}, TLS obrigatório)`);
 
     log('E2E OK: todas as validações passaram.');
-    log(`RESUMO: tempo_warm=${elapsedMs}ms; ids=${ids.join(',')}; mcp==cli em 3 issues.`);
+    log(
+      `RESUMO: tempo_warm=${elapsedMs}ms; ids=${ids.join(',')}; mcp==cli em 3 issues; ` +
+        `get_last==last (order=created, count=3).`,
+    );
   } finally {
     if (!NO_TEARDOWN) {
       log('teardown: docker compose down -v ...');

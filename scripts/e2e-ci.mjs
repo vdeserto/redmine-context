@@ -49,7 +49,7 @@ import {
 /** Loga uma linha em stderr (o eslint proíbe console; script de infra). */
 const log = (/** @type {string} */ msg) => process.stderr.write(`[e2e-ci] ${msg}\n`);
 
-const { fetchAdminApiKey, resolveIds, cliIssue, mcpGetIssueContext, grepAll } = createE2E({
+const { fetchAdminApiKey, resolveIds, cliIssue, cliLast, mcpGetIssueContext, mcpGetLast, grepAll } = createE2E({
   log,
   mcpClientName: 'e2e-ci-mcp-client',
 });
@@ -117,6 +117,24 @@ async function main() {
     log(`MCP == CLI para a issue ${id} (byte-idêntico, ${mcp.text.length} bytes)`);
   }
 
+  // 2b) get_last == CLI last, com ordem determinística.
+  // `created` desc é o critério ESTÁVEL: o seed cria as fixtures em sequência,
+  // então a de maior id é sempre a mais nova (`updated` dependeria da ordem de
+  // enriquecimento).
+  const newestId = Math.max(...ids);
+  const lastCli = await cliLast(apiKey, ['--order', 'created', '--count', '3']);
+  if (lastCli.code !== 0) fail(`CLI last saiu ${lastCli.code}: ${lastCli.stderr}`);
+  if (!lastCli.stdout.startsWith(`# Issue #${newestId}`)) {
+    fail(`last --order created não começou pela issue mais nova (#${newestId})`);
+  }
+  const mcpLast = await mcpGetLast(apiKey, { order: 'created', count: 3, format: 'markdown' });
+  if (mcpLast.isError) fail(`MCP get_last retornou isError: ${mcpLast.text}`);
+  if (mcpLast.text !== lastCli.stdout) {
+    process.stderr.write(`\n[MCP get_last]\n${mcpLast.text}\n[CLI last]\n${lastCli.stdout}\n`);
+    fail('MCP get_last != CLI last (bundles divergem)');
+  }
+  log(`MCP get_last == CLI last (byte-idêntico, mais nova primeiro #${newestId})`);
+
   // 3a) Segurança: http:// SEM --insecure deve ser recusado (exit != 0).
   const refused = await run('node', [CLI, 'issue', String(ids[0]), '--url', BASE], {
     env: { REDMINE_API_KEY: apiKey },
@@ -131,8 +149,11 @@ async function main() {
   // 3b) Segurança: anexo > limite pulado (downloader real, pré-check por filesize).
   await assertAttachmentOverLimitSkipped(ids[0], apiKey);
 
-  log('E2E OK: CLI valida o seed, MCP == CLI, http:// recusado e anexo > limite pulado.');
-  log(`RESUMO: ids=${ids.join(',')}; mcp==cli em 3 issues; 2 cenários de segurança verdes.`);
+  log('E2E OK: CLI valida o seed, MCP == CLI, get_last == last, http:// recusado e anexo > limite pulado.');
+  log(
+    `RESUMO: ids=${ids.join(',')}; mcp==cli em 3 issues; get_last==last; ` +
+      `2 cenários de segurança verdes.`,
+  );
 }
 
 main().catch((err) => {
