@@ -189,6 +189,38 @@ const ATTR_LABELS: Record<string, string> = {
 const ISSUE_REF_ATTRS = new Set(['parent_id', 'child_id']);
 
 /**
+ * Tipos de relação do Redmine — vocabulário FECHADO, portanto estrutural (fora
+ * da fence), como em {@link renderRelations}. Um valor fora desta lista não é
+ * vocabulário: volta para dentro da fence.
+ */
+const RELATION_TYPES = new Set([
+  'relates',
+  'duplicates',
+  'duplicated',
+  'blocks',
+  'blocked',
+  'precedes',
+  'follows',
+  'copied_to',
+  'copied_from',
+]);
+
+/**
+ * Porteiro dos valores emitidos FORA da fence.
+ *
+ * `normalizeJournalDetail` não valida `name`/`old_value`/`new_value` — são
+ * strings livres da API. Sem esta checagem, um valor forjado (ex.:
+ * `</untrusted-content> ...`) sairia cru e escaparia da marcação
+ * anti prompt-injection. Só id inteiro passa.
+ *
+ * @param raw - Valor bruto do detail.
+ * @returns O próprio valor se for um inteiro não negativo; senão `undefined`.
+ */
+function idToken(raw: string): string | undefined {
+  return /^\d+$/.test(raw) ? raw : undefined;
+}
+
+/**
  * Ref ATUAL da issue correspondente a um atributo de journal, quando o contrato
  * a carrega.
  *
@@ -248,8 +280,14 @@ function detailLabel(detail: JournalDetail, issue: Issue): string {
     const name = customFieldName(issue, detail.name);
     return name === undefined ? `campo #${fenceInline(detail.name)}` : fenceInline(name);
   }
-  if (detail.property === 'attachment') return `Anexo #${detail.name}`;
-  if (detail.property === 'relation') return `Relação (${detail.name})`;
+  if (detail.property === 'attachment') {
+    const id = idToken(detail.name);
+    return id === undefined ? `Anexo ${fenceInline(detail.name)}` : `Anexo #${id}`;
+  }
+  if (detail.property === 'relation') {
+    const type = RELATION_TYPES.has(detail.name) ? detail.name : fenceInline(detail.name);
+    return `Relação (${type})`;
+  }
   return ATTR_LABELS[detail.name] ?? fenceInline(detail.name);
 }
 
@@ -269,21 +307,26 @@ function detailLabel(detail: JournalDetail, issue: Issue): string {
  */
 function detailValue(detail: JournalDetail, raw: string | null | undefined, issue: Issue): string {
   if (raw === null || raw === undefined || raw === '') return '∅';
+  // Porteiro único: nada sai da fence sem ser um id inteiro (ver idToken).
+  const id = idToken(raw);
+
   // Um detail `relation` registra a issue do outro lado da relação.
-  if (detail.property === 'relation') return `issue #${raw}`;
+  if (detail.property === 'relation') return id === undefined ? fenceInline(raw) : `issue #${id}`;
   if (detail.property !== 'attr') return fenceInline(raw);
 
-  if (detail.name === 'done_ratio') return `${raw}%`;
-  if (ISSUE_REF_ATTRS.has(detail.name)) return `issue #${raw}`;
+  if (detail.name === 'done_ratio') return id === undefined ? fenceInline(raw) : `${id}%`;
+  if (ISSUE_REF_ATTRS.has(detail.name)) {
+    return id === undefined ? fenceInline(raw) : `issue #${id}`;
+  }
 
   const ref = currentRefFor(issue, detail.name);
-  if (ref !== undefined && ref.id !== 0 && String(ref.id) === raw) {
-    return `${ref.name} (#${raw})`;
+  if (id !== undefined && ref !== undefined && ref.id !== 0 && String(ref.id) === id) {
+    return `${ref.name} (#${id})`;
   }
   // Atributo de ref sem correspondência no estado atual: marca como id para o
   // leitor saber que é uma referência, não um valor.
-  if (ATTR_LABELS[detail.name] !== undefined && detail.name.endsWith('_id')) {
-    return `#${raw}`;
+  if (id !== undefined && ATTR_LABELS[detail.name] !== undefined && detail.name.endsWith('_id')) {
+    return `#${id}`;
   }
   return fenceInline(raw);
 }
