@@ -159,6 +159,15 @@ export function normalizeIssue(
   if (description !== undefined && description !== '') issue.description = description;
   const assignedTo = normalizeRef(record.assigned_to);
   if (assignedTo !== undefined) issue.assigned_to = assignedTo;
+  // Planejamento (contrato: done_ratio/start_date/due_date). O Redmine devolve
+  // `null` nas datas não preenchidas — `asString` já as descarta, mantendo o
+  // campo AUSENTE em vez de vazio, como o resto do normalize.
+  const doneRatio = asNumber(record.done_ratio);
+  if (doneRatio !== undefined) issue.done_ratio = doneRatio;
+  const startDate = asString(record.start_date);
+  if (startDate !== undefined && startDate !== '') issue.start_date = startDate;
+  const dueDate = asString(record.due_date);
+  if (dueDate !== undefined && dueDate !== '') issue.due_date = dueDate;
   const parent = normalizeParent(record.parent);
   if (parent !== undefined) issue.parent = parent;
   // Ausência da chave `watchers` = degradação (403/include ausente): campo omitido.

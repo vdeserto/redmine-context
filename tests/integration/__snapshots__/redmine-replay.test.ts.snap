@@ -50,6 +50,7 @@ exports[`replay offline das fixtures do Redmine seedado (M5-06 #81) > JSON canô
       "untrusted": true,
       "value": "Issue base 1 gerada pelo seed (rc-fixtures). Texto simples para smoke tests."
     },
+    "done_ratio": 0,
     "id": 1,
     "journals": [
       {
@@ -162,6 +163,7 @@ exports[`replay offline das fixtures do Redmine seedado (M5-06 #81) > JSON canô
         "relation_type": "relates"
       }
     ],
+    "start_date": "2026-07-27",
     "status": {
       "id": 1,
       "name": "New"
@@ -205,6 +207,8 @@ RC Fixture: issue base 1
 - **Responsável:** (nenhum)
 - **Criada em:** 2026-07-27T01:52:16Z
 - **Atualizada em:** 2026-07-27T01:52:18Z
+- **Progresso:** 0%
+- **Início:** 2026-07-27
 
 ## Descrição
 
@@ -228,22 +232,22 @@ Nota:
 ### Journal #2 — 2026-07-27T01:52:17Z — Redmine Admin
 
 Alterações:
-  - <untrusted-content>1</untrusted-content>: <untrusted-content></untrusted-content> → <untrusted-content>Alta</untrusted-content>
+  - <untrusted-content>Severidade</untrusted-content>: ∅ → <untrusted-content>Alta</untrusted-content>
 
 ### Journal #8 — 2026-07-27T01:52:17Z — Redmine Admin
 
 Alterações:
-  - <untrusted-content>child_id</untrusted-content>: ∅ → <untrusted-content>3</untrusted-content>
+  - Sub-issue: ∅ → issue #3
 
 ### Journal #9 — 2026-07-27T01:52:18Z — Redmine Admin
 
 Alterações:
-  - <untrusted-content>relates</untrusted-content>: ∅ → <untrusted-content>2</untrusted-content>
+  - Relação (relates): ∅ → issue #2
 
 ### Journal #11 — 2026-07-27T01:52:18Z — Redmine Admin
 
 Alterações:
-  - <untrusted-content>1</untrusted-content>: ∅ → <untrusted-content>fixture-note.txt</untrusted-content>
+  - Anexo #1: ∅ → <untrusted-content>fixture-note.txt</untrusted-content>
 
 ## Relações
 
@@ -288,6 +292,8 @@ RC Fixture: issue base 2
 - **Responsável:** (nenhum)
 - **Criada em:** 2026-07-27T01:52:16Z
 - **Atualizada em:** 2026-07-27T01:52:17Z
+- **Progresso:** 0%
+- **Início:** 2026-07-27
 
 ## Descrição
 
@@ -311,12 +317,12 @@ Nota:
 ### Journal #4 — 2026-07-27T01:52:17Z — Redmine Admin
 
 Alterações:
-  - <untrusted-content>1</untrusted-content>: <untrusted-content></untrusted-content> → <untrusted-content>Média</untrusted-content>
+  - <untrusted-content>Severidade</untrusted-content>: ∅ → <untrusted-content>Média</untrusted-content>
 
 ### Journal #10 — 2026-07-27T01:52:18Z — Redmine Admin
 
 Alterações:
-  - <untrusted-content>relates</untrusted-content>: ∅ → <untrusted-content>1</untrusted-content>
+  - Relação (relates): ∅ → issue #1
 
 ## Relações
 
@@ -359,6 +365,8 @@ RC Fixture: issue base 3
 - **Responsável:** (nenhum)
 - **Criada em:** 2026-07-27T01:52:16Z
 - **Atualizada em:** 2026-07-27T01:52:17Z
+- **Progresso:** 0%
+- **Início:** 2026-07-27
 
 ## Descrição
 
@@ -382,12 +390,12 @@ Nota:
 ### Journal #6 — 2026-07-27T01:52:17Z — Redmine Admin
 
 Alterações:
-  - <untrusted-content>1</untrusted-content>: <untrusted-content></untrusted-content> → <untrusted-content>Baixa</untrusted-content>
+  - <untrusted-content>Severidade</untrusted-content>: ∅ → <untrusted-content>Baixa</untrusted-content>
 
 ### Journal #7 — 2026-07-27T01:52:17Z — Redmine Admin
 
 Alterações:
-  - <untrusted-content>parent_id</untrusted-content>: ∅ → <untrusted-content>1</untrusted-content>
+  - Issue pai: ∅ → issue #1
 
 ## Relações
 

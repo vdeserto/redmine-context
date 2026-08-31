@@ -79,6 +79,34 @@ describe('normalizeIssue: payload completo (caso esperado)', () => {
     expect(issue.updated_on).toBe('2026-07-20T12:00:00Z');
   });
 
+  // Regressão: os três campos de planejamento estavam no contrato e no
+  // renderHeader do bundle, mas o normalize nunca os preenchia — "Progresso",
+  // "Início" e "Prazo" jamais apareciam nos Metadados.
+  it('mapeia os campos de planejamento (done_ratio, start_date, due_date)', () => {
+    const issue = normalizeIssue(fullPayload());
+
+    expect(issue.done_ratio).toBe(30);
+    expect(issue.start_date).toBe('2026-07-18');
+    expect(issue.due_date).toBe('2026-07-25');
+  });
+
+  // O Redmine devolve `null` em data não preenchida: campo AUSENTE, não vazio.
+  it('omite datas de planejamento nulas em vez de gravar string vazia', () => {
+    const payload = { ...fullPayload(), start_date: null, due_date: null };
+    const issue = normalizeIssue(payload as unknown as RedmineIssuePayload);
+
+    expect(issue.start_date).toBeUndefined();
+    expect(issue.due_date).toBeUndefined();
+    expect('start_date' in issue).toBe(false);
+  });
+
+  // Edge case: 0 é progresso legítimo e não pode cair no default de ausência.
+  it('preserva done_ratio igual a 0', () => {
+    const issue = normalizeIssue({ ...fullPayload(), done_ratio: 0 });
+
+    expect(issue.done_ratio).toBe(0);
+  });
+
   it('preserva details[] brutos dos journals sem interpretar', () => {
     const issue = normalizeIssue(fullPayload());
 
