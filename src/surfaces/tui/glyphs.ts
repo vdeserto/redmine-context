@@ -76,6 +76,10 @@ export interface Glyphs {
   readonly maskBullet: string;
   /** Frames do spinner (`components/spinner.tsx`). */
   readonly spinnerFrames: readonly string[];
+  /** Célula PREENCHIDA da barra de progresso (`components/gauge.tsx`). */
+  readonly gaugeFull: string;
+  /** Célula VAZIA da barra de progresso (`components/gauge.tsx`). */
+  readonly gaugeEmpty: string;
 }
 
 /** Glyphs Unicode — terminais modernos (Windows Terminal, iTerm, etc.). */
@@ -87,6 +91,8 @@ export const UNICODE_GLYPHS: Glyphs = {
   arrowDown: '↓',
   maskBullet: '•',
   spinnerFrames: ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'],
+  gaugeFull: '█',
+  gaugeEmpty: '░',
 };
 
 /** Fallback ASCII puro — terminal legado do Windows (sem mojibake). */
@@ -98,6 +104,8 @@ export const ASCII_GLYPHS: Glyphs = {
   arrowDown: 'v',
   maskBullet: '*',
   spinnerFrames: ['|', '/', '-', '\\'],
+  gaugeFull: '#',
+  gaugeEmpty: '-',
 };
 
 /**

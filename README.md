@@ -267,6 +267,8 @@ redmine-context doctor    # exit 0 se tudo presente, 1 se faltar algum
 
 ## TUI interativa
 
+![A TUI: banner com o gradiente da paleta ativa e a tela de Aparência trocando entre as 12 paletas](demo/tui.gif)
+
 `redmine-context` **sem argumentos** (num terminal interativo) abre a interface
 de texto completa — mesma credencial e mesmo core da CLI/MCP:
 

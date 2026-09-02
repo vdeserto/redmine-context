@@ -40,6 +40,7 @@
 import { Box, Text, useInput } from 'ink';
 import { useRef } from 'react';
 
+import { Gauge } from '../components/gauge.js';
 import { Spinner } from '../components/spinner.js';
 import { glyphs } from '../glyphs.js';
 import { useListNavigation } from '../hooks/use-list-navigation.js';
@@ -65,6 +66,14 @@ function JobRow({ job, selected, theme }: { job: Job; selected: boolean; theme: 
           vira "preto" ilegível (#190). Destaque só por cor + a setinha. */}
       <Text {...(selected ? { color: theme.primary } : {})}>{job.label}</Text>
       <Text color={theme.muted}> [{jobStatusLabel(job.status)}]</Text>
+      {/* A barra só aparece quando o produtor do job informa progresso — jobs
+          sem medição continuam com o status textual, sem barra "fake" em 0%. */}
+      {job.progress !== undefined ? (
+        <>
+          <Text> </Text>
+          <Gauge progress={job.progress} color={jobStatusColor(theme, job.status)} trackColor={theme.muted} />
+        </>
+      ) : null}
       {selected ? (
         <Text color={theme.muted}>
           {' '}

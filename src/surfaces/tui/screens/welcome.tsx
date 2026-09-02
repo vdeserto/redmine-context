@@ -20,7 +20,11 @@ import { useCallback, useRef, useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 
 import { resolveApiKey, TOOL_NAME, TOOL_VERSION } from '../../../index.js';
+import { bannerLines, selectBanner } from '../banner.js';
+import { GradientBanner } from '../components/gradient-banner.js';
 import { GradientText } from '../components/gradient-text.js';
+import { isUnicodeSupported } from '../glyphs.js';
+import { useTerminalWidth } from '../hooks/use-terminal-width.js';
 import { useEnvFallbackAllowed } from '../instance.js';
 import { useNavigation } from '../navigation.js';
 import { useTheme } from '../theme.js';
@@ -39,6 +43,10 @@ function instanceFromEnv(env: NodeJS.ProcessEnv): string | undefined {
 export function WelcomeScreen() {
   const { navigate } = useNavigation();
   const theme = useTheme();
+  // Banner responsivo: a arte só entra quando cabe na largura atual e o terminal
+  // renderiza os blocos Unicode (ver ../banner.ts).
+  const variant = selectBanner(useTerminalWidth(), isUnicodeSupported());
+  const gradient = theme.gradient ?? [theme.primary];
   const [checking, setChecking] = useState(false);
 
   // Handlers ESTÁVEIS (useCallback+refs) — mesmo padrão do TextInput/app.tsx:
@@ -98,8 +106,19 @@ export function WelcomeScreen() {
 
   return (
     <Box flexDirection="column" paddingX={1} paddingY={1}>
-      <GradientText colors={theme.gradient ?? [theme.primary]}>{TOOL_NAME}</GradientText>
-      <Text color={theme.muted}>v{TOOL_VERSION}</Text>
+      {/* Banner: arte ASCII quando o terminal comporta; senão, o nome em texto
+          (mesmo tratamento de degradação do spinner — ver ../banner.ts). */}
+      {variant === 'plain' ? (
+        <GradientText colors={gradient}>{TOOL_NAME}</GradientText>
+      ) : (
+        <GradientBanner lines={bannerLines(variant)} colors={gradient} />
+      )}
+      {/* O nome em TEXTO acompanha a versão mesmo com a arte na tela: a arte é
+          decorativa e ilegível para leitor de tela, e é por este texto que a
+          tela inicial é identificável (inclusive nos testes de roteamento). */}
+      <Text color={theme.muted}>
+        {variant === 'plain' ? '' : `${TOOL_NAME} `}v{TOOL_VERSION}
+      </Text>
       <Box marginTop={1}>
         <Text>Contexto completo de issues do Redmine, pronto para qualquer LLM.</Text>
       </Box>

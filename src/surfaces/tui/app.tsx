@@ -262,7 +262,16 @@ function AppShell() {
   // topo e a tela ocupa o resto (`flexGrow`); cada tela ancora seus atalhos no
   // rodapé com um espaçador `flexGrow` (estilo nano/nvim/tmux).
   return (
-    <Box flexDirection="column" minHeight={rows}>
+    // Moldura única da aplicação (#190 — pacote estético): a borda vive AQUI e
+    // não nas telas, então nenhuma tela precisa saber que existe uma. As duas
+    // linhas da borda saem do minHeight para o conteúdo não estourar a altura do
+    // terminal (o que empurraria o topo para fora no modo full-screen).
+    <Box
+      flexDirection="column"
+      minHeight={Math.max(1, rows - 2)}
+      borderStyle="round"
+      borderColor={theme.border}
+    >
       <Breadcrumb stack={stack} />
       {armed ? (
         <Box paddingX={1} marginBottom={1}>
