@@ -31,6 +31,23 @@ import {
   normalizeRef,
 } from './helpers.js';
 
+/**
+ * Normaliza quebras de linha para `\n`.
+ *
+ * O Redmine devolve texto com CRLF (o editor web grava assim). Um `\r` que
+ * sobrevive até a renderização é ATIVO, não decorativo: no terminal ele devolve
+ * o cursor ao início da linha e o texto seguinte SOBRESCREVE o anterior — foi o
+ * que comia o começo dos parágrafos na tela de detalhe ("Solicita-se que a
+ * área..." aparecia como "que a área..."). Em Markdown/JSON o `\r` também é
+ * ruído que não representa nada do conteúdo.
+ *
+ * @param text - Texto derivado do Redmine (descrição, nota de journal).
+ * @returns O mesmo texto com `\r\n` e `\r` isolados convertidos em `\n`.
+ */
+function normalizeNewlines(text: string): string {
+  return text.replace(/\r\n?/g, '\n');
+}
+
 /** Ref placeholder para campos obrigatórios do contrato ausentes no payload. */
 // Congelado: instância compartilhada entre todas as issues degradadas — mutação
 // acidental corromperia o placeholder globalmente (modo strict lança).
@@ -78,7 +95,7 @@ function normalizeJournal(value: unknown): Journal | undefined {
   };
   // notes só é significativa quando não-vazia (Redmine devolve "" em journal de detalhe).
   const notes = asString(record.notes);
-  if (notes !== undefined && notes !== '') journal.notes = notes;
+  if (notes !== undefined && notes !== '') journal.notes = normalizeNewlines(notes);
   const user = normalizeRef(record.user);
   if (user !== undefined) journal.user = user;
   return journal;
@@ -156,7 +173,9 @@ export function normalizeIssue(
   };
 
   const description = asString(record.description);
-  if (description !== undefined && description !== '') issue.description = description;
+  if (description !== undefined && description !== '') {
+    issue.description = normalizeNewlines(description);
+  }
   const assignedTo = normalizeRef(record.assigned_to);
   if (assignedTo !== undefined) issue.assigned_to = assignedTo;
   // Planejamento (contrato: done_ratio/start_date/due_date). O Redmine devolve

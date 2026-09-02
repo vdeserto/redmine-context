@@ -267,3 +267,27 @@ describe('normalizeIssue: payload malformado (failure case, NUNCA crash)', () =>
     expect(issue.attachments).toEqual([]);
   });
 });
+
+describe('normalizeIssue: quebras de linha (CRLF)', () => {
+  // O Redmine grava CRLF pelo editor web. Um `\r` que chega à renderização
+  // devolve o cursor ao início da linha no terminal e o texto seguinte
+  // SOBRESCREVE o anterior — comia o começo dos parágrafos na TUI.
+  it('converte CRLF e CR isolado em \\n na descrição', () => {
+    const payload = {
+      ...fullPayload(),
+      description: 'Primeira linha\r\n\r\nSegunda linha\rTerceira',
+    };
+    const issue = normalizeIssue(payload as unknown as RedmineIssuePayload);
+
+    expect(issue.description).toBe('Primeira linha\n\nSegunda linha\nTerceira');
+    expect(issue.description).not.toContain('\r');
+  });
+
+  it('converte CRLF nas notas de journal', () => {
+    const payload = fullPayload();
+    (payload.journals as { notes?: string }[])[0]!.notes = 'linha 1\r\nlinha 2';
+    const issue = normalizeIssue(payload);
+
+    expect(issue.journals[0]?.notes).toBe('linha 1\nlinha 2');
+  });
+});

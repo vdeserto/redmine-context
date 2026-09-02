@@ -30,3 +30,9 @@ export {
   type SearchIssuesPage,
   type RedmineSearchHit,
 } from './search.js';
+
+export {
+  fetchEnumerations,
+  clearEnumerationsCache,
+  type RedmineEnumerations,
+} from './enumerations.js';

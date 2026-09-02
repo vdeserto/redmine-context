@@ -311,7 +311,8 @@ describe('journal details: rótulos legíveis e ids resolvidos', () => {
   // Custom field removido da issue: sem nome a resolver, deixa claro que é um id.
   it('custom field desconhecido vira "campo #id", não um número solto', () => {
     const md = withDetails([{ property: 'cf', name: '404', old_value: 'a', new_value: 'b' }]);
-    expect(md).toContain('campo #<untrusted-content>404</untrusted-content>:');
+    // O id é numérico validado, então dispensa fence — o rótulo sai limpo.
+    expect(md).toContain('campo #404:');
   });
 
   it('acrescenta % ao progresso', () => {

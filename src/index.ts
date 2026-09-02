@@ -127,6 +127,26 @@ export {
   type JsonBundleSource,
 } from './bundle/index.js';
 
+// Semântica dos journal details (rótulos legíveis + ids resolvidos) — UMA fonte
+// de verdade para o bundle Markdown e para a tela de detalhe da TUI, que antes
+// mostrava os ids crus (`status_id: 12 → 7`). Cada superfície aplica sua própria
+// política de confiança sobre as partes devolvidas.
+export {
+  collectUsers,
+  journalDetailLabel,
+  journalDetailValue,
+  type DetailLookups,
+  type DetailPart,
+} from './bundle/journal-detail.js';
+
+// Enumerações da instância (`id → nome`) — resolvem os ids HISTÓRICOS que o
+// estado atual da issue não cobre. Memoizado por instância; degrada em silêncio.
+export {
+  fetchEnumerations,
+  clearEnumerationsCache,
+  type RedmineEnumerations,
+} from './client/index.js';
+
 // Erros HTTP tipados — usados pelas superfícies para mapear exit codes (ADR-005).
 export {
   RedmineHttpError,

@@ -19,7 +19,8 @@ import {
   type BackgroundExtractor,
 } from './cache-first.js';
 import { DiskCacheStore } from './cache/index.js';
-import { createHttpClient, getIssue } from './client/index.js';
+import { collectUsers } from './bundle/journal-detail.js';
+import { createHttpClient, fetchEnumerations, getIssue } from './client/index.js';
 import type { CoreEvent, ExtractionResult, ProgressEvent, Result } from './contract.js';
 import { extractIssueAttachments } from './extract-issue-attachments.js';
 import { createDefaultRegistry } from './extract/index.js';
@@ -155,8 +156,23 @@ export async function* fetchIssueBundle(
     }
   }
 
+  // Dicionários da instância: sem eles os ids HISTÓRICOS do journal saem como
+  // `#id`. `fetchEnumerations` é memoizado por instância e degrada em silêncio,
+  // então o custo é uma vez por processo e a falha nunca derruba o bundle. Só
+  // vale a busca quando existe histórico para traduzir.
+  let lookups;
+  if (issue.journals.length > 0) {
+    const enums = await fetchEnumerations(http, baseUrl);
+    lookups = { ...enums, user: collectUsers(issue) };
+  }
+
   yield progress('bundle', `Empacotando bundle (${format})`);
-  const meta = { baseUrl, toolVersion, ...(extractions !== undefined ? { extractions } : {}) };
+  const meta = {
+    baseUrl,
+    toolVersion,
+    ...(extractions !== undefined ? { extractions } : {}),
+    ...(lookups !== undefined ? { lookups } : {}),
+  };
   const content =
     format === 'json' ? buildJsonBundle(issue, meta).canonical : buildMarkdownBundle(issue, meta);
 

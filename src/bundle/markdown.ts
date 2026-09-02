@@ -29,9 +29,14 @@ import type {
   IssueChild,
   IssueRelation,
   Journal,
-  JournalDetail,
   RedmineRef,
 } from '../contract.js';
+import {
+  journalDetailLabel,
+  journalDetailValue,
+  type DetailLookups,
+  type DetailPart,
+} from './journal-detail.js';
 import { byId, compareJournals, type ExtractionMap } from './json.js';
 
 /** Metadados de empacotamento do bundle Markdown (sem timestamp — determinismo). */
@@ -45,7 +50,16 @@ export interface MarkdownBundleMeta {
    * a seção "Texto extraído" — o texto de OCR dentro de `<untrusted-content>`.
    */
   extractions?: ExtractionMap;
+  /**
+   * Dicionários `id → nome` da instância (status/tracker/prioridade/usuários).
+   * Sem eles, os ids HISTÓRICOS do journal saem como `#id` — legível, mas sem
+   * significado ("não sei o que é status 12").
+   */
+  lookups?: DetailLookups;
 }
+
+/** Placeholder de valor ausente numa alteração de journal. */
+const ABSENT_VALUE = '∅';
 
 /** Placeholder para ref degradada (id 0) — nunca um nome vazio silencioso. */
 const UNKNOWN_REF = '(desconhecido)';
@@ -155,200 +169,27 @@ function renderCustomFields(issue: Issue): string {
 }
 
 /**
- * Rótulos legíveis dos atributos padrão do Redmine em `journal.details`.
+ * Renderiza os `details` de um journal.
  *
- * A API grava o nome CRU da coluna (`status_id`, `done_ratio`) — "status_id: 1 → 2"
- * não diz nada a quem lê o bundle, humano ou LLM. Estes rótulos são texto NOSSO
- * (vocabulário fixo do Redmine, não conteúdo da instância), então ficam FORA da
- * fence, como os demais nomes de campo padrão do documento.
+ * A SEMÂNTICA (rótulos, ids resolvidos) vem de `./journal-detail.js`, compartilhada
+ * com a TUI; aqui só se aplica a política deste formato: o que a semântica marcar
+ * como não confiável entra na fence anti prompt-injection.
  */
-const ATTR_LABELS: Record<string, string> = {
-  subject: 'Assunto',
-  description: 'Descrição',
-  project_id: 'Projeto',
-  tracker_id: 'Tracker',
-  status_id: 'Status',
-  priority_id: 'Prioridade',
-  author_id: 'Autor',
-  assigned_to_id: 'Responsável',
-  category_id: 'Categoria',
-  fixed_version_id: 'Versão',
-  parent_id: 'Issue pai',
-  child_id: 'Sub-issue',
-  done_ratio: 'Progresso',
-  start_date: 'Início',
-  due_date: 'Prazo',
-  estimated_hours: 'Estimativa',
-  is_private: 'Privada',
-};
-
-/**
- * Atributos cujo valor é o número de OUTRA issue (não um id de enumeração).
- * Recebem a notação `issue #n`, a mesma das seções Relações/Sub-issues.
- */
-const ISSUE_REF_ATTRS = new Set(['parent_id', 'child_id']);
-
-/**
- * Tipos de relação do Redmine — vocabulário FECHADO, portanto estrutural (fora
- * da fence), como em {@link renderRelations}. Um valor fora desta lista não é
- * vocabulário: volta para dentro da fence.
- */
-const RELATION_TYPES = new Set([
-  'relates',
-  'duplicates',
-  'duplicated',
-  'blocks',
-  'blocked',
-  'precedes',
-  'follows',
-  'copied_to',
-  'copied_from',
-]);
-
-/**
- * Porteiro dos valores emitidos FORA da fence.
- *
- * `normalizeJournalDetail` não valida `name`/`old_value`/`new_value` — são
- * strings livres da API. Sem esta checagem, um valor forjado (ex.:
- * `</untrusted-content> ...`) sairia cru e escaparia da marcação
- * anti prompt-injection. Só id inteiro passa.
- *
- * @param raw - Valor bruto do detail.
- * @returns O próprio valor se for um inteiro não negativo; senão `undefined`.
- */
-function idToken(raw: string): string | undefined {
-  return /^\d+$/.test(raw) ? raw : undefined;
-}
-
-/**
- * Ref ATUAL da issue correspondente a um atributo de journal, quando o contrato
- * a carrega.
- *
- * Usada só para NOMEAR um id (ver {@link detailValue}); nunca para inferir
- * estado histórico.
- *
- * @param issue - Issue normalizada.
- * @param attr - Nome cru do atributo (ex.: `status_id`).
- * @returns A ref atual, ou `undefined` se o atributo não tiver uma no contrato.
- */
-function currentRefFor(issue: Issue, attr: string): RedmineRef | undefined {
-  switch (attr) {
-    case 'project_id':
-      return issue.project;
-    case 'tracker_id':
-      return issue.tracker;
-    case 'status_id':
-      return issue.status;
-    case 'priority_id':
-      return issue.priority;
-    case 'author_id':
-      return issue.author;
-    case 'assigned_to_id':
-      return issue.assigned_to;
-    default:
-      return undefined;
-  }
-}
-
-/**
- * Nome do custom field a partir do id: num detail `cf`, o `name` é o ID do campo
- * (não o rótulo), e sai como um número solto sem esta resolução.
- *
- * @param issue - Issue normalizada (fonte dos `custom_fields`).
- * @param rawId - `detail.name` de um detail `cf`.
- * @returns O nome do campo, ou `undefined` se o id não constar na issue.
- */
-function customFieldName(issue: Issue, rawId: string): string | undefined {
-  const id = Number(rawId);
-  if (!Number.isInteger(id)) return undefined;
-  return issue.custom_fields.find((field) => field.id === id)?.name;
-}
-
-/**
- * Rótulo de um detail de journal.
- *
- * Nome de campo padrão vira rótulo legível (fora da fence, texto nosso); nome de
- * custom field é resolvido pelo id e vai DENTRO da fence, como em
- * {@link renderCustomFields} — é conteúdo definido pelo admin da instância.
- *
- * @param detail - Detalhe do journal.
- * @param issue - Issue normalizada (resolve custom fields).
- * @returns O rótulo pronto para a linha de alteração.
- */
-function detailLabel(detail: JournalDetail, issue: Issue): string {
-  if (detail.property === 'cf') {
-    const name = customFieldName(issue, detail.name);
-    return name === undefined ? `campo #${fenceInline(detail.name)}` : fenceInline(name);
-  }
-  if (detail.property === 'attachment') {
-    const id = idToken(detail.name);
-    return id === undefined ? `Anexo ${fenceInline(detail.name)}` : `Anexo #${id}`;
-  }
-  if (detail.property === 'relation') {
-    const type = RELATION_TYPES.has(detail.name) ? detail.name : fenceInline(detail.name);
-    return `Relação (${type})`;
-  }
-  return ATTR_LABELS[detail.name] ?? fenceInline(detail.name);
-}
-
-/**
- * Renderiza um lado (antes/depois) de uma alteração.
- *
- * Ids de referência recebem `#` para nunca parecerem um número solto e, quando
- * batem com o estado ATUAL da issue, ganham o nome junto. A comparação com o
- * estado atual é segura: só o último journal que alterou um campo tem
- * `new_value` igual ao valor corrente, então nenhum valor histórico é nomeado
- * incorretamente.
- *
- * @param detail - Detalhe do journal (define como o valor é interpretado).
- * @param raw - Valor bruto (`old_value` ou `new_value`).
- * @param issue - Issue normalizada (resolve refs).
- * @returns O valor renderizado, ou `∅` para ausência.
- */
-function detailValue(detail: JournalDetail, raw: string | null | undefined, issue: Issue): string {
-  if (raw === null || raw === undefined || raw === '') return '∅';
-  // Porteiro único: nada sai da fence sem ser um id inteiro (ver idToken).
-  const id = idToken(raw);
-
-  // Um detail `relation` registra a issue do outro lado da relação.
-  if (detail.property === 'relation') return id === undefined ? fenceInline(raw) : `issue #${id}`;
-  if (detail.property !== 'attr') return fenceInline(raw);
-
-  if (detail.name === 'done_ratio') return id === undefined ? fenceInline(raw) : `${id}%`;
-  if (ISSUE_REF_ATTRS.has(detail.name)) {
-    return id === undefined ? fenceInline(raw) : `issue #${id}`;
-  }
-
-  const ref = currentRefFor(issue, detail.name);
-  if (id !== undefined && ref !== undefined && ref.id !== 0 && String(ref.id) === id) {
-    return `${ref.name} (#${id})`;
-  }
-  // Atributo de ref sem correspondência no estado atual: marca como id para o
-  // leitor saber que é uma referência, não um valor.
-  if (id !== undefined && ATTR_LABELS[detail.name] !== undefined && detail.name.endsWith('_id')) {
-    return `#${id}`;
-  }
-  return fenceInline(raw);
-}
-
-/**
- * Renderiza os `details` de um journal, resolvendo rótulos e ids.
- *
- * Em details de "description"/"subject" os values carregam o texto completo do
- * campo — conteúdo derivado, que segue dentro da fence.
- */
-function renderJournalDetails(journal: Journal, issue: Issue): string[] {
+function renderJournalDetails(journal: Journal, issue: Issue, lookups: DetailLookups | undefined): string[] {
+  const fence = (part: DetailPart | undefined): string =>
+    part === undefined ? ABSENT_VALUE : part.trusted ? part.text : fenceInline(part.text);
   return journal.details.map((detail) => {
-    const from = detailValue(detail, detail.old_value, issue);
-    const to = detailValue(detail, detail.new_value, issue);
-    return `  - ${detailLabel(detail, issue)}: ${from} → ${to}`;
+    const label = fence(journalDetailLabel(detail, issue));
+    const from = fence(journalDetailValue(detail, detail.old_value, issue, lookups));
+    const to = fence(journalDetailValue(detail, detail.new_value, issue, lookups));
+    return `  - ${label}: ${from} → ${to}`;
   });
 }
 
 /** Renderiza uma entrada de journal: cabeçalho estrutural + nota (fenced). */
-function renderJournal(journal: Journal, issue: Issue): string {
+function renderJournal(journal: Journal, issue: Issue, lookups: DetailLookups | undefined): string {
   const lines: string[] = [`### Journal #${journal.id} — ${journal.created_on} — ${optionalRefName(journal.user)}`, ''];
-  const details = renderJournalDetails(journal, issue);
+  const details = renderJournalDetails(journal, issue, lookups);
   if (details.length > 0) lines.push('Alterações:', ...details, '');
   if (journal.notes !== undefined) lines.push('Nota:', fenceBlock(journal.notes), '');
   if (details.length === 0 && journal.notes === undefined) lines.push('_(sem alterações ou notas)_', '');
@@ -356,9 +197,11 @@ function renderJournal(journal: Journal, issue: Issue): string {
 }
 
 /** Seção de histórico — journals em ordem cronológica estável (created_on, id). */
-function renderJournals(issue: Issue): string {
+function renderJournals(issue: Issue, lookups: DetailLookups | undefined): string {
   if (issue.journals.length === 0) return '## Histórico\n\n_(nenhum)_';
-  const ordered = [...issue.journals].sort(compareJournals).map((journal) => renderJournal(journal, issue));
+  const ordered = [...issue.journals]
+    .sort(compareJournals)
+    .map((journal) => renderJournal(journal, issue, lookups));
   return ['## Histórico', ...ordered].join('\n\n');
 }
 
@@ -491,7 +334,7 @@ export function buildMarkdownBundle(issue: Issue, meta: MarkdownBundleMeta): str
     renderHeader(issue),
     renderDescription(issue),
     renderCustomFields(issue),
-    renderJournals(issue),
+    renderJournals(issue, meta.lookups),
     renderRelations(issue),
     renderParent(issue),
     renderChildren(issue),

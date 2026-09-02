@@ -30,12 +30,15 @@ import { useCallback, useEffect, useState } from 'react';
 
 import {
   createHttpClient,
+  collectUsers,
+  fetchEnumerations,
   getIssue,
   normalizeIssue,
   resolveApiKey,
   RedmineForbiddenError,
   RedmineNotFoundError,
   type CredentialCascadeOptions,
+  type DetailLookups,
   type HttpClient,
   type Issue,
 } from '../../../index.js';
@@ -53,7 +56,7 @@ import { ReAuthAbortedError, useAuthGuard } from './use-auth-guard.js';
 export type IssueDetailState =
   | { status: 'no-selection' }
   | { status: 'loading' }
-  | { status: 'loaded'; issue: Issue }
+  | { status: 'loaded'; issue: Issue; lookups: DetailLookups }
   | { status: 'error-network'; message: string }
   | { status: 'error-forbidden'; message: string }
   | { status: 'error-not-found'; message: string }
@@ -71,6 +74,11 @@ export interface UseIssueDetailOptions {
   getIssue?: typeof getIssue;
   /** Normaliza o payload bruto no modelo `Issue`; default `normalizeIssue` do core. */
   normalizeIssue?: typeof normalizeIssue;
+  /**
+   * Busca as enumerações da instância (`id → nome`); default
+   * `fetchEnumerations` do core. Injetável para os testes não tocarem a rede.
+   */
+  fetchEnumerations?: typeof fetchEnumerations;
 }
 
 /** Valor retornado pelo hook. */
@@ -107,6 +115,7 @@ export function useIssueDetail(
   const buildClient = options.createHttpClient ?? createHttpClient;
   const fetchIssue = options.getIssue ?? getIssue;
   const normalize = options.normalizeIssue ?? normalizeIssue;
+  const loadEnumerations = options.fetchEnumerations ?? fetchEnumerations;
   // Mandatório (M2-13, #36): ver o JSDoc do módulo.
   const { guard } = useAuthGuard();
   // SEGURANÇA (#187): origem config (URL persistida) → sem env-key instance-agnóstica.
@@ -159,7 +168,19 @@ export function useIssueDetail(
         const payload = await guard(() => fetchIssue(http, issueId));
         if (cancelled) return;
 
-        setState({ status: 'loaded', issue: normalize(payload) });
+        const issue = normalize(payload);
+        // Dicionários `id → nome` para o histórico: sem eles a tela mostra
+        // `Status: #12 → Atribuída (#7)` — metade ilegível. `fetchEnumerations`
+        // é memoizado por instância (uma vez por sessão da TUI) e degrada em
+        // silêncio; os usuários saem do próprio payload, sem rede.
+        const enums = issue.journals.length > 0 ? await loadEnumerations(http, instanceUrl) : undefined;
+        if (cancelled) return;
+
+        setState({
+          status: 'loaded',
+          issue,
+          lookups: { ...(enums ?? {}), user: collectUsers(issue) },
+        });
       } catch (cause) {
         if (cancelled) return;
         if (cause instanceof RedmineNotFoundError) {
