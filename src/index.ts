@@ -1,6 +1,17 @@
+import { createRequire } from 'node:module';
+
 export const TOOL_NAME = 'redmine-context';
-// Manter em sincronia com package.json (validado por tests/packaging/smoke-pack.test.ts).
-export const TOOL_VERSION = '1.0.0';
+
+// A versão é LIDA do package.json, nunca copiada à mão: o bump do changesets
+// altera só o manifesto, e uma constante literal aqui ficava para trás a cada
+// release (foi o que aconteceu no 1.0.0, com o gate de empacotamento reprovando).
+// `../package.json` resolve tanto de `src/` (dev/testes) quanto de `dist/` (pacote
+// publicado — o npm sempre inclui o manifesto no tarball).
+const requireJson = createRequire(import.meta.url);
+const pkg = requireJson('../package.json') as { version: string };
+
+/** Versão da ferramenta, sempre igual à `version` do package.json. */
+export const TOOL_VERSION = pkg.version;
 
 // Superfície pública do core: contrato de tipos + padrão de progresso (ADR-005).
 // As superfícies devem consumir o core somente por aqui / por ./contract.js.
@@ -60,6 +71,19 @@ export {
 // Primitiva full-text `/search.json` (usada pela orquestração acima).
 export { searchIssues, type SearchIssuesOptions, type SearchIssuesPage } from './client/index.js';
 
+// Orquestração "últimas issues" (tool MCP `get_last` e comando CLI `last`):
+// ordena por updated/created/priority e devolve o BUNDLE COMPLETO das mais
+// recentes — atalho de um passo, sem exigir o id antes.
+export {
+  fetchLastIssues,
+  LAST_DEFAULT_ORDER,
+  LAST_DEFAULT_COUNT,
+  LAST_MAX_COUNT,
+  type LastIssuesOrder,
+  type FetchLastIssuesOptions,
+  type LastIssuesResult,
+} from './fetch-last-issues.js';
+
 // Client HTTP base (auth por api_key + retry) — usado por telas que precisam
 // montar suas próprias chamadas ao core sem uma orquestração pronta (ex.: a
 // home da TUI, #29, que lista "minhas issues" via `listIssues` abaixo).
@@ -102,6 +126,26 @@ export {
   type JsonBundleMeta,
   type JsonBundleSource,
 } from './bundle/index.js';
+
+// Semântica dos journal details (rótulos legíveis + ids resolvidos) — UMA fonte
+// de verdade para o bundle Markdown e para a tela de detalhe da TUI, que antes
+// mostrava os ids crus (`status_id: 12 → 7`). Cada superfície aplica sua própria
+// política de confiança sobre as partes devolvidas.
+export {
+  collectUsers,
+  journalDetailLabel,
+  journalDetailValue,
+  type DetailLookups,
+  type DetailPart,
+} from './bundle/journal-detail.js';
+
+// Enumerações da instância (`id → nome`) — resolvem os ids HISTÓRICOS que o
+// estado atual da issue não cobre. Memoizado por instância; degrada em silêncio.
+export {
+  fetchEnumerations,
+  clearEnumerationsCache,
+  type RedmineEnumerations,
+} from './client/index.js';
 
 // Erros HTTP tipados — usados pelas superfícies para mapear exit codes (ADR-005).
 export {

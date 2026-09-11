@@ -2,6 +2,13 @@
 
 Consumidor de Redmine que entrega contexto completo de issues — texto e mídia (áudio/vídeo/imagem) extraída **100% localmente** — para qualquer LLM, via MCP server, CLI e TUI.
 
+![Demo: um print anexado a uma issue vira contexto pesquisável, sem nada sair da máquina](demo/redmine-context.gif)
+
+O print de erro anexado na issue é opaco para qualquer ferramenta. Com `--extract`,
+o `tesseract` roda **na sua máquina** e o stack trace passa a fazer parte do
+contexto — o mesmo bundle que o MCP entrega ao seu LLM. Nada é enviado para
+lugar nenhum. O roteiro dessa gravação é reprodutível: [`demo/demo.tape`](demo/demo.tape).
+
 > Planejamento: `documentation/development/PLAN.md` · Backlog: `documentation/development/BACKLOG.md` · Decisões: `documentation/adr/`
 
 ## Requisitos
@@ -142,9 +149,14 @@ redmine-context issue 42            # usa a instância salva no login (ou --url/
 #    --extract liga o OCR dos anexos de imagem e embute o texto no bundle
 #    (requer tesseract; ver Extração de mídia abaixo).
 
+# 2b) last — quando você NÃO sabe o id: imprime o bundle da issue mais recente.
+#     --order updated (padrão) | created | priority   --count <n> (padrão 1, teto 5)
+redmine-context last
+redmine-context last --order priority --count 3
+
 # 3) mcp add — registra o MCP server no seu cliente (ex.: Claude) para expor as
-#    tools read-only get_issue_context, search_issues e get_attachment_text,
-#    usando a mesma credencial da cascata.
+#    tools read-only get_issue_context, search_issues, get_attachment_text e
+#    get_last, usando a mesma credencial da cascata.
 claude mcp add redmine-context \
   --env REDMINE_URL=https://redmine.example \
   -- npx -y redmine-context mcp
@@ -188,11 +200,12 @@ Detalhes e passos manuais (adicionar `NPM_TOKEN`, tornar o repo público, dispar
 
 ## MCP server (stdio)
 
-O subcomando `redmine-context mcp` sobe um servidor [MCP](https://modelcontextprotocol.io) sobre stdio, expondo três tools read-only:
+O subcomando `redmine-context mcp` sobe um servidor [MCP](https://modelcontextprotocol.io) sobre stdio, expondo quatro tools read-only:
 
 - `get_issue_context(issue_id: number, format?: 'markdown' | 'json', extract_attachments?: boolean)` — busca a issue na instância configurada, normaliza e retorna o bundle (Markdown por padrão). Com `extract_attachments: true`, embute o texto (OCR) dos anexos de imagem no bundle (default `false`, pois adiciona latência de download+OCR).
 - `search_issues(query?, project_id?, status_id?, assigned_to_id?, updated_on?, limit?)` — busca issues por filtros estruturados e, opcionalmente, texto livre (`query`, best-effort via `/search`); retorna uma lista compacta paginada.
 - `get_attachment_text(issue_id: number, attachment_id: number)` — retorna o texto extraído (OCR, com cache) de um anexo, dentro de uma fence de conteúdo não confiável. Anexo não processável retorna o status/motivo legível (`skipped`/`unsupported`/`failed`), nunca um erro genérico.
+- `get_last(order?, count?, format?, extract_attachments?)` — retorna o **bundle completo** das issues mais recentes, sem exigir o id. `order` é `updated` (padrão, mexida mais recente), `created` (entrada mais recente) ou `priority` (mais urgente, desempatando pela mais recente); `count` vai até 5 (padrão 1). Considera apenas issues **abertas** — para filtrar por projeto/status/responsável, use `search_issues`. Em `format: 'json'` a saída é **sempre um array**, pois a tool devolve uma coleção.
 
 A instância vem sempre da configuração do processo (`REDMINE_URL` + cascata de credencial, `REDMINE_API_KEY` no modo headless): **nenhuma tool aceita URL/host arbitrário**. Erros 403/404 e credencial ausente retornam um erro MCP claro (`isError`). O stdout é reservado ao protocolo; logs vão para stderr.
 
@@ -213,8 +226,8 @@ Passe a instância via `--env` (aplicado ao ambiente do servidor), por exemplo
 `claude mcp add redmine-context --env REDMINE_URL=https://redmine.example -- npx -y redmine-context mcp`.
 Configure o ambiente do servidor com `REDMINE_URL` e `REDMINE_API_KEY` (ou rode
 `redmine-context login` para gravar a credencial na cascata). Com a integração
-ativa, o cliente ganha as tools read-only `get_issue_context`, `search_issues` e
-`get_attachment_text` (detalhadas acima).
+ativa, o cliente ganha as tools read-only `get_issue_context`, `search_issues`,
+`get_attachment_text` e `get_last` (detalhadas acima).
 
 ## Extração de mídia (OCR)
 
@@ -253,6 +266,8 @@ redmine-context doctor    # exit 0 se tudo presente, 1 se faltar algum
 
 
 ## TUI interativa
+
+![A TUI: banner com o gradiente da paleta ativa e a tela de Aparência trocando entre as 12 paletas](demo/tui.gif)
 
 `redmine-context` **sem argumentos** (num terminal interativo) abre a interface
 de texto completa — mesma credencial e mesmo core da CLI/MCP:

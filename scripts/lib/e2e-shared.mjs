@@ -174,13 +174,25 @@ export function createE2E({ log, mcpClientName = 'e2e-mcp-client' }) {
   }
 
   /**
+   * Roda a CLI `last` (Markdown por padrão) contra o ambiente.
+   * @param {string} apiKey @param {string[]} [extraArgs] ex.: ['--order','created']
+   */
+  async function cliLast(apiKey, extraArgs = []) {
+    return run('node', [CLI, 'last', '--url', BASE, '--insecure', ...extraArgs], {
+      env: { REDMINE_API_KEY: apiKey, REDMINE_URL: BASE },
+      timeoutMs: DEFAULT_CLI_TIMEOUT_MS,
+    });
+  }
+
+  /**
    * Cliente JSON-RPC stdio mínimo: sobe `mcp` como subprocess, faz o handshake e
-   * chama `get_issue_context`. Sem dependência — lê o stdout linha-a-linha.
+   * chama UMA tool. Sem dependência — lê o stdout linha-a-linha.
    * @param {string} apiKey
-   * @param {{ issue_id: number, format?: 'markdown'|'json' }} args
+   * @param {string} toolName nome da tool (ex.: 'get_issue_context', 'get_last')
+   * @param {Record<string, unknown>} args
    * @returns {Promise<{ text: string, isError: boolean }>}
    */
-  function mcpGetIssueContext(apiKey, args) {
+  function mcpCallTool(apiKey, toolName, args) {
     return new Promise((resolve, reject) => {
       const child = spawn('node', [CLI, 'mcp'], {
         cwd: ROOT,
@@ -239,7 +251,7 @@ export function createE2E({ log, mcpClientName = 'e2e-mcp-client' }) {
         if (init.error) throw new Error(`initialize falhou: ${JSON.stringify(init.error)}`);
         send({ jsonrpc: '2.0', method: 'notifications/initialized' });
 
-        const call = await request('tools/call', { name: 'get_issue_context', arguments: args });
+        const call = await request('tools/call', { name: toolName, arguments: args });
         if (call.error) throw new Error(`tools/call falhou: ${JSON.stringify(call.error)}`);
         const content = call.result?.content ?? [];
         const text = content
@@ -271,7 +283,29 @@ export function createE2E({ log, mcpClientName = 'e2e-mcp-client' }) {
     return needles.filter((n) => hay.includes(n));
   }
 
-  return { fetchAdminApiKey, resolveIds, cliIssue, mcpGetIssueContext, grepAll };
+  /**
+   * Atalho da tool `get_issue_context` sobre {@link mcpCallTool}.
+   * @param {string} apiKey @param {{ issue_id: number, format?: 'markdown'|'json' }} args
+   */
+  const mcpGetIssueContext = (apiKey, args) => mcpCallTool(apiKey, 'get_issue_context', args);
+
+  /**
+   * Atalho da tool `get_last` sobre {@link mcpCallTool}.
+   * @param {string} apiKey
+   * @param {{ order?: 'updated'|'created'|'priority', count?: number, format?: 'markdown'|'json' }} args
+   */
+  const mcpGetLast = (apiKey, args) => mcpCallTool(apiKey, 'get_last', args);
+
+  return {
+    fetchAdminApiKey,
+    resolveIds,
+    cliIssue,
+    cliLast,
+    mcpCallTool,
+    mcpGetIssueContext,
+    mcpGetLast,
+    grepAll,
+  };
 }
 
 /**

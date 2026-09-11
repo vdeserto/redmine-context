@@ -35,7 +35,8 @@
 import { Box, Text, useInput } from 'ink';
 import { useEffect, useRef, type ReactNode } from 'react';
 
-import type { Attachment, Issue } from '../../../index.js';
+import { journalDetailLabel, journalDetailValue } from '../../../index.js';
+import type { Attachment, DetailLookups, Issue } from '../../../index.js';
 import {
   attachmentStatusColor,
   attachmentStatusLabel,
@@ -46,11 +47,12 @@ import { ScrollView } from '../components/scroll-view.js';
 import { glyphs } from '../glyphs.js';
 import { humanizeFileSize } from '../format-file-size.js';
 import { useIssueDetail } from '../hooks/use-issue-detail.js';
-import { useTerminalHeight } from '../hooks/use-terminal-width.js';
+import { useTerminalHeight, useTerminalWidth } from '../hooks/use-terminal-width.js';
 import { useNavigation } from '../navigation.js';
 import { statusColor } from '../status-color.js';
 import { symbols } from '../symbols.js';
 import { useTheme, type Theme } from '../theme.js';
+import { wrapText } from '../wrap.js';
 import { useHomeSelection } from './home-selection.js';
 import { useLoadedIssue } from './loaded-issue-context.js';
 
@@ -64,6 +66,11 @@ import { useLoadedIssue } from './loaded-issue-context.js';
 const CONTENT_OVERHEAD_ROWS = 14;
 /** Piso da viewport (terminais muito baixos). */
 const CONTENT_MIN_HEIGHT = 6;
+
+/** Colunas consumidas fora do texto: moldura da aplicação (2) + padding da tela (2). */
+const CONTENT_WIDTH_OVERHEAD = 4;
+/** Piso da largura de texto (terminais muito estreitos). */
+const CONTENT_MIN_WIDTH = 20;
 
 /** Placeholder discreto para campos ausentes (assignee, autor/data de journal, old/new value). ASCII no Windows legado (#84). */
 const EMPTY_PLACEHOLDER = glyphs.emptyPlaceholder;
@@ -134,7 +141,12 @@ function buildAttachmentRows(issue: Issue, theme: Theme): ReactNode[] {
 }
 
 /** Constrói as linhas da viewport rolável: bloco de descrição + histórico cronológico de journals. */
-function buildContentRows(issue: Issue, theme: Theme): ReactNode[] {
+function buildContentRows(
+  issue: Issue,
+  theme: Theme,
+  width: number,
+  lookups?: DetailLookups,
+): ReactNode[] {
   const rows: ReactNode[] = [];
 
   rows.push(
@@ -149,7 +161,10 @@ function buildContentRows(issue: Issue, theme: Theme): ReactNode[] {
       </Text>,
     );
   } else {
-    issue.description.split('\n').forEach((line, index) => {
+    // Quebra na largura ANTES de virar item: o ScrollView conta itens como
+    // linhas de tela, e um parágrafo longo (o caso comum de um chamado) faria o
+    // Ink quebrá-lo sozinho em várias, estourando o viewport.
+    wrapText(issue.description, width).forEach((line, index) => {
       rows.push(<Text key={`desc-${index}`}>{line.length > 0 ? line : ' '}</Text>);
     });
   }
@@ -175,17 +190,24 @@ function buildContentRows(issue: Issue, theme: Theme): ReactNode[] {
         </Text>,
       );
       if (journal.notes !== undefined && journal.notes !== '') {
-        journal.notes.split('\n').forEach((line, index) => {
+        wrapText(journal.notes, width).forEach((line, index) => {
           rows.push(<Text key={`journal-${journal.id}-note-${index}`}>{line}</Text>);
         });
       }
-      // Details estruturais resumidos: `campo: antigo → novo`, sempre em muted.
+      // Details resumidos: `campo: antigo → novo`, sempre em muted. Rótulos e
+      // ids vêm da MESMA semântica do bundle (`journalDetailLabel`/`Value` do
+      // core) — sem ela a tela mostrava o cru do Redmine (`status_id: 12 → 7`,
+      // custom field pelo id). A marca `trusted` das partes não se aplica aqui:
+      // ela existe para a fence anti prompt-injection do bundle, e esta tela é
+      // interface, não prompt.
       journal.details.forEach((detail, index) => {
+        const label = journalDetailLabel(detail, issue).text;
+        const from = journalDetailValue(detail, detail.old_value, issue, lookups)?.text ?? EMPTY_PLACEHOLDER;
+        const to = journalDetailValue(detail, detail.new_value, issue, lookups)?.text ?? EMPTY_PLACEHOLDER;
         rows.push(
           <Text color={theme.muted} key={`journal-${journal.id}-detail-${index}`}>
             {'  '}
-            {detail.name}: {detail.old_value ?? EMPTY_PLACEHOLDER} {symbols.arrowRight}{' '}
-            {detail.new_value ?? EMPTY_PLACEHOLDER}
+            {label}: {from} {symbols.arrowRight} {to}
           </Text>,
         );
       });
@@ -252,6 +274,10 @@ export function IssueDetailScreen() {
   // Viewport de descrição CRESCE com o terminal (#190) — só rola quando o conteúdo
   // passa da tela de verdade, em vez de uma janelinha fixa com espaço vazio embaixo.
   const contentHeight = Math.max(CONTENT_MIN_HEIGHT, useTerminalHeight() - CONTENT_OVERHEAD_ROWS);
+  // Largura útil do texto: o terminal menos a moldura da aplicação (2 colunas)
+  // e o padding desta tela (2). Sem descontar, o parágrafo encosta na borda e o
+  // Ink o requebra — o mesmo estouro que o wrap existe para evitar.
+  const contentWidth = Math.max(CONTENT_MIN_WIDTH, useTerminalWidth() - CONTENT_WIDTH_OVERHEAD);
 
   // Espelha a issue carregada no contexto leve consumido por `./export.js`
   // (#33) — ver o JSDoc do módulo e de `./loaded-issue-context.js` para a
@@ -345,7 +371,10 @@ export function IssueDetailScreen() {
         <Box marginTop={1} flexDirection="column">
           <IssueMeta issue={state.issue} theme={theme} />
           <Box marginTop={1}>
-            <ScrollView lines={buildContentRows(state.issue, theme)} height={contentHeight} />
+            <ScrollView
+            lines={buildContentRows(state.issue, theme, contentWidth, state.lookups)}
+            height={contentHeight}
+          />
           </Box>
         </Box>
       ) : null}

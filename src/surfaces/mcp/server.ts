@@ -18,8 +18,22 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { z } from 'zod';
 
+import {
+  ATTACHMENT_INPUT_SCHEMA,
+  ATTACHMENT_TOOL_NAME,
+  INPUT_SCHEMA,
+  LAST_INPUT_SCHEMA,
+  LAST_TOOL_NAME,
+  SEARCH_DEFAULT_LIMIT,
+  SEARCH_INPUT_SCHEMA,
+  SEARCH_TOOL_NAME,
+  TOOL_NAME,
+  type GetAttachmentTextArgs,
+  type GetIssueContextArgs,
+  type GetLastArgs,
+  type SearchIssuesArgs,
+} from './tools.js';
 import * as core from '../../index.js';
 import { fenceBlock } from '../../index.js';
 import type {
@@ -29,47 +43,6 @@ import type {
   IssueSearchFilters,
   resolveApiKey,
 } from '../../index.js';
-
-/** Formato aceito pela tool MCP (nomes amigáveis expostos ao cliente). */
-export type McpFormat = 'markdown' | 'json';
-
-/** Argumentos da tool `get_issue_context` já validados pelo schema zod. */
-export interface GetIssueContextArgs {
-  /** Identificador numérico da issue no Redmine. */
-  issue_id: number;
-  /** Formato de saída: `markdown` (padrão) ou `json`. */
-  format?: McpFormat | undefined;
-  /**
-   * Extrai o texto dos anexos de imagem (OCR) e o embute no bundle. Default:
-   * `false` — a extração adiciona latência (download + OCR por anexo). O M4 trará
-   * o modo cache-first/processing assíncrono; no M3 a extração é síncrona.
-   */
-  extract_attachments?: boolean | undefined;
-}
-
-/** Argumentos da tool `get_attachment_text` já validados pelo schema zod. */
-export interface GetAttachmentTextArgs {
-  /** Identificador numérico da issue que contém o anexo. */
-  issue_id: number;
-  /** Identificador numérico do anexo cujo texto será extraído. */
-  attachment_id: number;
-}
-
-/** Argumentos da tool `search_issues` já validados pelo schema zod. */
-export interface SearchIssuesArgs {
-  /** Termo full-text opcional (`/search.json`, best-effort). */
-  query?: string | undefined;
-  /** Filtro `project_id`. */
-  project_id?: number | undefined;
-  /** Filtro `status_id` (`'open'`, `'closed'`, `'*'` ou um id). */
-  status_id?: number | string | undefined;
-  /** Filtro `assigned_to_id` (um id ou `'me'`). */
-  assigned_to_id?: number | string | undefined;
-  /** Filtro `updated_on` no formato do Redmine (ex.: `>=2026-01-01`). */
-  updated_on?: string | undefined;
-  /** Máximo de resultados. Default: {@link SEARCH_DEFAULT_LIMIT}. */
-  limit?: number | undefined;
-}
 
 /**
  * Dependências injetáveis do server MCP — permitem testar o handler sem tocar o
@@ -81,6 +54,8 @@ export interface McpServerDeps {
   fetchIssueBundle: typeof core.fetchIssueBundle;
   /** Orquestração de busca (filtros + full-text best-effort) do core. */
   searchIssues: typeof core.fetchIssueSearch;
+  /** Orquestração das últimas issues (ordem + bundle completo) do core. */
+  fetchLastIssues: typeof core.fetchLastIssues;
   /**
    * Orquestração get → normalize → extração CACHE-FIRST de UM anexo (M4-11 #70):
    * devolve o texto já cacheado na hora e `processing` (sem bloquear) para mídia
@@ -117,71 +92,6 @@ function parseInsecure(env: NodeJS.ProcessEnv): boolean {
   const raw = env.REDMINE_INSECURE;
   return raw !== undefined && /^(1|true)$/i.test(raw.trim());
 }
-
-/** Nome canônico da tool de contexto de issue. */
-export const TOOL_NAME = 'get_issue_context';
-
-/** Nome canônico da tool de busca de issues. */
-export const SEARCH_TOOL_NAME = 'search_issues';
-
-/** Nome canônico da tool de texto de anexo. */
-export const ATTACHMENT_TOOL_NAME = 'get_attachment_text';
-
-/** Limite default de resultados da tool `search_issues` (documentado no schema). */
-export const SEARCH_DEFAULT_LIMIT = 25;
-
-/** Teto de resultados aceito pela tool `search_issues`. */
-const SEARCH_MAX_LIMIT = 100;
-
-/** Schema zod dos argumentos da tool (sem URL/host: a instância vem da env). */
-const INPUT_SCHEMA = {
-  issue_id: z.number().int().positive().describe('Identificador numérico da issue no Redmine'),
-  format: z
-    .enum(['markdown', 'json'])
-    .optional()
-    .describe("Formato de saída: 'markdown' (padrão) ou 'json'"),
-  extract_attachments: z
-    .boolean()
-    .optional()
-    .describe(
-      'Extrai o texto (OCR) dos anexos de imagem e o embute no bundle. Default: false (adiciona latência de download+OCR). O M4 traz o modo cache-first/processing.',
-    ),
-} as const;
-
-/** Schema zod da tool `get_attachment_text` (read-only, sem URL/host). */
-const ATTACHMENT_INPUT_SCHEMA = {
-  issue_id: z.number().int().positive().describe('Identificador numérico da issue que contém o anexo'),
-  attachment_id: z.number().int().positive().describe('Identificador numérico do anexo a extrair'),
-} as const;
-
-/** Schema zod da tool `search_issues` (read-only, sem URL/host). */
-const SEARCH_INPUT_SCHEMA = {
-  query: z
-    .string()
-    .min(1)
-    .optional()
-    .describe('Termo full-text via /search.json (best-effort). Se a busca falhar, degrada para os filtros estruturados com aviso.'),
-  project_id: z.number().int().positive().optional().describe('Filtro estruturado project_id'),
-  status_id: z
-    .union([z.number().int(), z.string()])
-    .optional()
-    .describe("Filtro status_id: um id, 'open', 'closed' ou '*'"),
-  assigned_to_id: z
-    .union([z.number().int(), z.string()])
-    .optional()
-    .describe("Filtro assigned_to_id: um id ou 'me'"),
-  updated_on: z
-    .string()
-    .optional()
-    .describe('Filtro updated_on no formato do Redmine (ex.: >=2026-01-01, <=2026-12-31)'),
-  limit: z
-    .number()
-    .int()
-    .positive()
-    .max(SEARCH_MAX_LIMIT)
-    .optional()
-    .describe(`Máximo de resultados paginados (default ${SEARCH_DEFAULT_LIMIT}, teto ${SEARCH_MAX_LIMIT})`),
-} as const;
 
 /** Extrai uma mensagem legível de um erro desconhecido. */
 function messageOf(error: unknown): string {
@@ -401,6 +311,61 @@ export function createSearchIssuesHandler(
 }
 
 /**
+ * Cria o handler da tool `get_last`, testável isoladamente.
+ *
+ * Resolve a instância/credencial da env (nunca de argumentos) e delega à
+ * orquestração `fetchLastIssues`: ordena por `updated`/`created`/`priority` e
+ * devolve o BUNDLE COMPLETO das mais recentes — o atalho de um passo para
+ * "me dá a última issue", sem exigir que o cliente descubra o id antes.
+ *
+ * Usa `cacheFirst: true` como as demais tools: responde na hora com o texto de
+ * anexo já cacheado e marca o restante como `processing`, sem bloquear no OCR.
+ *
+ * @param deps - Ver {@link McpServerDeps}.
+ * @returns Função assíncrona que recebe os argumentos e devolve um CallToolResult.
+ * @example
+ * const handler = createGetLastHandler(defaultMcpDeps());
+ * const result = await handler({ order: 'priority', count: 3 });
+ */
+export function createGetLastHandler(
+  deps: McpServerDeps,
+): (args: GetLastArgs) => Promise<CallToolResult> {
+  return async (args: GetLastArgs): Promise<CallToolResult> => {
+    const resolved = await resolveInstance(deps);
+    if (!isResolved(resolved)) return resolved;
+    const { baseUrl, apiKey } = resolved;
+
+    const format: BundleFormat = args.format === 'json' ? 'json' : 'md';
+    try {
+      let content: string | undefined;
+      for await (const event of deps.fetchLastIssues({
+        baseUrl,
+        apiKey,
+        format,
+        order: args.order,
+        count: args.count,
+        toolVersion: deps.toolVersion,
+        insecure: deps.insecure ?? false,
+        extractAttachments: args.extract_attachments ?? false,
+        cacheFirst: true,
+      })) {
+        if (event.kind === 'progress') {
+          deps.log?.(event.message);
+        } else {
+          content = event.value.content;
+        }
+      }
+      if (content === undefined) {
+        return errorResult('A operação não produziu um bundle.');
+      }
+      return textResult(content);
+    } catch (error) {
+      return errorResult(typedSearchErrorMessage(error));
+    }
+  };
+}
+
+/**
  * Traduz erros da extração de anexo em mensagens claras e tipadas.
  *
  * 404/403/401 do Redmine e o {@link core.AttachmentNotFoundError} recebem texto
@@ -496,6 +461,7 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   const handler = createGetIssueContextHandler(deps);
   const searchHandler = createSearchIssuesHandler(deps);
   const attachmentHandler = createGetAttachmentTextHandler(deps);
+  const lastHandler = createGetLastHandler(deps);
 
   server.registerTool(
     TOOL_NAME,
@@ -533,6 +499,18 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     (args) => attachmentHandler(args),
   );
 
+  server.registerTool(
+    LAST_TOOL_NAME,
+    {
+      title: 'Últimas issues do Redmine',
+      description:
+        'Retorna o contexto completo das issues mais recentes da instância configurada (REDMINE_URL), ordenadas por updated (padrão), created ou priority. Atalho de um passo quando o id ainda não é conhecido — considera apenas issues abertas; use search_issues para filtros (projeto, status, responsável). Read-only.',
+      inputSchema: LAST_INPUT_SCHEMA,
+      annotations: { readOnlyHint: true, openWorldHint: true },
+    },
+    (args) => lastHandler(args),
+  );
+
   return server;
 }
 
@@ -541,6 +519,7 @@ export function defaultMcpDeps(): McpServerDeps {
   return {
     fetchIssueBundle: core.fetchIssueBundle,
     searchIssues: core.fetchIssueSearch,
+    fetchLastIssues: core.fetchLastIssues,
     fetchAttachmentText: core.fetchAttachmentTextCacheFirst,
     resolveApiKey: core.resolveApiKey,
     env: process.env,
@@ -572,3 +551,19 @@ export async function runStdioServer(overrides: Partial<McpServerDeps> = {}): Pr
   });
 }
 /* c8 ignore stop */
+
+// Contrato de entrada das tools (nomes, tipos e schemas) — vive em `./tools.ts`
+// desde a extração da RULES #24. Reexportado aqui para que os consumidores
+// (CLI, testes) continuem tendo `./server.js` como porta única da superfície MCP.
+export {
+  ATTACHMENT_TOOL_NAME,
+  LAST_TOOL_NAME,
+  SEARCH_DEFAULT_LIMIT,
+  SEARCH_TOOL_NAME,
+  TOOL_NAME,
+  type GetAttachmentTextArgs,
+  type GetIssueContextArgs,
+  type GetLastArgs,
+  type McpFormat,
+  type SearchIssuesArgs,
+} from './tools.js';

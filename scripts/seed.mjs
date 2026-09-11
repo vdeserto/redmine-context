@@ -11,8 +11,10 @@
 //
 // Fixtures geradas (o que cada issue ganha):
 //   issue base 1 → journal (comentário), custom field Severidade=Alta,
-//                  anexo de texto (fixture-note.txt), relation "relates" com a
-//                  issue base 2, e é a PARENT da issue base 3.
+//                  anexo de texto (fixture-note.txt), anexo de IMAGEM
+//                  (fixture-error.png, um print de stack trace — material do
+//                  OCR no demo/README), relation "relates" com a issue base 2,
+//                  e é a PARENT da issue base 3.
 //   issue base 2 → journal (comentário), custom field Severidade=Média,
 //                  alvo da relation vinda da issue base 1.
 //   issue base 3 → journal (comentário), custom field Severidade=Baixa,
@@ -33,6 +35,8 @@
 //
 // Infra script (fora de src/): não usa console. Loga em stderr via helper.
 
+import { existsSync, readFileSync } from 'node:fs';
+
 /** Loga uma linha em stderr (o eslint proíbe console; isto é script de infra). */
 const log = (msg) => process.stderr.write(`[seed] ${msg}\n`);
 
@@ -48,6 +52,11 @@ const CUSTOM_FIELD_NAME = 'Severidade';
 // Prefixo que marca um journal criado pelo seed (chave de idempotência).
 const JOURNAL_MARKER = '[seed]';
 const ATTACH_FILENAME = 'fixture-note.txt';
+// Anexo de imagem (print de stack trace) — dá ao OCR material real para extrair.
+// Versionado no repo; gerado por `demo/make-fixture-image.py`. Ausente => o seed
+// apenas avisa e segue (degradação graciosa; nenhuma asserção depende dele).
+const ATTACH_IMAGE_FILENAME = 'fixture-error.png';
+const ATTACH_IMAGE_PATH = new URL('../demo/fixture-error.png', import.meta.url);
 
 /**
  * Fixtures determinísticas: `subject` é a chave de idempotência; `severity` e
@@ -324,11 +333,11 @@ async function ensureRelation(fromId, toId, type) {
 }
 
 /**
- * Faz upload de um conteúdo de texto (octet-stream) e retorna o token.
- * @param {string} content
+ * Faz upload de bytes (octet-stream) e retorna o token.
+ * @param {Buffer} bytes
  * @returns {Promise<string>}
  */
-async function uploadText(content) {
+async function uploadBytes(bytes) {
   const res = await fetch(BASE + '/uploads.json', {
     method: 'POST',
     headers: {
@@ -336,7 +345,7 @@ async function uploadText(content) {
       'Content-Type': 'application/octet-stream',
       Accept: 'application/json',
     },
-    body: Buffer.from(content, 'utf8'),
+    body: bytes,
   });
   const text = await res.text();
   if (res.status !== 201) {
@@ -350,22 +359,23 @@ async function uploadText(content) {
 }
 
 /**
- * Anexa um arquivo de texto à issue, se ainda não houver um com esse nome.
+ * Anexa um arquivo à issue, se ainda não houver um com esse nome.
  * Idempotente (só faz upload quando vai realmente anexar).
  * @param {number} id
  * @param {string} filename
- * @param {string} content
+ * @param {Buffer} bytes
+ * @param {string} [contentType] default 'text/plain'
  */
-async function ensureAttachment(id, filename, content) {
+async function ensureAttachment(id, filename, bytes, contentType = 'text/plain') {
   const issue = await getIssue(id, 'attachments');
   const has = (issue.attachments ?? []).some((/** @type {{ filename: string }} */ a) => a.filename === filename);
   if (has) {
     log(`issue ${id}: anexo ${filename} já presente`);
     return;
   }
-  const token = await uploadText(content);
+  const token = await uploadBytes(bytes);
   const put = await api('PUT', `/issues/${id}.json`, {
-    issue: { uploads: [{ token, filename, content_type: 'text/plain' }] },
+    issue: { uploads: [{ token, filename, content_type: contentType }] },
   });
   if (put.status !== 204 && put.status !== 200) {
     throw new Error(`PUT anexo issue ${id} falhou: status ${put.status} — ${put.text}`);
@@ -403,7 +413,19 @@ async function enrichIssues(ids) {
   await ensureRelation(id1, id2, 'relates');
 
   // Anexo de texto na issue 1.
-  await ensureAttachment(id1, ATTACH_FILENAME, 'Anexo de fixture gerado pelo seed (rc-fixtures).\n');
+  await ensureAttachment(
+    id1,
+    ATTACH_FILENAME,
+    Buffer.from('Anexo de fixture gerado pelo seed (rc-fixtures).\n', 'utf8'),
+  );
+
+  // Anexo de imagem na issue 1 (material do OCR). Opcional: se o arquivo não
+  // estiver presente, avisa e segue — nenhuma asserção depende dele.
+  if (existsSync(ATTACH_IMAGE_PATH)) {
+    await ensureAttachment(id1, ATTACH_IMAGE_FILENAME, readFileSync(ATTACH_IMAGE_PATH), 'image/png');
+  } else {
+    log(`aviso: ${ATTACH_IMAGE_FILENAME} não encontrado — anexo de imagem pulado`);
+  }
 }
 
 /**

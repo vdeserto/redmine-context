@@ -35,6 +35,7 @@ import { Box, Text, useApp, useInput, useStdout } from 'ink';
 
 import type { SettingsStore } from '../../index.js';
 import { Breadcrumb } from './components/breadcrumb.js';
+import { isUnicodeSupported } from './glyphs.js';
 import { TerminalSizeProvider, useTerminalHeight } from './hooks/use-terminal-width.js';
 import { applyTerminalColors } from './terminal-colors.js';
 import { ReAuthAbortedError } from './hooks/use-auth-guard.js';
@@ -69,6 +70,26 @@ import {
  * Ink nem depender de uma tela de dados real (#29+) para chegar no estado de
  * re-auth ativo.
  */
+/**
+ * Estilo da moldura da aplicação conforme o suporte a Unicode.
+ *
+ * `round` desenha com box-drawing (`╭ ─ │ ╯`); no terminal legado do Windows
+ * isso vira mojibake, do mesmo jeito que os frames braille do spinner (M5-09,
+ * #84). `classic` é o fallback ASCII do próprio Ink (`+ - |`).
+ *
+ * Função pura (em vez de só a constante) para o fallback ser testável sem
+ * depender do ambiente real — mesmo padrão de `./glyphs.ts`.
+ *
+ * @param unicode - `true` quando o terminal renderiza box-drawing.
+ * @returns O `borderStyle` a passar ao `Box` do Ink.
+ */
+export function borderStyleFor(unicode: boolean): 'round' | 'classic' {
+  return unicode ? 'round' : 'classic';
+}
+
+/** Estilo resolvido para o ambiente atual — decidido uma vez, no import. */
+const BORDER_STYLE = borderStyleFor(isUnicodeSupported());
+
 export type EscapeAction = { kind: 'abort-reauth'; origin: ScreenName } | { kind: 'pop' };
 
 /**
@@ -262,7 +283,16 @@ function AppShell() {
   // topo e a tela ocupa o resto (`flexGrow`); cada tela ancora seus atalhos no
   // rodapé com um espaçador `flexGrow` (estilo nano/nvim/tmux).
   return (
-    <Box flexDirection="column" minHeight={rows}>
+    // Moldura única da aplicação (#190 — pacote estético): a borda vive AQUI e
+    // não nas telas, então nenhuma tela precisa saber que existe uma. As duas
+    // linhas da borda saem do minHeight para o conteúdo não estourar a altura do
+    // terminal (o que empurraria o topo para fora no modo full-screen).
+    <Box
+      flexDirection="column"
+      minHeight={Math.max(1, rows - 2)}
+      borderStyle={BORDER_STYLE}
+      borderColor={theme.border}
+    >
       <Breadcrumb stack={stack} />
       {armed ? (
         <Box paddingX={1} marginBottom={1}>

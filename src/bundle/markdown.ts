@@ -31,6 +31,12 @@ import type {
   Journal,
   RedmineRef,
 } from '../contract.js';
+import {
+  journalDetailLabel,
+  journalDetailValue,
+  type DetailLookups,
+  type DetailPart,
+} from './journal-detail.js';
 import { byId, compareJournals, type ExtractionMap } from './json.js';
 
 /** Metadados de empacotamento do bundle Markdown (sem timestamp — determinismo). */
@@ -44,7 +50,16 @@ export interface MarkdownBundleMeta {
    * a seção "Texto extraído" — o texto de OCR dentro de `<untrusted-content>`.
    */
   extractions?: ExtractionMap;
+  /**
+   * Dicionários `id → nome` da instância (status/tracker/prioridade/usuários).
+   * Sem eles, os ids HISTÓRICOS do journal saem como `#id` — legível, mas sem
+   * significado ("não sei o que é status 12").
+   */
+  lookups?: DetailLookups;
 }
+
+/** Placeholder de valor ausente numa alteração de journal. */
+const ABSENT_VALUE = '∅';
 
 /** Placeholder para ref degradada (id 0) — nunca um nome vazio silencioso. */
 const UNKNOWN_REF = '(desconhecido)';
@@ -154,22 +169,27 @@ function renderCustomFields(issue: Issue): string {
 }
 
 /**
- * Renderiza os `details` de um journal. `name` e old/new_value são derivados
- * (em details de "description"/"subject" os values carregam o texto completo
- * do campo) — todos passam pelo fence inline.
+ * Renderiza os `details` de um journal.
+ *
+ * A SEMÂNTICA (rótulos, ids resolvidos) vem de `./journal-detail.js`, compartilhada
+ * com a TUI; aqui só se aplica a política deste formato: o que a semântica marcar
+ * como não confiável entra na fence anti prompt-injection.
  */
-function renderJournalDetails(journal: Journal): string[] {
+function renderJournalDetails(journal: Journal, issue: Issue, lookups: DetailLookups | undefined): string[] {
+  const fence = (part: DetailPart | undefined): string =>
+    part === undefined ? ABSENT_VALUE : part.trusted ? part.text : fenceInline(part.text);
   return journal.details.map((detail) => {
-    const from = detail.old_value === null || detail.old_value === undefined ? '∅' : fenceInline(detail.old_value);
-    const to = detail.new_value === null || detail.new_value === undefined ? '∅' : fenceInline(detail.new_value);
-    return `  - ${fenceInline(detail.name)}: ${from} → ${to}`;
+    const label = fence(journalDetailLabel(detail, issue));
+    const from = fence(journalDetailValue(detail, detail.old_value, issue, lookups));
+    const to = fence(journalDetailValue(detail, detail.new_value, issue, lookups));
+    return `  - ${label}: ${from} → ${to}`;
   });
 }
 
 /** Renderiza uma entrada de journal: cabeçalho estrutural + nota (fenced). */
-function renderJournal(journal: Journal): string {
+function renderJournal(journal: Journal, issue: Issue, lookups: DetailLookups | undefined): string {
   const lines: string[] = [`### Journal #${journal.id} — ${journal.created_on} — ${optionalRefName(journal.user)}`, ''];
-  const details = renderJournalDetails(journal);
+  const details = renderJournalDetails(journal, issue, lookups);
   if (details.length > 0) lines.push('Alterações:', ...details, '');
   if (journal.notes !== undefined) lines.push('Nota:', fenceBlock(journal.notes), '');
   if (details.length === 0 && journal.notes === undefined) lines.push('_(sem alterações ou notas)_', '');
@@ -177,9 +197,11 @@ function renderJournal(journal: Journal): string {
 }
 
 /** Seção de histórico — journals em ordem cronológica estável (created_on, id). */
-function renderJournals(issue: Issue): string {
+function renderJournals(issue: Issue, lookups: DetailLookups | undefined): string {
   if (issue.journals.length === 0) return '## Histórico\n\n_(nenhum)_';
-  const ordered = [...issue.journals].sort(compareJournals).map(renderJournal);
+  const ordered = [...issue.journals]
+    .sort(compareJournals)
+    .map((journal) => renderJournal(journal, issue, lookups));
   return ['## Histórico', ...ordered].join('\n\n');
 }
 
@@ -312,7 +334,7 @@ export function buildMarkdownBundle(issue: Issue, meta: MarkdownBundleMeta): str
     renderHeader(issue),
     renderDescription(issue),
     renderCustomFields(issue),
-    renderJournals(issue),
+    renderJournals(issue, meta.lookups),
     renderRelations(issue),
     renderParent(issue),
     renderChildren(issue),

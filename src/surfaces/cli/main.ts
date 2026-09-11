@@ -13,7 +13,7 @@
 import { realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
-import { runDoctor, runIssue, runLogin } from './commands.js';
+import { runDoctor, runIssue, runLast, runLogin } from './commands.js';
 import { createPromptSession } from './prompts.js';
 import { shouldRenderTui } from './tty.js';
 import type { ParsedArgs, RunDeps } from './types.js';
@@ -22,13 +22,14 @@ import { runStdioServer } from '../mcp/server.js';
 import { runTui } from '../tui/index.js';
 
 /** Flags que consomem o próximo token como valor (as demais são booleanas). */
-const VALUE_FLAGS = new Set(['out', 'url', 'api-key']);
+const VALUE_FLAGS = new Set(['out', 'url', 'api-key', 'order', 'count']);
 
 /** Texto do `--help` — limpo, sem referências a ferramentas de IA. */
 const HELP = `redmine-context — contexto completo de issues do Redmine para LLMs
 
 Uso:
   redmine-context issue <id> [opções]
+  redmine-context last [opções]
   redmine-context login [opções]
   redmine-context doctor
   redmine-context mcp
@@ -43,6 +44,21 @@ Comando issue:
   --extract         Extrai o texto (OCR) dos anexos de imagem e o embute no
                     bundle (adiciona latência de download+OCR; requer tesseract).
   --out <dir>       Grava o bundle em <dir>/<id>.md|.json em vez de stdout.
+  --url <url>       URL da instância Redmine (ou defina REDMINE_URL).
+  --insecure        Permite http:// sem TLS (não recomendado).
+
+Comando last:
+  Imprime o bundle completo das issues mais recentes, sem precisar do id.
+  Considera apenas issues abertas.
+
+  --order <ordem>   updated (padrão) | created | priority
+                    updated  = mexida mais recente
+                    created  = entrada mais recente (triagem)
+                    priority = mais urgente, desempatando pela mais recente
+  --count <n>       Quantas issues empacotar (padrão 1, teto 5). Cada item é um
+                    bundle completo.
+  --json            Emite os bundles como um array JSON.
+  --extract         Extrai o texto (OCR) dos anexos de imagem.
   --url <url>       URL da instância Redmine (ou defina REDMINE_URL).
   --insecure        Permite http:// sem TLS (não recomendado).
 
@@ -62,7 +78,7 @@ Comando doctor:
 
 Comando mcp:
   Sobe um servidor MCP (stdio) expondo as tools read-only get_issue_context,
-  search_issues e get_attachment_text. A instância vem de REDMINE_URL +
+  search_issues, get_attachment_text e get_last. A instância vem de REDMINE_URL +
   credencial da cascata (REDMINE_API_KEY); nenhuma tool aceita URL/host
   arbitrário. Logs vão para stderr.
 
@@ -188,6 +204,9 @@ async function dispatch(argv: string[], deps: RunDeps): Promise<number> {
   }
   if (command === 'issue') {
     return runIssue(parsed, deps);
+  }
+  if (command === 'last') {
+    return runLast(parsed, deps);
   }
   if (command === 'login') {
     return runLogin(parsed, deps);

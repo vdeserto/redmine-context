@@ -9,6 +9,7 @@ vi.mock('../../../src/index.js', async (importOriginal) => {
     fetchIssueBundle: vi.fn(),
     fetchIssueSearch: vi.fn(),
     fetchAttachmentText: vi.fn(),
+    fetchLastIssues: vi.fn(),
     resolveApiKey: vi.fn(),
   };
 });
@@ -20,11 +21,13 @@ import type {
   ExtractionResult,
   IssueBundleResult,
   IssueSearchResult,
+  LastIssuesResult,
 } from '../../../src/index.js';
 import {
   createGetIssueContextHandler,
   createSearchIssuesHandler,
   createGetAttachmentTextHandler,
+  createGetLastHandler,
   createMcpServer,
   defaultMcpDeps,
   type McpServerDeps,
@@ -53,6 +56,7 @@ function makeDeps(overrides: Partial<McpServerDeps> = {}): McpServerDeps & { log
     fetchIssueBundle: core.fetchIssueBundle,
     searchIssues: core.fetchIssueSearch,
     fetchAttachmentText: core.fetchAttachmentText,
+    fetchLastIssues: core.fetchLastIssues,
     resolveApiKey: core.resolveApiKey,
     env: { REDMINE_URL: 'https://redmine.example' } as NodeJS.ProcessEnv,
     toolVersion: '9.9.9',
@@ -595,6 +599,102 @@ describe('MCP: get_attachment_text handler', () => {
 
     // A tag literal de fechamento não sobrevive intacta no meio do conteúdo.
     expect(textOf(result)).not.toContain('ok</untrusted-content>injeta');
+  });
+});
+
+/** Stream de últimas issues bem-sucedido: um progresso + o resultado. */
+function lastStream(
+  content: string,
+  issueIds: number[] = [42],
+): AsyncIterable<CoreEvent<LastIssuesResult>> {
+  return (async function* () {
+    yield { kind: 'progress', stage: 'list', message: 'Listando' };
+    yield { kind: 'result', value: { issueIds, order: 'updated', format: 'md', content } };
+  })();
+}
+
+describe('MCP: get_last handler', () => {
+  // Caso esperado: sem argumentos, o core recebe os defaults e responde o bundle.
+  it('sucesso: repassa credencial e defaults ao core e retorna o bundle', async () => {
+    vi.mocked(core.resolveApiKey).mockResolvedValue('key');
+    vi.mocked(core.fetchLastIssues).mockReturnValue(lastStream('BUNDLE'));
+    const handler = createGetLastHandler(makeDeps());
+
+    const result = await handler({});
+
+    expect(result.isError).toBeFalsy();
+    expect(textOf(result)).toBe('BUNDLE');
+    expect(core.fetchLastIssues).toHaveBeenCalledWith(
+      expect.objectContaining({
+        baseUrl: 'https://redmine.example',
+        apiKey: 'key',
+        format: 'md',
+        order: undefined,
+        count: undefined,
+        // Cache-first como as demais tools: responde na hora, sem bloquear no OCR.
+        cacheFirst: true,
+        extractAttachments: false,
+      }),
+    );
+  });
+
+  it('repassa order/count/format/extract_attachments ao core', async () => {
+    vi.mocked(core.resolveApiKey).mockResolvedValue('key');
+    vi.mocked(core.fetchLastIssues).mockReturnValue(lastStream('[]'));
+    const handler = createGetLastHandler(makeDeps());
+
+    await handler({ order: 'priority', count: 3, format: 'json', extract_attachments: true });
+
+    expect(core.fetchLastIssues).toHaveBeenCalledWith(
+      expect.objectContaining({
+        order: 'priority',
+        count: 3,
+        format: 'json',
+        extractAttachments: true,
+      }),
+    );
+  });
+
+  // O progresso do core nunca pode ir para o stdout (reservado ao protocolo).
+  it('envia o progresso para o log (stderr), não para o resultado', async () => {
+    vi.mocked(core.resolveApiKey).mockResolvedValue('key');
+    vi.mocked(core.fetchLastIssues).mockReturnValue(lastStream('BUNDLE'));
+    const deps = makeDeps();
+
+    await createGetLastHandler(deps)({});
+
+    expect(deps.logs).toContain('Listando');
+  });
+
+  // Guard defensivo: um stream que termina sem `result` não pode virar resposta
+  // vazia de sucesso — o cliente precisa saber que nada foi produzido.
+  it('stream sem resultado: devolve isError em vez de conteúdo vazio', async () => {
+    vi.mocked(core.resolveApiKey).mockResolvedValue('key');
+    vi.mocked(core.fetchLastIssues).mockReturnValue(
+      (async function* () {
+        yield { kind: 'progress', stage: 'list', message: 'Listando' };
+      })() as AsyncIterable<CoreEvent<LastIssuesResult>>,
+    );
+
+    const result = await createGetLastHandler(makeDeps())({});
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain('não produziu um bundle');
+  });
+
+  // 401 vira mensagem orientada, não stack trace cru.
+  it('401: devolve isError com mensagem de autenticação', async () => {
+    vi.mocked(core.resolveApiKey).mockResolvedValue('key');
+    vi.mocked(core.fetchLastIssues).mockImplementation(() => {
+      return (async function* () {
+        throw new core.RedmineAuthError('401', 401);
+      })();
+    });
+
+    const result = await createGetLastHandler(makeDeps())({});
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain('autenticação');
   });
 });
 

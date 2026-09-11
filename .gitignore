@@ -11,3 +11,6 @@ coverage/
 # Tooling local do Claude Code / FlowForge — não faz parte do produto e contém
 # nomes com ":" (invalido no Windows, quebra o checkout do CI no Windows).
 .claude/
+
+# Vídeo do demo: o GIF é versionado (vitrine do README); o mp4 é subproduto do vhs.
+demo/*.mp4
