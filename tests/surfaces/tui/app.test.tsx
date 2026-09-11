@@ -15,7 +15,7 @@ import { cleanup, render } from 'ink-testing-library';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { TOOL_NAME, TOOL_VERSION } from '../../../src/index.js';
-import { App } from '../../../src/surfaces/tui/app.js';
+import { App, borderStyleFor } from '../../../src/surfaces/tui/app.js';
 import { SCREENS } from '../../../src/surfaces/tui/screen.js';
 import { symbols } from '../../../src/surfaces/tui/symbols.js';
 
@@ -145,5 +145,15 @@ describe('TUI: "/" reservado para a busca', () => {
     const before = lastFrame();
     expect(() => stdin.write('/')).not.toThrow();
     expect(lastFrame()).toBe(before);
+  });
+});
+
+describe('TUI: moldura no terminal legado (#84)', () => {
+  // A borda `round` usa box-drawing Unicode; sem suporte, todo o resto da TUI
+  // já degrada (spinner, setas, banner) e a moldura precisa acompanhar — senão
+  // vira mojibake no cmd.exe/PowerShell antigo.
+  it('usa round com Unicode e classic sem', () => {
+    expect(borderStyleFor(true)).toBe('round');
+    expect(borderStyleFor(false)).toBe('classic');
   });
 });

@@ -35,6 +35,7 @@ import { Box, Text, useApp, useInput, useStdout } from 'ink';
 
 import type { SettingsStore } from '../../index.js';
 import { Breadcrumb } from './components/breadcrumb.js';
+import { isUnicodeSupported } from './glyphs.js';
 import { TerminalSizeProvider, useTerminalHeight } from './hooks/use-terminal-width.js';
 import { applyTerminalColors } from './terminal-colors.js';
 import { ReAuthAbortedError } from './hooks/use-auth-guard.js';
@@ -69,6 +70,26 @@ import {
  * Ink nem depender de uma tela de dados real (#29+) para chegar no estado de
  * re-auth ativo.
  */
+/**
+ * Estilo da moldura da aplicação conforme o suporte a Unicode.
+ *
+ * `round` desenha com box-drawing (`╭ ─ │ ╯`); no terminal legado do Windows
+ * isso vira mojibake, do mesmo jeito que os frames braille do spinner (M5-09,
+ * #84). `classic` é o fallback ASCII do próprio Ink (`+ - |`).
+ *
+ * Função pura (em vez de só a constante) para o fallback ser testável sem
+ * depender do ambiente real — mesmo padrão de `./glyphs.ts`.
+ *
+ * @param unicode - `true` quando o terminal renderiza box-drawing.
+ * @returns O `borderStyle` a passar ao `Box` do Ink.
+ */
+export function borderStyleFor(unicode: boolean): 'round' | 'classic' {
+  return unicode ? 'round' : 'classic';
+}
+
+/** Estilo resolvido para o ambiente atual — decidido uma vez, no import. */
+const BORDER_STYLE = borderStyleFor(isUnicodeSupported());
+
 export type EscapeAction = { kind: 'abort-reauth'; origin: ScreenName } | { kind: 'pop' };
 
 /**
@@ -269,7 +290,7 @@ function AppShell() {
     <Box
       flexDirection="column"
       minHeight={Math.max(1, rows - 2)}
-      borderStyle="round"
+      borderStyle={BORDER_STYLE}
       borderColor={theme.border}
     >
       <Breadcrumb stack={stack} />
