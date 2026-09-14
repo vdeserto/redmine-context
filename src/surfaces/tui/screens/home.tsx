@@ -48,7 +48,7 @@ import { useListNavigation } from '../hooks/use-list-navigation.js';
 import { useMyIssues, type MyIssue } from '../hooks/use-my-issues.js';
 import { useTerminalWidth } from '../hooks/use-terminal-width.js';
 import { useNavigation } from '../navigation.js';
-import { statusColor } from '../status-color.js';
+import { statusColor, statusFilterColor } from '../status-color.js';
 import { symbols } from '../symbols.js';
 import { useTheme } from '../theme.js';
 import { truncate } from '../truncate.js';
@@ -120,7 +120,6 @@ function IssueRow({ issue, selected }: { issue: MyIssue; selected: boolean }) {
 export function HomeScreen() {
   const theme = useTheme();
   const { push } = useNavigation();
-  const { state, retry } = useMyIssues();
   // #31: índice preservado entre remounts + registro de qual issue foi aberta
   // (ver o JSDoc do módulo e de `./home-selection.js`).
   const { selectedIndex: persistedIndex, setSelectedIndex: persistIndex, setSelectedIssueId } =
@@ -131,6 +130,11 @@ export function HomeScreen() {
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<SearchStatusFilter>('all');
   const search = useIssueSearch(query, statusFilter);
+  // O filtro rápido (`f`) precisa valer para a LISTA visível — antes ele só
+  // alimentava a busca, cujos resultados só aparecem com a busca ABERTA, então
+  // trocar o status não mudava nada na tela.
+  const { state, retry } = useMyIssues({ statusFilter });
+
 
   // Handler ESTÁVEL: `search.clear` é a única dependência mutável (mas já é
   // estável por construção, ver `use-issue-search.ts`) — fecha a busca e
@@ -231,7 +235,10 @@ export function HomeScreen() {
         <Text color={theme.primary}>
           Minhas issues
         </Text>
-        <Text color={theme.muted}> [{STATUS_FILTER_LABELS[statusFilter]}]</Text>
+        <Text color={statusFilterColor(theme, statusFilter)}>
+          {' '}
+          [{STATUS_FILTER_LABELS[statusFilter]}]
+        </Text>
         {!isSearching ? (
           <Text color={theme.muted}>
             {`  / busca ${glyphs.middleDot} f filtro ${glyphs.middleDot} t jobs`}
@@ -249,12 +256,15 @@ export function HomeScreen() {
               placeholder={`digite para buscar${glyphs.ellipsis}`}
               isActive={isSearching}
             />
-            <Text color={theme.muted}> [{STATUS_FILTER_LABELS[statusFilter]}]</Text>
+            <Text color={statusFilterColor(theme, statusFilter)}>
+              {' '}
+              [{STATUS_FILTER_LABELS[statusFilter]}]
+            </Text>
           </Box>
 
           {searchState.status === 'idle' ? (
             <Box marginTop={1}>
-              <Text color={theme.muted}>Digite para buscar ou pressione f para ciclar o filtro de status.</Text>
+              <Text color={theme.muted}>Digite para buscar. Esc fecha a busca (o filtro de status é o f com a busca fechada).</Text>
             </Box>
           ) : null}
 

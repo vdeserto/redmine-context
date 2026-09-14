@@ -41,6 +41,7 @@ import {
 } from '../../../index.js';
 import { useEnvFallbackAllowed } from '../instance.js';
 import { ReAuthAbortedError, useAuthGuard } from './use-auth-guard.js';
+import { statusIdFor, type SearchStatusFilter } from './use-issue-search.js';
 
 /** Issue resumida exibida numa linha da lista da home — só os campos usados por `IssueRow`. */
 export interface MyIssue {
@@ -72,6 +73,14 @@ export type MyIssuesState =
 
 /** Dependências injetáveis do hook — todas opcionais, com defaults de produção via o core. */
 export interface UseMyIssuesOptions {
+  /**
+   * Filtro rápido de status (`f` na home). Default `'all'`.
+   *
+   * A LISTA precisa respeitá-lo: antes, o filtro só alimentava a busca — cujos
+   * resultados só aparecem com a busca ABERTA —, então ciclar o status não
+   * mudava nada na tela.
+   */
+  statusFilter?: SearchStatusFilter;
   /** Ambiente consultado para `REDMINE_URL`; default `process.env`. */
   env?: NodeJS.ProcessEnv;
   /** Resolve a api_key pela cascata M2; default `resolveApiKey` do core. */
@@ -126,6 +135,7 @@ function instanceFromEnv(env: NodeJS.ProcessEnv): string | undefined {
  * const { state, retry } = useMyIssues(); // deps de produção (process.env, core real)
  */
 export function useMyIssues(options: UseMyIssuesOptions = {}): UseMyIssuesResult {
+  const statusFilter = options.statusFilter ?? 'all';
   const env = options.env ?? process.env;
   const resolve = options.resolveApiKey ?? resolveApiKey;
   const buildClient = options.createHttpClient ?? createHttpClient;
@@ -177,7 +187,11 @@ export function useMyIssues(options: UseMyIssuesOptions = {}): UseMyIssuesResult
         // Fix do review #120: envolvida por `guard()` — em 401, a Promise só
         // resolve após o re-login ter sucesso e a busca ser refeita
         // automaticamente; o estado do hook permanece `loading` enquanto isso.
-        const raw = await guard(() => fetchIssues(http, { filters: { assigned_to_id: 'me' } }));
+        const raw = await guard(() =>
+          fetchIssues(http, {
+            filters: { assigned_to_id: 'me', status_id: statusIdFor(statusFilter) },
+          }),
+        );
         if (cancelled) return;
 
         const issues = raw.map(toMyIssue).filter((issue): issue is MyIssue => issue !== undefined);
@@ -213,7 +227,7 @@ export function useMyIssues(options: UseMyIssuesOptions = {}): UseMyIssuesResult
     // entre renders com as deps de produção (defaults do módulo, ou
     // `process.env`, ou a identidade estável de `useAuthGuard().guard`) — o
     // efeito só precisa refazer a busca quando `reloadToken` muda (retry).
-  }, [env, allowEnvFallback, resolve, buildClient, fetchIssues, guard, reloadToken]);
+  }, [statusFilter, env, allowEnvFallback, resolve, buildClient, fetchIssues, guard, reloadToken]);
 
   return { state, retry };
 }

@@ -30,6 +30,7 @@
 import { useCallback, useRef } from 'react';
 import { Text, useInput } from 'ink';
 
+import { useTypingGuard } from '../hooks/use-typing-guard.js';
 import { useTheme } from '../theme.js';
 import { truncate, truncateStart } from '../truncate.js';
 
@@ -146,6 +147,10 @@ export function TextInput({
       }
   }, []);
 
+  // Suspende os atalhos de LETRA enquanto este campo captura teclado: o Ink
+  // entrega a tecla a todos os handlers, então sem isto um `q` digitado aqui
+  // dispararia o atalho global de sair (ver ../hooks/use-typing-guard.ts).
+  useTypingGuard(isActive);
   useInput(handleInput, { isActive });
 
   // Reason: cursor em bloco simples (inversão de cor, sem literal — não

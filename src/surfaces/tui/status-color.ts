@@ -32,3 +32,27 @@ export function statusColor(theme: Theme, statusName: string): string {
   }
   return theme.primary;
 }
+
+/**
+ * Cor do badge do FILTRO rápido de status (`f` na home).
+ *
+ * Coerente com {@link statusColor}, que já pinta "fechado" de `success` e usa
+ * `primary` para o estado ativo — assim o badge do filtro e o badge de cada
+ * issue na lista não contam histórias diferentes sobre a mesma palavra.
+ *
+ * `all` fica em `muted` de propósito: é a ausência de filtro, e um badge
+ * chamativo aí competiria com o conteúdo. Os dois estados FILTRADOS puxam cor,
+ * que é o sinal de "tem filtro ligado".
+ *
+ * Contraste: todos são tokens do tema, calibrados por paleta (as claras usam
+ * cores saturadas, as escuras cores claras) — ver `./palettes.ts`.
+ *
+ * @param theme - Tema ativo.
+ * @param filter - Filtro rápido corrente.
+ * @returns O token de cor do tema para o badge.
+ */
+export function statusFilterColor(theme: Theme, filter: 'open' | 'closed' | 'all'): string {
+  if (filter === 'open') return theme.primary;
+  if (filter === 'closed') return theme.success;
+  return theme.muted;
+}

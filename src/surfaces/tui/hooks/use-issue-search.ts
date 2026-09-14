@@ -87,8 +87,17 @@ export interface UseIssueSearchResult {
   clear: () => void;
 }
 
-/** Mapeia o filtro rápido de status para o `status_id` de `/issues.json` (`*` = todas). */
-function statusIdFor(filter: SearchStatusFilter): string {
+/**
+ * Mapeia o filtro rápido de status para o `status_id` de `/issues.json`
+ * (`*` = todas).
+ *
+ * Exportada porque a LISTA da home (`./use-my-issues.ts`) aplica o mesmo filtro
+ * que a busca — duas traduções separadas divergiriam.
+ *
+ * @param filter - Filtro rápido escolhido na tela.
+ * @returns O valor de `status_id` para a query.
+ */
+export function statusIdFor(filter: SearchStatusFilter): string {
   if (filter === 'open') return 'open';
   if (filter === 'closed') return 'closed';
   return '*';

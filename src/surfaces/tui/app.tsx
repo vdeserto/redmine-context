@@ -42,6 +42,7 @@ import { ReAuthAbortedError } from './hooks/use-auth-guard.js';
 import { consumeEscapeInterceptor } from './hooks/use-escape-interceptor.js';
 import { useExitGuard } from './hooks/use-exit-guard.js';
 import { useOnboardingCallbacks } from './hooks/use-onboarding-callbacks.js';
+import { isTyping } from './hooks/use-typing-guard.js';
 import { JobRegistryProvider } from './job-registry.js';
 import { NavigationProvider, useNavigation, useNavigationStack } from './navigation.js';
 import { HomeSelectionProvider } from './screens/home-selection.js';
@@ -241,7 +242,10 @@ function AppShell() {
   const abortReAuthRef = useRef(abortReAuth);
   abortReAuthRef.current = abortReAuth;
   const handleGlobalInput = useCallback((input: string, key: { escape: boolean }) => {
-    if (input === 'q') {
+    // `q` só sai FORA de campo de texto: o Ink entrega a tecla a todos os
+    // handlers, então sem esta guarda digitar uma URL com "q" (ou uma senha)
+    // fecharia a TUI no meio do onboarding (ver ./hooks/use-typing-guard.ts).
+    if (input === 'q' && !isTyping()) {
       exitRef.current();
       return;
     }
