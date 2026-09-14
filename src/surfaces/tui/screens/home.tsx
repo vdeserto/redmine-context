@@ -43,6 +43,7 @@ import { Spinner } from '../components/spinner.js';
 import { TextInput } from '../components/text-input.js';
 import { glyphs } from '../glyphs.js';
 import { useEscapeInterceptor } from '../hooks/use-escape-interceptor.js';
+import { isTyping } from '../hooks/use-typing-guard.js';
 import { useIssueSearch, type SearchStatusFilter } from '../hooks/use-issue-search.js';
 import { useListNavigation } from '../hooks/use-list-navigation.js';
 import { useMyIssues, type MyIssue } from '../hooks/use-my-issues.js';
@@ -129,12 +130,14 @@ export function HomeScreen() {
   const [isSearching, setIsSearching] = useState(false);
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<SearchStatusFilter>('all');
-  const search = useIssueSearch(query, statusFilter);
+  // O filtro só vai para a BUSCA quando ela está aberta: com ela fechada, quem
+  // aplica o status é a lista (abaixo), e passar o filtro aqui dispararia um
+  // request cujo resultado nunca é renderizado — dois GETs por `f` em vez de um.
+  const search = useIssueSearch(query, isSearching ? statusFilter : 'all');
   // O filtro rápido (`f`) precisa valer para a LISTA visível — antes ele só
   // alimentava a busca, cujos resultados só aparecem com a busca ABERTA, então
   // trocar o status não mudava nada na tela.
   const { state, retry } = useMyIssues({ statusFilter });
-
 
   // Handler ESTÁVEL: `search.clear` é a única dependência mutável (mas já é
   // estável por construção, ver `use-issue-search.ts`) — fecha a busca e
@@ -142,7 +145,9 @@ export function HomeScreen() {
   const closeSearch = useCallback(() => {
     setIsSearching(false);
     setQuery('');
-    setStatusFilter('all');
+    // O filtro de status NÃO é resetado: desde que ele governa a LISTA (e não
+    // só a busca), zerá-lo aqui desfazia uma escolha que o usuário fez ANTES de
+    // abrir a busca — `f`, depois `/`, depois `Esc` devolvia [Todas].
     search.clear();
   }, [search.clear]);
   // Desvia o Esc GLOBAL (`../app.tsx`) enquanto a busca está aberta — sem
@@ -207,11 +212,11 @@ export function HomeScreen() {
   // Com a busca ABERTA, toda letra pertence à query (buscar "workflow" exige
   // digitar "f") — o ciclo de filtro por "f" só vale com a busca fechada.
   const handleSearchControlInput = useCallback((input: string) => {
-    if (input === '/' && !isSearchingRef.current) {
+    if (input === '/' && !isTyping()) {
       setIsSearching(true);
       return;
     }
-    if (input === 'f' && !isSearchingRef.current) {
+    if (input === 'f' && !isTyping()) {
       setStatusFilter((current) => nextStatusFilter(current));
     }
   }, []);
@@ -221,7 +226,7 @@ export function HomeScreen() {
   // da busca (mesma guarda de "/"/"f" acima: dentro do campo, "t" é texto da
   // query, não um atalho).
   const handleJobsShortcut = useCallback((input: string) => {
-    if (input === 't' && !isSearchingRef.current) {
+    if (input === 't' && !isTyping()) {
       pushRef.current('jobs');
     }
   }, []);

@@ -154,3 +154,43 @@ describe('TUI: TextInput', () => {
     });
   });
 });
+
+describe('TextInput: teclas em sequência rápida (achado A2 do QA)', () => {
+  /** Campo controlado mínimo, como as telas de onboarding usam. */
+  function Harness({ initial = '' }: { initial?: string }) {
+    const [value, setValue] = useState(initial);
+    return (
+      <ThemeProvider>
+        <TextInput value={value} onChange={setValue} />
+      </ThemeProvider>
+    );
+  }
+
+  // Duas teclas podem chegar ANTES do commit do React. Com a ref do valor
+  // sincronizada só no render, ambas partiam do mesmo valor velho e a última
+  // vencia — digitar uma URL em velocidade normal corrompia o campo.
+  it('não perde teclas digitadas antes do re-render', async () => {
+    const { stdin, lastFrame } = render(<Harness />);
+
+    // Sem await ENTRE as escritas: é isso que reproduz a digitação rápida —
+    // as três chegam antes do commit do React.
+    stdin.write('a');
+    stdin.write('b');
+    stdin.write('c');
+
+    await vi.waitFor(() => expect(lastFrame()).toContain('abc'));
+  });
+
+  it('backspace em sequência também não se perde', async () => {
+    const BACKSPACE = '\u0008';
+    const { stdin, lastFrame } = render(<Harness initial="abcd" />);
+
+    stdin.write(BACKSPACE);
+    stdin.write(BACKSPACE);
+
+    await vi.waitFor(() => {
+      expect(lastFrame()).toContain('ab');
+      expect(lastFrame()).not.toContain('abcd');
+    });
+  });
+});
