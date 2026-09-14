@@ -69,8 +69,12 @@ const SCREEN_PADDING_X = 2;
 // invalidando memoizações a jusante (`useListNavigation`) sem necessidade.
 const EMPTY_ISSUES: MyIssue[] = [];
 
-/** Linhas ocupadas fora da lista (moldura, breadcrumb, cabeçalho, contador, rodapé). */
-const LIST_OVERHEAD_ROWS = 11;
+/**
+ * Linhas ocupadas fora da lista NESTA tela (breadcrumb, cabeçalho, contador,
+ * rodapé, paddings). A moldura da aplicação não entra: o shell já entrega a
+ * altura sem ela (ver `TerminalHeightProvider` em `../app.tsx`).
+ */
+const LIST_OVERHEAD_ROWS = 9;
 /** Piso da janela da lista (terminais muito baixos). */
 const LIST_MIN_HEIGHT = 5;
 
@@ -96,15 +100,18 @@ function fixedRowOverhead(idLength: number, statusLength: number): number {
  * item estruturado da busca — sem passar pelo Markdown do bundle, que traria as
  * fences `<untrusted-content>` para a tela.
  */
-function SearchResultRow({ item }: { item: SearchListItem }) {
+function SearchResultRow({ item, selected }: { item: SearchListItem; selected: boolean }) {
   const theme = useTheme();
   const terminalWidth = useTerminalWidth();
   const overhead = fixedRowOverhead(String(item.id).length, item.status.length);
   const subjectBudget = Math.max(terminalWidth - overhead, MIN_SUBJECT_WIDTH);
   return (
     <Box>
-      <Text color={theme.muted}>{'  '}#{item.id} </Text>
-      <Text>{truncate(item.subject ?? '(sem assunto)', subjectBudget)}</Text>
+      <Text color={theme.primary}>{selected ? `${symbols.pointerSmall} ` : '  '}</Text>
+      <Text color={theme.muted}>#{item.id} </Text>
+      <Text {...(selected ? { color: theme.primary } : {})}>
+        {truncate(item.subject ?? '(sem assunto)', subjectBudget)}
+      </Text>
       <Text color={statusColor(theme, item.status)}> [{item.status}]</Text>
       <Text color={theme.muted}> {item.assignee}</Text>
     </Box>
@@ -156,6 +163,12 @@ export function HomeScreen() {
   const [isPickingStatus, setIsPickingStatus] = useState(false);
   const statusOptions = useStatusOptions();
   const [statusIndex, setStatusIndex] = useState(0);
+  // Seleção dentro dos RESULTADOS da busca: achar o chamado e não conseguir
+  // abrir é o mesmo que não ter achado. As setas não são texto, então navegam
+  // os resultados enquanto o campo continua recebendo letras.
+  const [searchIndex, setSearchIndex] = useState(0);
+  const searchIndexRef = useRef(searchIndex);
+  searchIndexRef.current = searchIndex;
   // O filtro só vai para a BUSCA quando ela está aberta: com ela fechada, quem
   // aplica o status é a lista (abaixo), e passar o filtro aqui dispararia um
   // request cujo resultado nunca é renderizado — dois GETs por `f` em vez de um.
@@ -178,6 +191,13 @@ export function HomeScreen() {
   }, [search.clear]);
   // Desvia o Esc GLOBAL (`../app.tsx`) enquanto a busca está aberta — sem
   // isso, Esc desempilharia a home inteira em vez de só fechar a busca.
+  // Resultado novo, cursor no topo: manter o índice de uma busca anterior faria
+  // o Enter abrir uma issue que não é a que está sob o cursor.
+  useEffect(() => {
+    setSearchIndex(0);
+    searchIndexRef.current = 0;
+  }, [query, statusFilter]);
+
   useEscapeInterceptor(isSearching, closeSearch);
   const closeStatusPicker = useCallback(() => setIsPickingStatus(false), []);
   useEscapeInterceptor(isPickingStatus, closeStatusPicker);
@@ -236,6 +256,8 @@ export function HomeScreen() {
   statusIndexRef.current = statusIndex;
   const filterRef = useRef(statusFilter);
   filterRef.current = statusFilter;
+  const searchItemsRef = useRef<readonly SearchListItem[]>([]);
+  searchItemsRef.current = search.state.status === 'loaded' ? search.state.items : [];
   const handleRetryInput = useCallback((input: string) => {
     // M2-07 (#30): "r" digitado como texto de busca não deve disparar retry.
     if (isSearchingRef.current) return;
@@ -301,6 +323,32 @@ export function HomeScreen() {
     [],
   );
   useInput(handleStatusPickerInput);
+
+  // Navegação dos RESULTADOS da busca (setas + Enter). O campo de texto ignora
+  // setas e Enter, então não há disputa: as letras seguem indo para a query.
+  const handleSearchResultsInput = useCallback(
+    (_input: string, key: { upArrow: boolean; downArrow: boolean; return: boolean }) => {
+      const items = searchItemsRef.current;
+      if (!isSearchingRef.current || items.length === 0) return;
+      if (key.upArrow) {
+        setSearchIndex((i) => (i - 1 + items.length) % items.length);
+        return;
+      }
+      if (key.downArrow) {
+        setSearchIndex((i) => (i + 1) % items.length);
+        return;
+      }
+      if (key.return) {
+        const picked = items[searchIndexRef.current];
+        if (picked !== undefined) {
+          setSelectedIssueIdRef.current(picked.id);
+          pushRef.current('issue-detail');
+        }
+      }
+    },
+    [],
+  );
+  useInput(handleSearchResultsInput);
 
   // #34 (M2-11): "t" abre o painel de jobs da sessão (`./jobs.js`) — só fora
   // da busca (mesma guarda de "/"/"f" acima: dentro do campo, "t" é texto da
@@ -421,8 +469,8 @@ export function HomeScreen() {
               {searchState.items.length === 0 ? (
                 <Text color={theme.muted}>nenhuma issue encontrada</Text>
               ) : (
-                searchState.items.map((item) => (
-                  <SearchResultRow key={item.id} item={item} />
+                searchState.items.map((item, index) => (
+                  <SearchResultRow key={item.id} item={item} selected={index === searchIndex} />
                 ))
               )}
             </Box>
@@ -529,11 +577,11 @@ export function HomeScreen() {
               <Text color={theme.accent}>
                 Esc
               </Text>{' '}
-              fecha a busca. O filtro de status é o{' '}
-              <Text color={theme.accent}>
-                f
-              </Text>{' '}
-              com a busca fechada (aqui, toda letra é texto).
+              fecha a busca,{' '}
+              <Text color={theme.accent}>{`${glyphs.arrowUp}/${glyphs.arrowDown}`}</Text> navega os
+              resultados,{' '}
+              <Text color={theme.accent}>Enter</Text> abre. O filtro é o{' '}
+              <Text color={theme.accent}>f</Text> com a busca fechada.
             </>
           ) : (
             <>

@@ -26,6 +26,7 @@ vi.mock('../../../../src/surfaces/tui/hooks/use-issue-search.js', async (importO
   return { ...actual, useIssueSearch: vi.fn() };
 });
 
+import { symbols } from '../../../../src/surfaces/tui/symbols.js';
 import {
   consumeEscapeInterceptor,
   resetEscapeInterceptor,
@@ -394,6 +395,70 @@ describe('TUI: HomeScreen — busca inline (M2-07, #30)', () => {
     expect(useMyIssuesModule.useMyIssues).toHaveBeenLastCalledWith(
       expect.objectContaining({ statusFilter: 'closed' }),
     );
+  });
+
+
+  // Achar o chamado e não conseguir abrir é o mesmo que não ter achado: a
+  // navegação da LISTA fica desligada durante a busca (as teclas pertencem ao
+  // campo), então os resultados precisam da sua própria.
+  describe('navegação nos resultados da busca', () => {
+    const ITENS = [
+      { id: 71219, subject: 'Primeiro resultado', status: 'Fechada', assignee: 'Victor' },
+      { id: 71119, subject: 'Segundo resultado', status: 'Fechada', assignee: 'Victor' },
+    ];
+
+    function buscaCom(items: typeof ITENS) {
+      mockState({ status: 'loaded', issues: ISSUES });
+      mockSearchState({
+        status: 'loaded',
+        content: '',
+        items,
+        count: items.length,
+        degraded: false,
+        warnings: [],
+      });
+    }
+
+    it('setas movem o cursor entre os resultados', async () => {
+      buscaCom(ITENS);
+      const { lastFrame, stdin } = renderHome();
+      stdin.write('/');
+      await vi.waitFor(() => expect(lastFrame()).toContain('Primeiro resultado'));
+
+      // O primeiro começa selecionado; a seta move para o segundo.
+      stdin.write(ARROW_DOWN);
+      await vi.waitFor(() => {
+        const linha = (lastFrame() ?? '').split('\n').find((l) => l.includes('Segundo resultado'));
+        expect(linha).toContain(symbols.pointerSmall);
+      });
+    });
+
+    it('Enter abre a issue sob o cursor', async () => {
+      buscaCom(ITENS);
+      const nav = navMock();
+      const { lastFrame, stdin } = renderHome(nav);
+      stdin.write('/');
+      await vi.waitFor(() => expect(lastFrame()).toContain('Primeiro resultado'));
+
+      stdin.write(ARROW_DOWN);
+      stdin.write(ENTER);
+
+      await vi.waitFor(() => expect(nav.push).toHaveBeenCalledWith('issue-detail'));
+    });
+
+    // Failure case: sem resultados, Enter não pode navegar para lugar nenhum.
+    it('Enter não faz nada quando a busca não devolveu resultados', async () => {
+      buscaCom([]);
+      const nav = navMock();
+      const { lastFrame, stdin } = renderHome(nav);
+      stdin.write('/');
+      await vi.waitFor(() => expect(lastFrame()).toContain('nenhuma issue encontrada'));
+
+      stdin.write(ENTER);
+
+      await vi.waitFor(() => expect(lastFrame()).toContain('nenhuma issue encontrada'));
+      expect(nav.push).not.toHaveBeenCalled();
+    });
   });
 
   it('"f" com a busca ABERTA digita na query (buscar "workflow" é possível) e NÃO abre o seletor', async () => {

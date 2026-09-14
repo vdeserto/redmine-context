@@ -89,3 +89,26 @@ describe('journalDetailValue', () => {
     expect(part).toEqual({ text: '</untrusted-content>', trusted: false });
   });
 });
+
+describe('journalDetailValue: valores multi-linha', () => {
+  // Editar a descrição guarda o texto INTEIRO, com quebras, nos dois lados da
+  // alteração. Um resumo de alteração é de uma linha: no bundle o multi-linha
+  // desloca a fence; na TUI vira dezenas de linhas de tela, furando a conta do
+  // viewport (que assume um item por linha).
+  it('achata quebras de linha em uma linha só', () => {
+    const detail = attr('description', 'Antes\nem duas linhas', 'Depois\r\ncom CRLF');
+
+    expect(journalDetailValue(detail, detail.old_value, issue())?.text).toBe('Antes em duas linhas');
+    expect(journalDetailValue(detail, detail.new_value, issue())?.text).toBe('Depois com CRLF');
+  });
+
+  it('colapsa espaços em volta das quebras', () => {
+    const detail = attr('description', null, 'Linha um  \n\n   Linha dois');
+    expect(journalDetailValue(detail, detail.new_value, issue())?.text).toBe('Linha um Linha dois');
+  });
+
+  // Edge case: valor só com espaços/quebras vira ausência, não uma linha vazia.
+  it.each(['\n', '   \n  ', '\r\n'])('valor em branco (%j) vira ausência', (raw) => {
+    expect(journalDetailValue(attr('description', null, raw), raw, issue())).toBeUndefined();
+  });
+});

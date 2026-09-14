@@ -52,25 +52,38 @@ import { useNavigation } from '../navigation.js';
 import { statusColor } from '../status-color.js';
 import { symbols } from '../symbols.js';
 import { useTheme, type Theme } from '../theme.js';
+import { truncate } from '../truncate.js';
 import { wrapText } from '../wrap.js';
 import { useHomeSelection } from './home-selection.js';
 import { useLoadedIssue } from './loaded-issue-context.js';
 
 /**
- * Overhead de linhas FORA da viewport de descrição (breadcrumb + título + meta +
- * rodapé + paddings). A viewport cresce com o terminal: `altura - OVERHEAD`
- * (#190). Com a altura default dos testes (24) dá 10 — o valor histórico — então
- * os snapshots/asserções de rolagem seguem iguais; em terminal real a descrição
- * usa quase toda a tela e só rola quando passa DE VERDADE.
+ * Overhead de linhas FORA da viewport de descrição: breadcrumb, título, meta,
+ * rodapé e paddings DESTA tela.
+ *
+ * A moldura da aplicação não entra na conta: o shell já entrega a altura sem
+ * ela (`TerminalHeightProvider` em `../app.tsx`). Contar a menos faz o viewport
+ * pedir mais linhas do que cabem — o conteúdo transborda e o Ink, que redesenha
+ * por diff, sobrescreve linhas já impressas.
  */
 const CONTENT_OVERHEAD_ROWS = 14;
 /** Piso da viewport (terminais muito baixos). */
 const CONTENT_MIN_HEIGHT = 6;
 
-/** Colunas consumidas fora do texto: moldura da aplicação (2) + padding da tela (2). */
-const CONTENT_WIDTH_OVERHEAD = 4;
+/**
+ * Colunas consumidas fora do texto: moldura da aplicação (2), padding da tela
+ * (2) e uma folga de 2.
+ *
+ * A folga existe porque errar para MENOS é pior que perder duas colunas: uma
+ * linha larga demais seria truncada com `…` bem no fim (ou, sem o truncate,
+ * quebrada pelo Ink, furando a conta do viewport).
+ */
+const CONTENT_WIDTH_OVERHEAD = 6;
 /** Piso da largura de texto (terminais muito estreitos). */
 const CONTENT_MIN_WIDTH = 20;
+
+/** Corte de cada lado de uma alteração de journal (ver `buildContentRows`). */
+const DETAIL_VALUE_WIDTH = 40;
 
 /** Placeholder discreto para campos ausentes (assignee, autor/data de journal, old/new value). ASCII no Windows legado (#84). */
 const EMPTY_PLACEHOLDER = glyphs.emptyPlaceholder;
@@ -107,7 +120,7 @@ function IssueMeta({ issue, theme }: { issue: Issue; theme: Theme }) {
 function buildAttachmentRow(attachment: Attachment, theme: Theme): ReactNode {
   const status = deriveAttachmentExtractionStatus(attachment);
   return (
-    <Text key={`attachment-${attachment.id}`}>
+    <Text key={`attachment-${attachment.id}`} wrap="truncate">
       {attachment.filename}{' '}
       <Text color={theme.muted}>
         ({humanizeFileSize(attachment.filesize)} {glyphs.middleDot} {attachment.content_type ?? EMPTY_PLACEHOLDER})
@@ -165,7 +178,11 @@ function buildContentRows(
     // linhas de tela, e um parágrafo longo (o caso comum de um chamado) faria o
     // Ink quebrá-lo sozinho em várias, estourando o viewport.
     wrapText(issue.description, width).forEach((line, index) => {
-      rows.push(<Text key={`desc-${index}`}>{line.length > 0 ? line : ' '}</Text>);
+      rows.push(
+        <Text key={`desc-${index}`} wrap="truncate">
+          {line.length > 0 ? line : ' '}
+        </Text>,
+      );
     });
   }
   rows.push(<Text key="desc-spacer"> </Text>);
@@ -185,13 +202,17 @@ function buildContentRows(
     // Cronológico: preserva a ordem já entregue por `getIssue`/`normalizeIssue`.
     issue.journals.forEach((journal) => {
       rows.push(
-        <Text color={theme.muted} key={`journal-${journal.id}-head`}>
+        <Text color={theme.muted} key={`journal-${journal.id}-head`} wrap="truncate">
           {journal.user?.name ?? EMPTY_PLACEHOLDER} {glyphs.middleDot} {journal.created_on}
         </Text>,
       );
       if (journal.notes !== undefined && journal.notes !== '') {
         wrapText(journal.notes, width).forEach((line, index) => {
-          rows.push(<Text key={`journal-${journal.id}-note-${index}`}>{line}</Text>);
+          rows.push(
+            <Text key={`journal-${journal.id}-note-${index}`} wrap="truncate">
+              {line}
+            </Text>,
+          );
         });
       }
       // Details resumidos: `campo: antigo → novo`, sempre em muted. Rótulos e
@@ -202,10 +223,20 @@ function buildContentRows(
       // interface, não prompt.
       journal.details.forEach((detail, index) => {
         const label = journalDetailLabel(detail, issue).text;
-        const from = journalDetailValue(detail, detail.old_value, issue, lookups)?.text ?? EMPTY_PLACEHOLDER;
-        const to = journalDetailValue(detail, detail.new_value, issue, lookups)?.text ?? EMPTY_PLACEHOLDER;
+        // Valores de campo TEXTO (descrição/assunto) trazem o conteúdo inteiro:
+        // editar a descrição guarda os dois textos completos na alteração. No
+        // histórico interessa O QUE mudou, não o texto todo — o valor completo
+        // está no bundle, para o LLM. Sem o corte, uma linha de centenas de
+        // caracteres fura a conta do viewport (1 item = 1 linha de tela).
+        const short = (part: string): string => truncate(part, DETAIL_VALUE_WIDTH);
+        const from = short(
+          journalDetailValue(detail, detail.old_value, issue, lookups)?.text ?? EMPTY_PLACEHOLDER,
+        );
+        const to = short(
+          journalDetailValue(detail, detail.new_value, issue, lookups)?.text ?? EMPTY_PLACEHOLDER,
+        );
         rows.push(
-          <Text color={theme.muted} key={`journal-${journal.id}-detail-${index}`}>
+          <Text color={theme.muted} key={`journal-${journal.id}-detail-${index}`} wrap="truncate">
             {'  '}
             {label}: {from} {symbols.arrowRight} {to}
           </Text>,

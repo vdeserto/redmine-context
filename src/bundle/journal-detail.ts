@@ -149,6 +149,24 @@ function idToken(raw: string): string | undefined {
 }
 
 /**
+ * Achata um valor de alteração em UMA linha.
+ *
+ * Editar a descrição de uma issue guarda o texto INTEIRO — com quebras de linha
+ * — nos dois lados do detail. Um resumo de alteração é, por definição, de uma
+ * linha: no bundle o valor multi-linha quebra o formato `- campo: antes → depois`
+ * (e escapa visualmente da fence); na TUI vira várias linhas de tela, furando a
+ * conta do viewport, que assume um item por linha.
+ *
+ * O conteúdo completo continua disponível na seção Descrição do bundle.
+ *
+ * @param raw - Valor bruto do detail.
+ * @returns O mesmo texto com quebras e espaços repetidos colapsados.
+ */
+function flatten(raw: string): string {
+  return raw.replace(/\s*\r?\n\s*/g, ' ').trim();
+}
+
+/**
  * Ref ATUAL da issue correspondente a um atributo, quando o contrato a carrega.
  *
  * Usada só para NOMEAR um id que coincide com o estado corrente; nunca para
@@ -246,19 +264,21 @@ export function journalDetailValue(
   lookups?: DetailLookups,
 ): DetailPart | undefined {
   if (raw === null || raw === undefined || raw === '') return undefined;
-  const id = idToken(raw);
+  const flat = flatten(raw);
+  if (flat === '') return undefined;
+  const id = idToken(flat);
 
   // Um detail `relation` registra a issue do outro lado da relação.
   if (detail.property === 'relation') {
-    return id === undefined ? { text: raw, trusted: false } : { text: `issue #${id}`, trusted: true };
+    return id === undefined ? { text: flat, trusted: false } : { text: `issue #${id}`, trusted: true };
   }
-  if (detail.property !== 'attr') return { text: raw, trusted: false };
+  if (detail.property !== 'attr') return { text: flat, trusted: false };
 
   if (detail.name === 'done_ratio') {
-    return id === undefined ? { text: raw, trusted: false } : { text: `${id}%`, trusted: true };
+    return id === undefined ? { text: flat, trusted: false } : { text: `${id}%`, trusted: true };
   }
   if (ISSUE_REF_ATTRS.has(detail.name)) {
-    return id === undefined ? { text: raw, trusted: false } : { text: `issue #${id}`, trusted: true };
+    return id === undefined ? { text: flat, trusted: false } : { text: `issue #${id}`, trusted: true };
   }
 
   // Dicionário da instância primeiro: resolve QUALQUER id, inclusive o valor
@@ -278,5 +298,5 @@ export function journalDetailValue(
   if (id !== undefined && ATTR_LABELS[detail.name] !== undefined && detail.name.endsWith('_id')) {
     return { text: `#${id}`, trusted: true };
   }
-  return { text: raw, trusted: false };
+  return { text: flat, trusted: false };
 }

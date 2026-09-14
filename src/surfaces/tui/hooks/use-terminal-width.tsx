@@ -52,6 +52,22 @@ export function TerminalWidthProvider({ width, children }: { width: number; chil
  * consumidor (ex.: cada linha da lista) assinar o próprio `resize` — o que
  * estourava o limite de 10 listeners do EventEmitter (MaxListenersExceededWarning).
  */
+/**
+ * Sobrescreve a ALTURA disponível para as telas abaixo.
+ *
+ * Usado pelo shell (`../app.tsx`) para descontar as linhas que a moldura da
+ * aplicação consome: as telas pedem `useTerminalHeight()` e devem receber o
+ * espaço que sobra, sem precisar saber que existe uma moldura — do contrário
+ * cada tela carregaria uma constante acoplada ao desenho do shell (e os testes,
+ * que montam telas sem moldura, veriam um valor errado).
+ *
+ * @param props.height - Altura disponível, em linhas.
+ * @param props.children - Subárvore que passa a enxergar essa altura.
+ */
+export function TerminalHeightProvider({ height, children }: { height: number; children: ReactNode }) {
+  return <TerminalHeightContext.Provider value={height}>{children}</TerminalHeightContext.Provider>;
+}
+
 export function TerminalSizeProvider({ children }: { children: ReactNode }) {
   const [size, setSize] = useState(() => ({ width: readProcessColumns(), height: readProcessRows() }));
   useEffect(() => {
