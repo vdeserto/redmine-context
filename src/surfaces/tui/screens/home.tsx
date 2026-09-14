@@ -20,7 +20,7 @@
  * retry.
  *
  * M2-07 (#30) acrescenta a busca/filtros inline: `/` abre um `TextInput`
- * QUANDO a home está ativa; `f` cicla o filtro com a busca FECHADA (badge no
+ * QUANDO a home está ativa; `f` abre o seletor de status com a busca FECHADA (badge no
  * cabeçalho); Esc fecha a busca sem refetch, interceptado via
  * `../hooks/use-escape-interceptor.ts` para não desempilhar a home.
  *
@@ -54,6 +54,7 @@ import { useNavigation } from '../navigation.js';
 import { statusColor, statusFilterColor } from '../status-color.js';
 import { symbols } from '../symbols.js';
 import { useTheme } from '../theme.js';
+import type { SearchListItem } from '../../../index.js';
 import { truncate } from '../truncate.js';
 import { useHomeSelection } from './home-selection.js';
 
@@ -88,6 +89,28 @@ function fixedRowOverhead(idLength: number, statusLength: number): number {
 }
 
 /** Uma linha da lista: `#id` em `theme.muted`, subject truncado ao orçamento de largura, badge de status. */
+/**
+ * Uma linha de RESULTADO DE BUSCA.
+ *
+ * Espelha o layout do {@link IssueRow} (id · assunto · status), mas a partir do
+ * item estruturado da busca — sem passar pelo Markdown do bundle, que traria as
+ * fences `<untrusted-content>` para a tela.
+ */
+function SearchResultRow({ item }: { item: SearchListItem }) {
+  const theme = useTheme();
+  const terminalWidth = useTerminalWidth();
+  const overhead = fixedRowOverhead(String(item.id).length, item.status.length);
+  const subjectBudget = Math.max(terminalWidth - overhead, MIN_SUBJECT_WIDTH);
+  return (
+    <Box>
+      <Text color={theme.muted}>{'  '}#{item.id} </Text>
+      <Text>{truncate(item.subject ?? '(sem assunto)', subjectBudget)}</Text>
+      <Text color={statusColor(theme, item.status)}> [{item.status}]</Text>
+      <Text color={theme.muted}> {item.assignee}</Text>
+    </Box>
+  );
+}
+
 function IssueRow({ issue, selected }: { issue: MyIssue; selected: boolean }) {
   const theme = useTheme();
   const terminalWidth = useTerminalWidth();
@@ -160,6 +183,10 @@ export function HomeScreen() {
   useEscapeInterceptor(isPickingStatus, closeStatusPicker);
 
   const issues = state.status === 'loaded' ? state.issues : EMPTY_ISSUES;
+  // Altura da lista: o terminal menos a moldura, breadcrumb, cabeçalho, contador
+  // e rodapé. A lista rola DENTRO dessa janela em vez de empurrar o resto da
+  // tela para fora — e a mesma altura é o salto de uma página.
+  const listHeight = Math.max(LIST_MIN_HEIGHT, useTerminalHeight() - LIST_OVERHEAD_ROWS);
 
   // Handlers ESTÁVEIS (useCallback + refs, padrão do repo): identidade nova a
   // cada render des/re-subscreve o useInput e pode perder uma tecla rápida.
@@ -183,6 +210,8 @@ export function HomeScreen() {
     // selecionada por baixo, ao mesmo tempo.
     isActive: !isSearching && !isPickingStatus,
     initialIndex: persistedIndex,
+    // Uma página = uma tela da janela visível (ver ../list-window.ts).
+    pageSize: listHeight,
   });
 
   // Espelha `selectedIndex` ao contexto — a cópia externa sobrevive ao
@@ -283,10 +312,6 @@ export function HomeScreen() {
   }, []);
   useInput(handleJobsShortcut);
 
-  // Altura da lista: o terminal menos a moldura, breadcrumb, cabeçalho, contador
-  // e rodapé de atalhos. A lista rola DENTRO dessa janela em vez de empurrar o
-  // resto da tela para fora.
-  const listHeight = Math.max(LIST_MIN_HEIGHT, useTerminalHeight() - LIST_OVERHEAD_ROWS);
   const listWindow_ = listWindow(issues.length, selectedIndex, listHeight);
 
   const searchState = search.state;
@@ -389,7 +414,17 @@ export function HomeScreen() {
                   {symbols.warning} {searchState.warnings.join(' ')}
                 </Text>
               ) : null}
-              <Text>{searchState.content}</Text>
+              {/* Renderiza os itens ESTRUTURADOS, não o Markdown do bundle: o
+                  `content` carrega fences `<untrusted-content>` — marcação
+                  anti prompt-injection destinada ao LLM, que na interface é só
+                  ruído para quem lê. */}
+              {searchState.items.length === 0 ? (
+                <Text color={theme.muted}>nenhuma issue encontrada</Text>
+              ) : (
+                searchState.items.map((item) => (
+                  <SearchResultRow key={item.id} item={item} />
+                ))
+              )}
             </Box>
           ) : null}
 
@@ -494,11 +529,11 @@ export function HomeScreen() {
               <Text color={theme.accent}>
                 Esc
               </Text>{' '}
-              fecha a busca,{' '}
+              fecha a busca. O filtro de status é o{' '}
               <Text color={theme.accent}>
                 f
               </Text>{' '}
-              cicla o filtro.
+              com a busca fechada (aqui, toda letra é texto).
             </>
           ) : (
             <>
@@ -506,6 +541,10 @@ export function HomeScreen() {
                 {`${glyphs.arrowUp}/${glyphs.arrowDown}`}
               </Text>{' '}
               navega,{' '}
+              <Text color={theme.accent}>
+                {`${glyphs.arrowLeft}/${glyphs.arrowRight}`}
+              </Text>{' '}
+              página,{' '}
               <Text color={theme.accent}>
                 Enter
               </Text>{' '}

@@ -59,6 +59,15 @@ export interface FetchIssueSearchOptions {
 export interface IssueSearchResult {
   /** Lista compacta em Markdown pronta para o CallToolResult. */
   content: string;
+  /**
+   * Os mesmos itens em forma ESTRUTURADA.
+   *
+   * O `content` é Markdown com fences `<untrusted-content>` — marcação
+   * anti prompt-injection destinada ao LLM. Uma interface que o exiba mostra
+   * essas tags ao usuário, que é ruído: a TUI renderiza a partir daqui e aplica
+   * sua própria apresentação.
+   */
+  items: readonly SearchListItem[];
   /** Número de itens retornados. */
   count: number;
   /** Avisos de degradação (ex.: `/search` indisponível). Vazio no caminho feliz. */
@@ -167,5 +176,5 @@ export async function fetchIssueSearch(options: FetchIssueSearchOptions): Promis
 
   const items = payloads.slice(0, limit).map(toSearchListItem);
   const content = buildSearchListMarkdown(items, { query, warnings });
-  return { content, count: items.length, warnings, degraded };
+  return { content, items, count: items.length, warnings, degraded };
 }

@@ -16,6 +16,10 @@ const ESC = String.fromCharCode(0x1b);
 const ARROW_UP = `${ESC}[A`;
 /** Sequência CSI da seta para baixo. */
 const ARROW_DOWN = `${ESC}[B`;
+/** Sequência CSI da seta para a direita (próxima página). */
+const ARROW_RIGHT = `${ESC}[C`;
+/** Sequência CSI da seta para a esquerda (página anterior). */
+const ARROW_LEFT = `${ESC}[D`;
 /** Enter (retorno de carro). */
 const ENTER = '\r';
 
@@ -25,14 +29,30 @@ function ListHarness({
   onSelect,
   isActive,
   initialIndex,
+  pageSize,
 }: {
   itemCount: number;
   onSelect?: (index: number) => void;
   isActive?: boolean;
   initialIndex?: number;
+  pageSize?: number;
 }) {
-  const { selectedIndex } = useListNavigation(itemCount, { onSelect, isActive, initialIndex });
+  const { selectedIndex } = useListNavigation(itemCount, {
+    onSelect,
+    isActive,
+    initialIndex,
+    ...(pageSize !== undefined ? { pageSize } : {}),
+  });
   return <Text>{selectedIndex}</Text>;
+}
+
+/** Renderiza o harness e devolve um leitor do índice corrente. */
+function renderNav(
+  itemCount: number,
+  options: { pageSize?: number; initialIndex?: number } = {},
+): { stdin: { write: (data: string) => void }; selected: () => number } {
+  const { stdin, lastFrame } = render(<ListHarness itemCount={itemCount} {...options} />);
+  return { stdin, selected: () => Number(lastFrame()) };
 }
 
 describe('TUI: useListNavigation', () => {
@@ -160,5 +180,47 @@ describe('TUI: useListNavigation — initialIndex (#31, preservação de seleç�
     await vi.waitFor(() => expect(lastFrame()).toBe('1'));
     stdin.write('j');
     await vi.waitFor(() => expect(lastFrame()).toBe('2'));
+  });
+});
+
+describe('useListNavigation: paginação (setas horizontais)', () => {
+  // Navegar item a item não escala: uma lista filtrada por status pode ter
+  // centenas de entradas.
+  it('seta direita avança uma página', async () => {
+    const { stdin, selected } = renderNav(100, { pageSize: 10 });
+
+    stdin.write(ARROW_RIGHT);
+    await vi.waitFor(() => expect(selected()).toBe(10));
+
+    stdin.write(ARROW_RIGHT);
+    await vi.waitFor(() => expect(selected()).toBe(20));
+  });
+
+  it('seta esquerda volta uma página', async () => {
+    const { stdin, selected } = renderNav(100, { pageSize: 10, initialIndex: 50 });
+    await vi.waitFor(() => expect(selected()).toBe(50));
+
+    stdin.write(ARROW_LEFT);
+    await vi.waitFor(() => expect(selected()).toBe(40));
+  });
+
+  // Ao contrário de ↑/↓, a página NÃO dá a volta: saltar do topo para o fim da
+  // lista desorienta.
+  it('para nas bordas em vez de dar a volta', async () => {
+    const { stdin, selected } = renderNav(25, { pageSize: 10 });
+
+    stdin.write(ARROW_LEFT);
+    await vi.waitFor(() => expect(selected()).toBe(0));
+
+    for (let i = 0; i < 5; i += 1) stdin.write(ARROW_RIGHT);
+    await vi.waitFor(() => expect(selected()).toBe(24));
+  });
+
+  // Failure case: pageSize inválido não pode travar a navegação nem pular zero.
+  it.each([0, -3])('pageSize %i ainda avança ao menos um item', async (pageSize) => {
+    const { stdin, selected } = renderNav(10, { pageSize });
+
+    stdin.write(ARROW_RIGHT);
+    await vi.waitFor(() => expect(selected()).toBe(1));
   });
 });

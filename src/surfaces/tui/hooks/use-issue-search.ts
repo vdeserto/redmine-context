@@ -35,6 +35,7 @@ import {
   resolveApiKey,
   RedmineForbiddenError,
   type CredentialCascadeOptions,
+  type SearchListItem,
 } from '../../../index.js';
 import { useEnvFallbackAllowed } from '../instance.js';
 import { ReAuthAbortedError, useAuthGuard } from './use-auth-guard.js';
@@ -64,7 +65,16 @@ export type SearchStatusFilter = 'open' | 'closed' | 'all' | number;
 export type IssueSearchState =
   | { status: 'idle' }
   | { status: 'loading' }
-  | { status: 'loaded'; content: string; count: number; degraded: boolean; warnings: string[] }
+  | {
+      status: 'loaded';
+      /** Markdown do bundle (com as fences) — mantido para quem precisar dele. */
+      content: string;
+      /** Itens ESTRUTURADOS: é o que a tela renderiza (ver ../screens/home.tsx). */
+      items: readonly SearchListItem[];
+      count: number;
+      degraded: boolean;
+      warnings: string[];
+    }
   | { status: 'error-network'; message: string }
   | { status: 'error-forbidden'; message: string }
   | { status: 'auth-aborted'; message: string };
@@ -211,6 +221,7 @@ export function useIssueSearch(
         setState({
           status: 'loaded',
           content: result.content,
+          items: result.items,
           count: result.count,
           degraded: result.degraded,
           warnings: result.warnings,

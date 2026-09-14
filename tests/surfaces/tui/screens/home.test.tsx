@@ -238,11 +238,14 @@ describe('TUI: HomeScreen — busca inline (M2-07, #30)', () => {
     });
   });
 
-  it('resultado da busca renderiza o conteúdo devolvido por useIssueSearch', async () => {
+  // A tela renderiza os itens ESTRUTURADOS: o `content` é Markdown do bundle,
+  // com fences `<untrusted-content>` destinadas ao LLM — exibi-las seria ruído.
+  it('resultado da busca renderiza os itens, não o Markdown com fences', async () => {
     mockState({ status: 'loaded', issues: ISSUES });
     mockSearchState({
       status: 'loaded',
-      content: '# Resultados da busca (1)\n- **#7** — status: Nova — assunto de teste',
+      content: '# Resultados (1)\n- **#7** — <untrusted-content>assunto de teste</untrusted-content>',
+      items: [{ id: 7, subject: 'assunto de teste', status: 'Nova', assignee: 'Victor' }],
       count: 1,
       degraded: false,
       warnings: [],
@@ -252,6 +255,11 @@ describe('TUI: HomeScreen — busca inline (M2-07, #30)', () => {
     await vi.waitFor(() => {
       expect(lastFrame()).toContain('assunto de teste');
     });
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('#7');
+    expect(frame).toContain('Nova');
+    // A marcação do bundle NÃO chega à tela.
+    expect(frame).not.toContain('untrusted-content');
   });
 
   it('degradação (full-text indisponível) exibe o aviso presente no payload', async () => {
@@ -259,6 +267,7 @@ describe('TUI: HomeScreen — busca inline (M2-07, #30)', () => {
     mockSearchState({
       status: 'loaded',
       content: '> Aviso: Busca full-text indisponível.\n',
+      items: [],
       count: 0,
       degraded: true,
       warnings: ['Busca full-text indisponível (404 not found); exibindo apenas os filtros estruturados.'],

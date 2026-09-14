@@ -30,6 +30,14 @@ export interface UseListNavigationOptions {
    */
   isActive?: boolean;
   /**
+   * Itens saltados por uma "página" (setas ESQUERDA/DIREITA e PageUp/PageDown).
+   *
+   * Navegar item a item não escala: uma lista filtrada por status pode ter
+   * centenas de entradas. A tela deve passar a ALTURA da sua janela visível,
+   * para que uma página corresponda a uma tela cheia. Default: 10.
+   */
+  pageSize?: number;
+  /**
    * Cursor inicial — default `0`. Aplicado assim que `itemCount` deixa de
    * ser `0` pela primeira vez (clampado); mudanças subsequentes NÃO
    * reposicionam o cursor (preservação de seleção entre remounts — #31).
@@ -62,7 +70,7 @@ export function useListNavigation(
   itemCount: number,
   options: UseListNavigationOptions = {},
 ): UseListNavigationResult {
-  const { onSelect, isActive = true, initialIndex } = options;
+  const { onSelect, isActive = true, initialIndex, pageSize = 10 } = options;
   // Ref (não dep de efeito): a aplicação do `initialIndex` deve acontecer uma
   // única vez, na primeira vez que a lista deixa de estar vazia — mesmo que
   // `initialIndex` mude entre renders (ex.: o contexto de origem re-renderiza
@@ -91,6 +99,18 @@ export function useListNavigation(
 
       if (key.downArrow || input === 'j') {
         setSelectedIndex((current) => (current + 1) % itemCount);
+        return;
+      }
+
+      // Página: ao contrário de ↑/↓, NÃO dá a volta — saltar do topo para o fim
+      // da lista desorienta. Para nas bordas, como em qualquer paginador.
+      const page = Math.max(1, pageSize);
+      if (key.leftArrow || key.pageUp) {
+        setSelectedIndex((current) => Math.max(0, current - page));
+        return;
+      }
+      if (key.rightArrow || key.pageDown) {
+        setSelectedIndex((current) => Math.min(itemCount - 1, current + page));
         return;
       }
 
