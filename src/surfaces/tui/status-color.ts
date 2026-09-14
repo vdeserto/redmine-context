@@ -41,17 +41,29 @@ export function statusColor(theme: Theme, statusName: string): string {
  * issue na lista não contam histórias diferentes sobre a mesma palavra.
  *
  * `all` fica em `muted` de propósito: é a ausência de filtro, e um badge
- * chamativo aí competiria com o conteúdo. Os dois estados FILTRADOS puxam cor,
+ * chamativo aí competiria com o conteúdo. Qualquer estado FILTRADO puxa cor,
  * que é o sinal de "tem filtro ligado".
  *
  * Contraste: todos são tokens do tema, calibrados por paleta (as claras usam
  * cores saturadas, as escuras cores claras) — ver `./palettes.ts`.
  *
  * @param theme - Tema ativo.
- * @param filter - Filtro rápido corrente.
+ * @param filter - Filtro corrente (agregado ou id de status da instância).
+ * @param label - Nome do status, quando o filtro é um id — permite casar a cor
+ *   com a que a lista usa para aquele mesmo status.
  * @returns O token de cor do tema para o badge.
  */
-export function statusFilterColor(theme: Theme, filter: 'open' | 'closed' | 'all'): string {
+export function statusFilterColor(
+  theme: Theme,
+  filter: 'open' | 'closed' | 'all' | number,
+  label?: string,
+): string {
+  // Status ESPECÍFICO da instância: reusa a heurística por nome, para o badge
+  // do filtro e o badge de cada issue da lista combinarem ("Em Andamento" é
+  // warning nos dois lugares).
+  if (typeof filter === 'number') {
+    return label === undefined ? theme.primary : statusColor(theme, label);
+  }
   if (filter === 'open') return theme.primary;
   if (filter === 'closed') return theme.success;
   return theme.muted;

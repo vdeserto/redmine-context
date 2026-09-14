@@ -43,7 +43,16 @@ import { ReAuthAbortedError, useAuthGuard } from './use-auth-guard.js';
 export const DEFAULT_DEBOUNCE_MS = 300;
 
 /** Filtro rápido de status (tecla `f` cicla entre os três, ver `../screens/home.tsx`). */
-export type SearchStatusFilter = 'open' | 'closed' | 'all';
+/**
+ * Filtro de status da home/busca.
+ *
+ * `'all'`/`'open'`/`'closed'` são os agregados do Redmine; um NÚMERO é o id de
+ * um status específico da instância (`/issue_statuses.json`). Os agregados
+ * sozinhos não serviam: uma instância real tem uma dezena de status (Nova,
+ * Fila, Estimativa, Atribuída, Em Andamento, Validação...) e todos eles são
+ * "abertos" — alternar aberto/fechado devolvia exatamente a mesma lista.
+ */
+export type SearchStatusFilter = 'open' | 'closed' | 'all' | number;
 
 /**
  * Estado da busca, consumido por `../screens/home.tsx`. Mesmo vocabulário de
@@ -98,6 +107,7 @@ export interface UseIssueSearchResult {
  * @returns O valor de `status_id` para a query.
  */
 export function statusIdFor(filter: SearchStatusFilter): string {
+  if (typeof filter === 'number') return String(filter);
   if (filter === 'open') return 'open';
   if (filter === 'closed') return 'closed';
   return '*';
