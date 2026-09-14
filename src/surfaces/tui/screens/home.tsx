@@ -44,11 +44,12 @@ import { TextInput } from '../components/text-input.js';
 import { glyphs } from '../glyphs.js';
 import { useEscapeInterceptor } from '../hooks/use-escape-interceptor.js';
 import { isTyping } from '../hooks/use-typing-guard.js';
+import { listWindow } from '../list-window.js';
 import { statusFilterLabel, useStatusOptions } from '../hooks/use-status-options.js';
 import { useIssueSearch, type SearchStatusFilter } from '../hooks/use-issue-search.js';
 import { useListNavigation } from '../hooks/use-list-navigation.js';
 import { useMyIssues, type MyIssue } from '../hooks/use-my-issues.js';
-import { useTerminalWidth } from '../hooks/use-terminal-width.js';
+import { useTerminalHeight, useTerminalWidth } from '../hooks/use-terminal-width.js';
 import { useNavigation } from '../navigation.js';
 import { statusColor, statusFilterColor } from '../status-color.js';
 import { symbols } from '../symbols.js';
@@ -66,6 +67,11 @@ const SCREEN_PADDING_X = 2;
 // literal `[]` inline em cada render seria recriado a cada chamada,
 // invalidando memoizações a jusante (`useListNavigation`) sem necessidade.
 const EMPTY_ISSUES: MyIssue[] = [];
+
+/** Linhas ocupadas fora da lista (moldura, breadcrumb, cabeçalho, contador, rodapé). */
+const LIST_OVERHEAD_ROWS = 11;
+/** Piso da janela da lista (terminais muito baixos). */
+const LIST_MIN_HEIGHT = 5;
 
 /**
  * Espaço fixo ocupado pela linha FORA do subject (M2-16, #39): ponteiro (2),
@@ -277,6 +283,12 @@ export function HomeScreen() {
   }, []);
   useInput(handleJobsShortcut);
 
+  // Altura da lista: o terminal menos a moldura, breadcrumb, cabeçalho, contador
+  // e rodapé de atalhos. A lista rola DENTRO dessa janela em vez de empurrar o
+  // resto da tela para fora.
+  const listHeight = Math.max(LIST_MIN_HEIGHT, useTerminalHeight() - LIST_OVERHEAD_ROWS);
+  const listWindow_ = listWindow(issues.length, selectedIndex, listHeight);
+
   const searchState = search.state;
 
   return (
@@ -451,9 +463,23 @@ export function HomeScreen() {
 
           {state.status === 'loaded' ? (
             <Box marginTop={1} flexDirection="column">
-              {state.issues.map((issue, index) => (
-                <IssueRow key={issue.id} issue={issue} selected={index === selectedIndex} />
+              {/* Janela que ACOMPANHA o cursor: renderizar a lista inteira
+                  estourava a altura do terminal com centenas de itens — o
+                  rodapé saía da tela e o cursor, no topo, sumia. */}
+              {state.issues.slice(listWindow_.start, listWindow_.end).map((issue, index) => (
+                <IssueRow
+                  key={issue.id}
+                  issue={issue}
+                  selected={listWindow_.start + index === selectedIndex}
+                />
               ))}
+              {state.issues.length > listWindow_.end - listWindow_.start ? (
+                <Text color={theme.muted}>
+                  {`  ${listWindow_.start + 1}-${listWindow_.end} de ${state.issues.length}`}
+                  {listWindow_.start > 0 ? ` ${glyphs.arrowUp}` : ''}
+                  {listWindow_.end < state.issues.length ? ` ${glyphs.arrowDown}` : ''}
+                </Text>
+              ) : null}
             </Box>
           ) : null}
         </>
