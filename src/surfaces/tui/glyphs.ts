@@ -72,6 +72,10 @@ export interface Glyphs {
   readonly arrowUp: string;
   /** Seta "para baixo" das dicas de navegação. */
   readonly arrowDown: string;
+  /** Seta "para a esquerda" (página anterior nas listas longas). */
+  readonly arrowLeft: string;
+  /** Seta "para a direita" (próxima página nas listas longas). */
+  readonly arrowRight: string;
   /** Caractere da máscara de senha/api_key (`components/text-input.tsx`). */
   readonly maskBullet: string;
   /** Frames do spinner (`components/spinner.tsx`). */
@@ -89,6 +93,8 @@ export const UNICODE_GLYPHS: Glyphs = {
   emptyPlaceholder: '—',
   arrowUp: '↑',
   arrowDown: '↓',
+  arrowLeft: '←',
+  arrowRight: '→',
   maskBullet: '•',
   spinnerFrames: ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'],
   gaugeFull: '█',
@@ -102,6 +108,8 @@ export const ASCII_GLYPHS: Glyphs = {
   emptyPlaceholder: '-',
   arrowUp: '^',
   arrowDown: 'v',
+  arrowLeft: '<',
+  arrowRight: '>',
   maskBullet: '*',
   spinnerFrames: ['|', '/', '-', '\\'],
   gaugeFull: '#',

@@ -30,6 +30,7 @@
 import { useCallback, useRef } from 'react';
 import { Text, useInput } from 'ink';
 
+import { useTypingGuard } from '../hooks/use-typing-guard.js';
 import { useTheme } from '../theme.js';
 import { truncate, truncateStart } from '../truncate.js';
 
@@ -130,22 +131,40 @@ export function TextInput({
         return;
       }
       if (key.backspace || key.delete) {
-        onChangeRef.current(valueRef.current.slice(0, -1));
+        // A ref avança JUNTO com a emissão: sincronizá-la só no render (abaixo)
+        // faz duas teclas chegadas antes do commit do React partirem do mesmo
+        // valor velho — a última vencia e as anteriores se perdiam. Digitar uma
+        // URL em velocidade normal corrompia o campo.
+        const next = valueRef.current.slice(0, -1);
+        valueRef.current = next;
+        onChangeRef.current(next);
         return;
       }
-      // Reason: tecla ÚNICA reservada por um controle da tela pai (ex.: "f"
-      // cicla o filtro de status na busca da home, M2-07/#30) — ignorada
+      // Reason: tecla ÚNICA reservada por um controle da tela pai — ignorada
       // aqui para não virar texto digitado; a tela pai trata o mesmo evento
       // via seu próprio `useInput()`. Só bloqueia o caractere isolado, não
       // uma sequência colada maior que o contenha.
+      //
+      // Sem consumidor em produção hoje: o caso original ("f" ciclando o filtro
+      // da home) foi resolvido pelo caminho inverso — os ATALHOS é que se
+      // suspendem enquanto há campo ativo (`../hooks/use-typing-guard.ts`), o
+      // que cobre qualquer tecla sem a tela precisar declarar uma lista. A prop
+      // segue disponível e testada para o caso de uma tela precisar reservar
+      // uma tecla ESPECÍFICA mantendo os demais atalhos vivos.
       if (reservedCharsRef.current.includes(input)) {
         return;
       }
       if (input.length > 0) {
-        onChangeRef.current(valueRef.current + input);
+        const next = valueRef.current + input;
+        valueRef.current = next;
+        onChangeRef.current(next);
       }
   }, []);
 
+  // Suspende os atalhos de LETRA enquanto este campo captura teclado: o Ink
+  // entrega a tecla a todos os handlers, então sem isto um `q` digitado aqui
+  // dispararia o atalho global de sair (ver ../hooks/use-typing-guard.ts).
+  useTypingGuard(isActive);
   useInput(handleInput, { isActive });
 
   // Reason: cursor em bloco simples (inversão de cor, sem literal — não

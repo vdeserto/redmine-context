@@ -23,6 +23,7 @@ vi.mock('../../../../src/surfaces/tui/screens/loaded-issue-context.js', async (i
 
 import type { Issue } from '../../../../src/index.js';
 import * as useExportBundleModule from '../../../../src/surfaces/tui/hooks/use-export-bundle.js';
+import { resetTypingGuard } from '../../../../src/surfaces/tui/hooks/use-typing-guard.js';
 import type { ExportBundleState } from '../../../../src/surfaces/tui/hooks/use-export-bundle.js';
 import { JobRegistryProvider } from '../../../../src/surfaces/tui/job-registry.js';
 import { NavigationProvider, type NavigationValue } from '../../../../src/surfaces/tui/navigation.js';
@@ -102,6 +103,10 @@ function renderExport(nav: NavigationValue = navMock()) {
 }
 
 afterEach(() => {
+  // A guarda de digitação é um contador em nível de módulo: um campo montado
+  // e não desmontado vazaria o estado para o próximo teste, suspendendo
+  // atalhos que deveriam funcionar.
+  resetTypingGuard();
   // Reason (M2-16, #39): a tela agora usa `useTerminalWidth()`, que assina o
   // `resize` do `process.stdout` real — sem desmontar cada instância do Ink,
   // o listener sobrevive entre testes e acumula (`MaxListenersExceededWarning`
@@ -143,6 +148,31 @@ describe('TUI: ExportScreen — formulário (idle)', () => {
     expect(frame).toContain('JSON (.json)');
     expect(frame).toContain('Ambos (.md + .json)');
     expect(frame).toContain(process.cwd());
+  });
+
+  // Achado A1 do QA: o campo "Destino" e o atalho "b" convivem na mesma tela, e
+  // o Ink entrega a tecla aos DOIS handlers. Sem a guarda de digitação, um
+  // caminho como `~/backup/` ou `bundle.json` fechava a tela no meio da
+  // digitação (ver ../../../src/surfaces/tui/hooks/use-typing-guard.ts).
+  it('"b" digitado no campo Destino NÃO fecha a tela', async () => {
+    mockIssue(ISSUE);
+    mockExportState({ status: 'idle' });
+    const nav = navMock();
+    const { stdin, lastFrame } = renderExport(nav);
+
+    // Tab move o foco para o destino — espera o PONTEIRO de foco, não só o
+    // rótulo (que existe o tempo todo), senão o `b` chega antes do campo ativar.
+    stdin.write(TAB);
+    await vi.waitFor(() => {
+      const destinoLine = (lastFrame() ?? '').split('\n').find((line) => line.includes('Destino:'));
+      expect(destinoLine).toContain(symbols.pointer);
+    });
+
+    stdin.write('bu');
+
+    // A tela continua de pé e nenhuma navegação aconteceu.
+    await vi.waitFor(() => expect(lastFrame() ?? '').toContain('Exportar bundle'));
+    expect(nav.pop).not.toHaveBeenCalled();
   });
 
   it('"j"/"k" navegam a lista de formato quando o campo de formato está focado', async () => {

@@ -68,6 +68,10 @@ export {
   type IssueSearchResult,
 } from './fetch-issue-search.js';
 
+// Item estruturado da busca — a TUI renderiza a partir daqui em vez do Markdown
+// do bundle, que carrega as fences `<untrusted-content>` destinadas ao LLM.
+export type { SearchListItem } from './bundle/index.js';
+
 // Primitiva full-text `/search.json` (usada pela orquestração acima).
 export { searchIssues, type SearchIssuesOptions, type SearchIssuesPage } from './client/index.js';
 

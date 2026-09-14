@@ -308,3 +308,86 @@ describe('useMyIssues: abandono do re-login — ReAuthAbortedError (fix do revie
     expect(guardSpy).toHaveBeenCalledTimes(2);
   });
 });
+
+/**
+ * Filtro rápido de status na LISTA (PR #198).
+ *
+ * Antes do #198 o filtro só alimentava a busca — a lista ignorava `f`. A
+ * tradução do filtro para `status_id` vive em `statusIdFor` (compartilhada com
+ * `use-issue-search.ts`), mas nenhum teste checava que `useMyIssues` a APLICA:
+ * a suíte só afirmava `assigned_to_id: 'me'`. Sem estes casos, remover o
+ * `status_id` da query não quebraria nada.
+ */
+describe('useMyIssues: filtro rápido de status na query (#198)', () => {
+  /** Últimos `filters` com que `listIssues` foi chamado. */
+  function lastFilters(): Record<string, unknown> {
+    const calls = vi.mocked(core.listIssues).mock.calls;
+    const last = calls.at(-1);
+    return (last?.[1] as { filters: Record<string, unknown> }).filters;
+  }
+
+  async function renderWithFilter(options: UseMyIssuesOptions) {
+    vi.mocked(core.resolveApiKey).mockResolvedValue(API_KEY);
+    vi.mocked(core.createHttpClient).mockReturnValue(FAKE_HTTP_CLIENT);
+    vi.mocked(core.listIssues).mockResolvedValue([
+      { id: 1, subject: 'Corrigir bug X', status: { id: 1, name: 'Nova' } },
+    ]);
+    const { lastFrame } = render(<Harness options={options} />);
+    await vi.waitFor(() => expect(lastFrame()).toContain('status:loaded'));
+    return lastFrame;
+  }
+
+  // Caso esperado: os dois estados FILTRADOS viram o `status_id` do Redmine.
+  it('statusFilter "open"/"closed" viram status_id na query, junto de assigned_to_id', async () => {
+    await renderWithFilter({ env: { REDMINE_URL: BASE_URL }, statusFilter: 'open' });
+    expect(lastFilters()).toEqual(
+      expect.objectContaining({ assigned_to_id: 'me', status_id: 'open' }),
+    );
+
+    vi.mocked(core.listIssues).mockClear();
+    await renderWithFilter({ env: { REDMINE_URL: BASE_URL }, statusFilter: 'closed' });
+    expect(lastFilters()).toEqual(
+      expect.objectContaining({ assigned_to_id: 'me', status_id: 'closed' }),
+    );
+  });
+
+  // Edge: "all" NÃO é ausência de parâmetro — o Redmine devolve só as abertas
+  // por omissão, então "todas" precisa do curinga `*` explícito.
+  it('statusFilter "all" manda o curinga "*" (o default do Redmine seria só abertas)', async () => {
+    await renderWithFilter({ env: { REDMINE_URL: BASE_URL }, statusFilter: 'all' });
+    expect(lastFilters()).toEqual(expect.objectContaining({ status_id: '*' }));
+  });
+
+  // Edge: sem a opção, o hook tem que se comportar como "all" — as chamadas
+  // antigas (`useMyIssues()`) não podem mudar de significado.
+  it('sem statusFilter, o default equivale a "all"', async () => {
+    await renderWithFilter({ env: { REDMINE_URL: BASE_URL } });
+    expect(lastFilters()).toEqual(expect.objectContaining({ status_id: '*' }));
+  });
+
+  // Failure case: trocar o filtro tem que REFAZER a busca (era o bug — a lista
+  // não reagia). Uma chamada só, sem loop de efeito.
+  it('trocar o filtro refaz a busca exatamente uma vez (sem loop nem refetch duplicado)', async () => {
+    vi.mocked(core.resolveApiKey).mockResolvedValue(API_KEY);
+    vi.mocked(core.createHttpClient).mockReturnValue(FAKE_HTTP_CLIENT);
+    vi.mocked(core.listIssues).mockResolvedValue([
+      { id: 1, subject: 'Corrigir bug X', status: { id: 1, name: 'Nova' } },
+    ]);
+
+    const env = { REDMINE_URL: BASE_URL };
+    const { lastFrame, rerender } = render(
+      <Harness options={{ env, statusFilter: 'all' }} />,
+    );
+    await vi.waitFor(() => expect(lastFrame()).toContain('status:loaded'));
+    expect(core.listIssues).toHaveBeenCalledTimes(1);
+
+    rerender(<Harness options={{ env, statusFilter: 'open' }} />);
+    await vi.waitFor(() => expect(core.listIssues).toHaveBeenCalledTimes(2));
+    expect(lastFilters()).toEqual(expect.objectContaining({ status_id: 'open' }));
+
+    // Re-render com o MESMO filtro não dispara busca nova.
+    rerender(<Harness options={{ env, statusFilter: 'open' }} />);
+    await vi.waitFor(() => expect(lastFrame()).toContain('status:loaded'));
+    expect(core.listIssues).toHaveBeenCalledTimes(2);
+  });
+});

@@ -35,6 +35,7 @@ import {
   resolveApiKey,
   RedmineForbiddenError,
   type CredentialCascadeOptions,
+  type SearchListItem,
 } from '../../../index.js';
 import { useEnvFallbackAllowed } from '../instance.js';
 import { ReAuthAbortedError, useAuthGuard } from './use-auth-guard.js';
@@ -43,7 +44,16 @@ import { ReAuthAbortedError, useAuthGuard } from './use-auth-guard.js';
 export const DEFAULT_DEBOUNCE_MS = 300;
 
 /** Filtro rápido de status (tecla `f` cicla entre os três, ver `../screens/home.tsx`). */
-export type SearchStatusFilter = 'open' | 'closed' | 'all';
+/**
+ * Filtro de status da home/busca.
+ *
+ * `'all'`/`'open'`/`'closed'` são os agregados do Redmine; um NÚMERO é o id de
+ * um status específico da instância (`/issue_statuses.json`). Os agregados
+ * sozinhos não serviam: uma instância real tem uma dezena de status (Nova,
+ * Fila, Estimativa, Atribuída, Em Andamento, Validação...) e todos eles são
+ * "abertos" — alternar aberto/fechado devolvia exatamente a mesma lista.
+ */
+export type SearchStatusFilter = 'open' | 'closed' | 'all' | number;
 
 /**
  * Estado da busca, consumido por `../screens/home.tsx`. Mesmo vocabulário de
@@ -55,7 +65,16 @@ export type SearchStatusFilter = 'open' | 'closed' | 'all';
 export type IssueSearchState =
   | { status: 'idle' }
   | { status: 'loading' }
-  | { status: 'loaded'; content: string; count: number; degraded: boolean; warnings: string[] }
+  | {
+      status: 'loaded';
+      /** Markdown do bundle (com as fences) — mantido para quem precisar dele. */
+      content: string;
+      /** Itens ESTRUTURADOS: é o que a tela renderiza (ver ../screens/home.tsx). */
+      items: readonly SearchListItem[];
+      count: number;
+      degraded: boolean;
+      warnings: string[];
+    }
   | { status: 'error-network'; message: string }
   | { status: 'error-forbidden'; message: string }
   | { status: 'auth-aborted'; message: string };
@@ -87,8 +106,18 @@ export interface UseIssueSearchResult {
   clear: () => void;
 }
 
-/** Mapeia o filtro rápido de status para o `status_id` de `/issues.json` (`*` = todas). */
-function statusIdFor(filter: SearchStatusFilter): string {
+/**
+ * Mapeia o filtro rápido de status para o `status_id` de `/issues.json`
+ * (`*` = todas).
+ *
+ * Exportada porque a LISTA da home (`./use-my-issues.ts`) aplica o mesmo filtro
+ * que a busca — duas traduções separadas divergiriam.
+ *
+ * @param filter - Filtro rápido escolhido na tela.
+ * @returns O valor de `status_id` para a query.
+ */
+export function statusIdFor(filter: SearchStatusFilter): string {
+  if (typeof filter === 'number') return String(filter);
   if (filter === 'open') return 'open';
   if (filter === 'closed') return 'closed';
   return '*';
@@ -192,6 +221,7 @@ export function useIssueSearch(
         setState({
           status: 'loaded',
           content: result.content,
+          items: result.items,
           count: result.count,
           degraded: result.degraded,
           warnings: result.warnings,

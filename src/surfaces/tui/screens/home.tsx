@@ -20,7 +20,7 @@
  * retry.
  *
  * M2-07 (#30) acrescenta a busca/filtros inline: `/` abre um `TextInput`
- * QUANDO a home está ativa; `f` cicla o filtro com a busca FECHADA (badge no
+ * QUANDO a home está ativa; `f` abre o seletor de status com a busca FECHADA (badge no
  * cabeçalho); Esc fecha a busca sem refetch, interceptado via
  * `../hooks/use-escape-interceptor.ts` para não desempilhar a home.
  *
@@ -43,14 +43,18 @@ import { Spinner } from '../components/spinner.js';
 import { TextInput } from '../components/text-input.js';
 import { glyphs } from '../glyphs.js';
 import { useEscapeInterceptor } from '../hooks/use-escape-interceptor.js';
+import { isTyping } from '../hooks/use-typing-guard.js';
+import { listWindow } from '../list-window.js';
+import { statusFilterLabel, useStatusOptions } from '../hooks/use-status-options.js';
 import { useIssueSearch, type SearchStatusFilter } from '../hooks/use-issue-search.js';
 import { useListNavigation } from '../hooks/use-list-navigation.js';
 import { useMyIssues, type MyIssue } from '../hooks/use-my-issues.js';
-import { useTerminalWidth } from '../hooks/use-terminal-width.js';
+import { useTerminalHeight, useTerminalWidth } from '../hooks/use-terminal-width.js';
 import { useNavigation } from '../navigation.js';
-import { statusColor } from '../status-color.js';
+import { statusColor, statusFilterColor } from '../status-color.js';
 import { symbols } from '../symbols.js';
 import { useTheme } from '../theme.js';
+import type { SearchListItem } from '../../../index.js';
 import { truncate } from '../truncate.js';
 import { useHomeSelection } from './home-selection.js';
 
@@ -65,19 +69,14 @@ const SCREEN_PADDING_X = 2;
 // invalidando memoizações a jusante (`useListNavigation`) sem necessidade.
 const EMPTY_ISSUES: MyIssue[] = [];
 
-/** Rótulo do badge de cada filtro rápido de status (tecla `f` cicla, M2-07/#30). */
-const STATUS_FILTER_LABELS: Record<SearchStatusFilter, string> = {
-  open: 'aberta',
-  closed: 'fechada',
-  all: 'todas',
-};
-
-/** Próximo filtro no ciclo `aberta → fechada → todas → aberta` (tecla `f`). */
-function nextStatusFilter(current: SearchStatusFilter): SearchStatusFilter {
-  if (current === 'open') return 'closed';
-  if (current === 'closed') return 'all';
-  return 'open';
-}
+/**
+ * Linhas ocupadas fora da lista NESTA tela (breadcrumb, cabeçalho, contador,
+ * rodapé, paddings). A moldura da aplicação não entra: o shell já entrega a
+ * altura sem ela (ver `TerminalHeightProvider` em `../app.tsx`).
+ */
+const LIST_OVERHEAD_ROWS = 9;
+/** Piso da janela da lista (terminais muito baixos). */
+const LIST_MIN_HEIGHT = 5;
 
 /**
  * Espaço fixo ocupado pela linha FORA do subject (M2-16, #39): ponteiro (2),
@@ -94,6 +93,31 @@ function fixedRowOverhead(idLength: number, statusLength: number): number {
 }
 
 /** Uma linha da lista: `#id` em `theme.muted`, subject truncado ao orçamento de largura, badge de status. */
+/**
+ * Uma linha de RESULTADO DE BUSCA.
+ *
+ * Espelha o layout do {@link IssueRow} (id · assunto · status), mas a partir do
+ * item estruturado da busca — sem passar pelo Markdown do bundle, que traria as
+ * fences `<untrusted-content>` para a tela.
+ */
+function SearchResultRow({ item, selected }: { item: SearchListItem; selected: boolean }) {
+  const theme = useTheme();
+  const terminalWidth = useTerminalWidth();
+  const overhead = fixedRowOverhead(String(item.id).length, item.status.length);
+  const subjectBudget = Math.max(terminalWidth - overhead, MIN_SUBJECT_WIDTH);
+  return (
+    <Box>
+      <Text color={theme.primary}>{selected ? `${symbols.pointerSmall} ` : '  '}</Text>
+      <Text color={theme.muted}>#{item.id} </Text>
+      <Text {...(selected ? { color: theme.primary } : {})}>
+        {truncate(item.subject ?? '(sem assunto)', subjectBudget)}
+      </Text>
+      <Text color={statusColor(theme, item.status)}> [{item.status}]</Text>
+      <Text color={theme.muted}> {item.assignee}</Text>
+    </Box>
+  );
+}
+
 function IssueRow({ issue, selected }: { issue: MyIssue; selected: boolean }) {
   const theme = useTheme();
   const terminalWidth = useTerminalWidth();
@@ -120,7 +144,6 @@ function IssueRow({ issue, selected }: { issue: MyIssue; selected: boolean }) {
 export function HomeScreen() {
   const theme = useTheme();
   const { push } = useNavigation();
-  const { state, retry } = useMyIssues();
   // #31: índice preservado entre remounts + registro de qual issue foi aberta
   // (ver o JSDoc do módulo e de `./home-selection.js`).
   const { selectedIndex: persistedIndex, setSelectedIndex: persistIndex, setSelectedIssueId } =
@@ -129,8 +152,31 @@ export function HomeScreen() {
   // --- Busca/filtros inline (M2-07, #30) ---
   const [isSearching, setIsSearching] = useState(false);
   const [query, setQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState<SearchStatusFilter>('all');
-  const search = useIssueSearch(query, statusFilter);
+  // Default ABERTAS, não "todas": a home é a lista de trabalho. Com `all` o
+  // Redmine devolve o histórico inteiro (centenas de fechadas), que estoura a
+  // tela e enterra o que importa — era o default implícito antes do filtro
+  // chegar à lista (a API omite fechadas quando `status_id` não é enviado).
+  const [statusFilter, setStatusFilter] = useState<SearchStatusFilter>('open');
+  // Seletor de status (#30, revisto): `f` abre uma LISTA em vez de ciclar às
+  // cegas — a instância tem uma dezena de status e o usuário não tem como
+  // adivinhar qual vem a seguir num ciclo.
+  const [isPickingStatus, setIsPickingStatus] = useState(false);
+  const statusOptions = useStatusOptions();
+  const [statusIndex, setStatusIndex] = useState(0);
+  // Seleção dentro dos RESULTADOS da busca: achar o chamado e não conseguir
+  // abrir é o mesmo que não ter achado. As setas não são texto, então navegam
+  // os resultados enquanto o campo continua recebendo letras.
+  const [searchIndex, setSearchIndex] = useState(0);
+  const searchIndexRef = useRef(searchIndex);
+  searchIndexRef.current = searchIndex;
+  // O filtro só vai para a BUSCA quando ela está aberta: com ela fechada, quem
+  // aplica o status é a lista (abaixo), e passar o filtro aqui dispararia um
+  // request cujo resultado nunca é renderizado — dois GETs por `f` em vez de um.
+  const search = useIssueSearch(query, isSearching ? statusFilter : 'all');
+  // O filtro rápido (`f`) precisa valer para a LISTA visível — antes ele só
+  // alimentava a busca, cujos resultados só aparecem com a busca ABERTA, então
+  // trocar o status não mudava nada na tela.
+  const { state, retry } = useMyIssues({ statusFilter });
 
   // Handler ESTÁVEL: `search.clear` é a única dependência mutável (mas já é
   // estável por construção, ver `use-issue-search.ts`) — fecha a busca e
@@ -138,14 +184,29 @@ export function HomeScreen() {
   const closeSearch = useCallback(() => {
     setIsSearching(false);
     setQuery('');
-    setStatusFilter('all');
+    // O filtro de status NÃO é resetado: desde que ele governa a LISTA (e não
+    // só a busca), zerá-lo aqui desfazia uma escolha que o usuário fez ANTES de
+    // abrir a busca — `f`, depois `/`, depois `Esc` devolvia [Todas].
     search.clear();
   }, [search.clear]);
   // Desvia o Esc GLOBAL (`../app.tsx`) enquanto a busca está aberta — sem
   // isso, Esc desempilharia a home inteira em vez de só fechar a busca.
+  // Resultado novo, cursor no topo: manter o índice de uma busca anterior faria
+  // o Enter abrir uma issue que não é a que está sob o cursor.
+  useEffect(() => {
+    setSearchIndex(0);
+    searchIndexRef.current = 0;
+  }, [query, statusFilter]);
+
   useEscapeInterceptor(isSearching, closeSearch);
+  const closeStatusPicker = useCallback(() => setIsPickingStatus(false), []);
+  useEscapeInterceptor(isPickingStatus, closeStatusPicker);
 
   const issues = state.status === 'loaded' ? state.issues : EMPTY_ISSUES;
+  // Altura da lista: o terminal menos a moldura, breadcrumb, cabeçalho, contador
+  // e rodapé. A lista rola DENTRO dessa janela em vez de empurrar o resto da
+  // tela para fora — e a mesma altura é o salto de uma página.
+  const listHeight = Math.max(LIST_MIN_HEIGHT, useTerminalHeight() - LIST_OVERHEAD_ROWS);
 
   // Handlers ESTÁVEIS (useCallback + refs, padrão do repo): identidade nova a
   // cada render des/re-subscreve o useInput e pode perder uma tecla rápida.
@@ -164,8 +225,13 @@ export function HomeScreen() {
   // última posição persistida (sobrevive ao unmount via home-selection).
   const { selectedIndex } = useListNavigation(issues.length, {
     onSelect: handleSelect,
-    isActive: !isSearching,
+    // Também desligada com o SELETOR DE STATUS aberto: o Ink entrega a tecla a
+    // todos os handlers, então o Enter que aplica o filtro abria a issue
+    // selecionada por baixo, ao mesmo tempo.
+    isActive: !isSearching && !isPickingStatus,
     initialIndex: persistedIndex,
+    // Uma página = uma tela da janela visível (ver ../list-window.ts).
+    pageSize: listHeight,
   });
 
   // Espelha `selectedIndex` ao contexto — a cópia externa sobrevive ao
@@ -182,6 +248,16 @@ export function HomeScreen() {
   statusRef.current = state.status;
   const isSearchingRef = useRef(isSearching);
   isSearchingRef.current = isSearching;
+  const isPickingStatusRef = useRef(isPickingStatus);
+  isPickingStatusRef.current = isPickingStatus;
+  const optionsRef = useRef(statusOptions);
+  optionsRef.current = statusOptions;
+  const statusIndexRef = useRef(statusIndex);
+  statusIndexRef.current = statusIndex;
+  const filterRef = useRef(statusFilter);
+  filterRef.current = statusFilter;
+  const searchItemsRef = useRef<readonly SearchListItem[]>([]);
+  searchItemsRef.current = search.state.status === 'loaded' ? search.state.items : [];
   const handleRetryInput = useCallback((input: string) => {
     // M2-07 (#30): "r" digitado como texto de busca não deve disparar retry.
     if (isSearchingRef.current) return;
@@ -197,31 +273,94 @@ export function HomeScreen() {
   }, []);
   useInput(handleRetryInput);
 
-  // "/" abre a busca; "f" cicla o filtro rápido de status (só com a busca já
-  // aberta). Reason: dentro do campo de texto, "f" digitado NÃO vira
-  // caractere da query — é a tecla de controle do filtro, trade-off
-  // Com a busca ABERTA, toda letra pertence à query (buscar "workflow" exige
-  // digitar "f") — o ciclo de filtro por "f" só vale com a busca fechada.
+  // "/" abre a busca; "f" abre o seletor de status. Ambos só FORA de campo de
+  // texto: com a busca aberta toda letra pertence à query (buscar "workflow"
+  // exige digitar "f") — ver ../hooks/use-typing-guard.ts.
   const handleSearchControlInput = useCallback((input: string) => {
-    if (input === '/' && !isSearchingRef.current) {
+    if (isPickingStatusRef.current) return;
+    if (input === '/' && !isTyping()) {
       setIsSearching(true);
       return;
     }
-    if (input === 'f' && !isSearchingRef.current) {
-      setStatusFilter((current) => nextStatusFilter(current));
+    if (input === 'f' && !isTyping()) {
+      // Abre já posicionado no filtro atual, para o usuário ver onde está.
+      const start = Math.max(0, optionsRef.current.findIndex((o) => o.value === filterRef.current));
+      statusIndexRef.current = start;
+      setStatusIndex(start);
+      setIsPickingStatus(true);
     }
   }, []);
   useInput(handleSearchControlInput);
+
+  // Navegação do seletor de status.
+  const handleStatusPickerInput = useCallback(
+    (input: string, key: { upArrow: boolean; downArrow: boolean; return: boolean }) => {
+      if (!isPickingStatusRef.current) return;
+      const total = optionsRef.current.length;
+      // A ref avança JUNTO com o estado: sincronizá-la só no render faz o
+      // `Enter` logo após um `j`/`k` ler o índice ANTIGO (o React ainda não
+      // commitou) e aplicar o filtro errado — mesmo defeito que o TextInput
+      // tinha ao perder teclas digitadas rápido.
+      const move = (delta: number): void => {
+        const next = (statusIndexRef.current + delta + total) % total;
+        statusIndexRef.current = next;
+        setStatusIndex(next);
+      };
+      if (key.upArrow || input === 'k') {
+        move(-1);
+        return;
+      }
+      if (key.downArrow || input === 'j') {
+        move(1);
+        return;
+      }
+      if (key.return) {
+        const picked = optionsRef.current[statusIndexRef.current];
+        if (picked !== undefined) setStatusFilter(picked.value);
+        setIsPickingStatus(false);
+      }
+    },
+    [],
+  );
+  useInput(handleStatusPickerInput);
+
+  // Navegação dos RESULTADOS da busca (setas + Enter). O campo de texto ignora
+  // setas e Enter, então não há disputa: as letras seguem indo para a query.
+  const handleSearchResultsInput = useCallback(
+    (_input: string, key: { upArrow: boolean; downArrow: boolean; return: boolean }) => {
+      const items = searchItemsRef.current;
+      if (!isSearchingRef.current || items.length === 0) return;
+      if (key.upArrow) {
+        setSearchIndex((i) => (i - 1 + items.length) % items.length);
+        return;
+      }
+      if (key.downArrow) {
+        setSearchIndex((i) => (i + 1) % items.length);
+        return;
+      }
+      if (key.return) {
+        const picked = items[searchIndexRef.current];
+        if (picked !== undefined) {
+          setSelectedIssueIdRef.current(picked.id);
+          pushRef.current('issue-detail');
+        }
+      }
+    },
+    [],
+  );
+  useInput(handleSearchResultsInput);
 
   // #34 (M2-11): "t" abre o painel de jobs da sessão (`./jobs.js`) — só fora
   // da busca (mesma guarda de "/"/"f" acima: dentro do campo, "t" é texto da
   // query, não um atalho).
   const handleJobsShortcut = useCallback((input: string) => {
-    if (input === 't' && !isSearchingRef.current) {
+    if (input === 't' && !isTyping()) {
       pushRef.current('jobs');
     }
   }, []);
   useInput(handleJobsShortcut);
+
+  const listWindow_ = listWindow(issues.length, selectedIndex, listHeight);
 
   const searchState = search.state;
 
@@ -231,13 +370,60 @@ export function HomeScreen() {
         <Text color={theme.primary}>
           Minhas issues
         </Text>
-        <Text color={theme.muted}> [{STATUS_FILTER_LABELS[statusFilter]}]</Text>
-        {!isSearching ? (
+        <Text color={statusFilterColor(theme, statusFilter, statusFilterLabel(statusOptions, statusFilter))}>
+          {' '}
+          [{statusFilterLabel(statusOptions, statusFilter)}]
+        </Text>
+        {/* A contagem é o SINAL de que o filtro foi aplicado: sem ela, trocar
+            para um status que devolve o mesmo conjunto parecia não fazer nada. */}
+        {state.status === 'loaded' ? (
+          <Text color={theme.muted}>
+            {` ${glyphs.middleDot} ${issues.length} ${issues.length === 1 ? 'issue' : 'issues'}`}
+          </Text>
+        ) : null}
+        {!isSearching && !isPickingStatus ? (
           <Text color={theme.muted}>
             {`  / busca ${glyphs.middleDot} f filtro ${glyphs.middleDot} t jobs`}
           </Text>
         ) : null}
       </Box>
+
+      {isPickingStatus ? (
+        <Box marginTop={1} flexDirection="column">
+          <Text color={theme.primary}>Filtrar por status</Text>
+          {statusOptions.map((option, i) => {
+            const selected = i === statusIndex;
+            const current = option.value === statusFilter;
+            // Divisor entre os AGREGADOS do Redmine e os status da instância:
+            // sem ele, "Fechadas" (agregado) e "Fechada" (status) ficam coladas
+            // e parecem duplicata.
+            const firstConcrete = typeof option.value === 'number' && typeof statusOptions[i - 1]?.value !== 'number';
+            return (
+              <Box key={String(option.value)} flexDirection="column">
+                {firstConcrete ? (
+                  <Text color={theme.border}>{`  ${'─'.repeat(18)}`}</Text>
+                ) : null}
+              <Box>
+                <Text color={selected ? theme.primary : theme.muted}>
+                  {selected ? symbols.pointer : ' '}{' '}
+                </Text>
+                <Text color={statusFilterColor(theme, option.value, option.label)}>
+                  {option.label}
+                </Text>
+                {current ? <Text color={theme.muted}> {symbols.tick} atual</Text> : null}
+              </Box>
+              </Box>
+            );
+          })}
+          <Box marginTop={1}>
+            <Text color={theme.muted}>
+              <Text color={theme.accent}>{`${glyphs.arrowUp}/${glyphs.arrowDown}`}</Text> escolhe{' '}
+              {glyphs.middleDot} <Text color={theme.accent}>Enter</Text> aplica {glyphs.middleDot}{' '}
+              <Text color={theme.accent}>Esc</Text> cancela
+            </Text>
+          </Box>
+        </Box>
+      ) : null}
 
       {isSearching ? (
         <Box marginTop={1} flexDirection="column">
@@ -249,12 +435,15 @@ export function HomeScreen() {
               placeholder={`digite para buscar${glyphs.ellipsis}`}
               isActive={isSearching}
             />
-            <Text color={theme.muted}> [{STATUS_FILTER_LABELS[statusFilter]}]</Text>
+            <Text color={statusFilterColor(theme, statusFilter, statusFilterLabel(statusOptions, statusFilter))}>
+              {' '}
+              [{statusFilterLabel(statusOptions, statusFilter)}]
+            </Text>
           </Box>
 
           {searchState.status === 'idle' ? (
             <Box marginTop={1}>
-              <Text color={theme.muted}>Digite para buscar ou pressione f para ciclar o filtro de status.</Text>
+              <Text color={theme.muted}>Digite para buscar. Esc fecha a busca (o filtro de status é o f com a busca fechada).</Text>
             </Box>
           ) : null}
 
@@ -273,7 +462,17 @@ export function HomeScreen() {
                   {symbols.warning} {searchState.warnings.join(' ')}
                 </Text>
               ) : null}
-              <Text>{searchState.content}</Text>
+              {/* Renderiza os itens ESTRUTURADOS, não o Markdown do bundle: o
+                  `content` carrega fences `<untrusted-content>` — marcação
+                  anti prompt-injection destinada ao LLM, que na interface é só
+                  ruído para quem lê. */}
+              {searchState.items.length === 0 ? (
+                <Text color={theme.muted}>nenhuma issue encontrada</Text>
+              ) : (
+                searchState.items.map((item, index) => (
+                  <SearchResultRow key={item.id} item={item} selected={index === searchIndex} />
+                ))
+              )}
             </Box>
           ) : null}
 
@@ -347,9 +546,23 @@ export function HomeScreen() {
 
           {state.status === 'loaded' ? (
             <Box marginTop={1} flexDirection="column">
-              {state.issues.map((issue, index) => (
-                <IssueRow key={issue.id} issue={issue} selected={index === selectedIndex} />
+              {/* Janela que ACOMPANHA o cursor: renderizar a lista inteira
+                  estourava a altura do terminal com centenas de itens — o
+                  rodapé saía da tela e o cursor, no topo, sumia. */}
+              {state.issues.slice(listWindow_.start, listWindow_.end).map((issue, index) => (
+                <IssueRow
+                  key={issue.id}
+                  issue={issue}
+                  selected={listWindow_.start + index === selectedIndex}
+                />
               ))}
+              {state.issues.length > listWindow_.end - listWindow_.start ? (
+                <Text color={theme.muted}>
+                  {`  ${listWindow_.start + 1}-${listWindow_.end} de ${state.issues.length}`}
+                  {listWindow_.start > 0 ? ` ${glyphs.arrowUp}` : ''}
+                  {listWindow_.end < state.issues.length ? ` ${glyphs.arrowDown}` : ''}
+                </Text>
+              ) : null}
             </Box>
           ) : null}
         </>
@@ -365,10 +578,10 @@ export function HomeScreen() {
                 Esc
               </Text>{' '}
               fecha a busca,{' '}
-              <Text color={theme.accent}>
-                f
-              </Text>{' '}
-              cicla o filtro.
+              <Text color={theme.accent}>{`${glyphs.arrowUp}/${glyphs.arrowDown}`}</Text> navega os
+              resultados,{' '}
+              <Text color={theme.accent}>Enter</Text> abre. O filtro é o{' '}
+              <Text color={theme.accent}>f</Text> com a busca fechada.
             </>
           ) : (
             <>
@@ -376,6 +589,10 @@ export function HomeScreen() {
                 {`${glyphs.arrowUp}/${glyphs.arrowDown}`}
               </Text>{' '}
               navega,{' '}
+              <Text color={theme.accent}>
+                {`${glyphs.arrowLeft}/${glyphs.arrowRight}`}
+              </Text>{' '}
+              página,{' '}
               <Text color={theme.accent}>
                 Enter
               </Text>{' '}

@@ -26,11 +26,13 @@ vi.mock('../../../../src/surfaces/tui/hooks/use-issue-search.js', async (importO
   return { ...actual, useIssueSearch: vi.fn() };
 });
 
+import { symbols } from '../../../../src/surfaces/tui/symbols.js';
 import {
   consumeEscapeInterceptor,
   resetEscapeInterceptor,
 } from '../../../../src/surfaces/tui/hooks/use-escape-interceptor.js';
 import * as useIssueSearchModule from '../../../../src/surfaces/tui/hooks/use-issue-search.js';
+import { resetTypingGuard } from '../../../../src/surfaces/tui/hooks/use-typing-guard.js';
 import type { IssueSearchState } from '../../../../src/surfaces/tui/hooks/use-issue-search.js';
 import * as useMyIssuesModule from '../../../../src/surfaces/tui/hooks/use-my-issues.js';
 import type { MyIssuesState } from '../../../../src/surfaces/tui/hooks/use-my-issues.js';
@@ -97,6 +99,10 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  // A guarda de digitação é um contador em nível de módulo: um campo montado
+  // e não desmontado vazaria o estado para o próximo teste, suspendendo
+  // atalhos que deveriam funcionar.
+  resetTypingGuard();
   // Reason: `HomeScreen` registra um interceptor de Esc em nível de módulo
   // (`use-escape-interceptor.ts`) enquanto a busca está aberta — sem
   // desmontar/resetar entre testes, um teste anterior poderia deixar o
@@ -229,15 +235,18 @@ describe('TUI: HomeScreen — busca inline (M2-07, #30)', () => {
 
     stdin.write('bug');
     await vi.waitFor(() => {
-      expect(spy).toHaveBeenLastCalledWith('bug', 'all');
+      expect(spy).toHaveBeenLastCalledWith('bug', 'open');
     });
   });
 
-  it('resultado da busca renderiza o conteúdo devolvido por useIssueSearch', async () => {
+  // A tela renderiza os itens ESTRUTURADOS: o `content` é Markdown do bundle,
+  // com fences `<untrusted-content>` destinadas ao LLM — exibi-las seria ruído.
+  it('resultado da busca renderiza os itens, não o Markdown com fences', async () => {
     mockState({ status: 'loaded', issues: ISSUES });
     mockSearchState({
       status: 'loaded',
-      content: '# Resultados da busca (1)\n- **#7** — status: Nova — assunto de teste',
+      content: '# Resultados (1)\n- **#7** — <untrusted-content>assunto de teste</untrusted-content>',
+      items: [{ id: 7, subject: 'assunto de teste', status: 'Nova', assignee: 'Victor' }],
       count: 1,
       degraded: false,
       warnings: [],
@@ -247,6 +256,11 @@ describe('TUI: HomeScreen — busca inline (M2-07, #30)', () => {
     await vi.waitFor(() => {
       expect(lastFrame()).toContain('assunto de teste');
     });
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('#7');
+    expect(frame).toContain('Nova');
+    // A marcação do bundle NÃO chega à tela.
+    expect(frame).not.toContain('untrusted-content');
   });
 
   it('degradação (full-text indisponível) exibe o aviso presente no payload', async () => {
@@ -254,6 +268,7 @@ describe('TUI: HomeScreen — busca inline (M2-07, #30)', () => {
     mockSearchState({
       status: 'loaded',
       content: '> Aviso: Busca full-text indisponível.\n',
+      items: [],
       count: 0,
       degraded: true,
       warnings: ['Busca full-text indisponível (404 not found); exibindo apenas os filtros estruturados.'],
@@ -265,24 +280,188 @@ describe('TUI: HomeScreen — busca inline (M2-07, #30)', () => {
     });
   });
 
-  it('"f" com a busca FECHADA cicla o filtro (badge no cabeçalho)', async () => {
+  // `f` abre um SELETOR em vez de ciclar: a instância tem uma dezena de status
+  // (Nova, Fila, Atribuída, Em Andamento…) e todos são "abertos" — ciclar
+  // aberto/fechado devolvia a mesma lista e parecia que nada acontecia.
+  it('"f" abre o seletor de status com os agregados e o atual marcado', async () => {
     mockState({ status: 'loaded', issues: ISSUES });
-    const spy = mockSearchState();
+    mockSearchState();
     const { lastFrame, stdin } = renderHome();
-    await vi.waitFor(() => expect(lastFrame()).toContain('todas'));
+    await vi.waitFor(() => expect(lastFrame()).toContain('[Abertas]'));
 
     stdin.write('f');
-    await vi.waitFor(() => expect(lastFrame()).toContain('aberta'));
-    expect(spy).toHaveBeenLastCalledWith('', 'open');
 
-    stdin.write('f');
-    await vi.waitFor(() => expect(lastFrame()).toContain('fechada'));
-
-    stdin.write('f');
-    await vi.waitFor(() => expect(lastFrame()).toContain('todas'));
+    await vi.waitFor(() => expect(lastFrame()).toContain('Filtrar por status'));
+    const frame = lastFrame() ?? '';
+    expect(frame).toContain('Todas');
+    expect(frame).toContain('Abertas');
+    expect(frame).toContain('Fechadas');
+    // O default (`open`) aparece marcado como atual.
+    expect(frame).toContain('atual');
+    expect(frame).toContain('Enter');
+    expect(frame).toContain('Esc');
   });
 
-  it('"f" com a busca ABERTA digita na query (buscar "workflow" é possível) e NÃO cicla o filtro', async () => {
+  it('Enter no seletor aplica o filtro escolhido à lista', async () => {
+    mockState({ status: 'loaded', issues: ISSUES });
+    mockSearchState();
+    const { lastFrame, stdin } = renderHome();
+    await vi.waitFor(() => expect(lastFrame()).toContain('[Abertas]'));
+
+    stdin.write('f');
+    await vi.waitFor(() => expect(lastFrame()).toContain('Filtrar por status'));
+
+    // Sobe uma posição: de "Abertas" para "Todas".
+    stdin.write('k');
+    stdin.write(ENTER);
+
+    await vi.waitFor(() => expect(lastFrame()).toContain('[Todas]'));
+    expect(useMyIssuesModule.useMyIssues).toHaveBeenLastCalledWith(
+      expect.objectContaining({ statusFilter: 'all' }),
+    );
+  });
+
+  // Regressão: o Ink entrega a tecla a TODOS os handlers, então o Enter que
+  // aplica o filtro abria também a issue selecionada por baixo.
+  it('Enter no seletor NÃO abre a issue selecionada', async () => {
+    mockState({ status: 'loaded', issues: ISSUES });
+    mockSearchState();
+    const nav = navMock();
+    const { lastFrame, stdin } = renderHome(nav);
+    await vi.waitFor(() => expect(lastFrame()).toContain('[Abertas]'));
+
+    stdin.write('f');
+    await vi.waitFor(() => expect(lastFrame()).toContain('Filtrar por status'));
+    stdin.write(ENTER);
+
+    await vi.waitFor(() => expect(lastFrame()).not.toContain('Filtrar por status'));
+    expect(nav.push).not.toHaveBeenCalled();
+  });
+
+  it('Esc cancela o seletor sem mudar o filtro', async () => {
+    mockState({ status: 'loaded', issues: ISSUES });
+    mockSearchState();
+    const { lastFrame, stdin } = renderHome();
+    await vi.waitFor(() => expect(lastFrame()).toContain('[Abertas]'));
+
+    stdin.write('f');
+    await vi.waitFor(() => expect(lastFrame()).toContain('Filtrar por status'));
+    expect(consumeEscapeInterceptor()).toBe(true);
+
+    await vi.waitFor(() => expect(lastFrame()).not.toContain('Filtrar por status'));
+    expect(lastFrame()).toContain('[Abertas]');
+  });
+
+  it('o filtro escolhido no seletor chega à LISTA (useMyIssues), não só à busca', async () => {
+    mockState({ status: 'loaded', issues: ISSUES });
+    mockSearchState();
+    const { lastFrame, stdin } = renderHome();
+    await vi.waitFor(() => expect(lastFrame()).toContain('[Abertas]'));
+
+    stdin.write('f');
+    await vi.waitFor(() => expect(lastFrame()).toContain('Filtrar por status'));
+    // Desce de "Abertas" para "Fechadas".
+    stdin.write('j');
+    stdin.write(ENTER);
+
+    await vi.waitFor(() => expect(lastFrame()).toContain('[Fechadas]'));
+    expect(useMyIssuesModule.useMyIssues).toHaveBeenLastCalledWith(
+      expect.objectContaining({ statusFilter: 'closed' }),
+    );
+  });
+
+  // Regressão: o filtro é escolhido ANTES da busca e governa a LISTA — fechar a
+  // busca não pode desfazer essa escolha (achado M1 da auditoria de QA).
+  it('Esc na busca PRESERVA o filtro escolhido para a lista', async () => {
+    mockState({ status: 'loaded', issues: ISSUES });
+    mockSearchState();
+    const { lastFrame, stdin } = renderHome();
+    await vi.waitFor(() => expect(lastFrame()).toContain('[Abertas]'));
+
+    // Escolhe "Fechadas" no seletor.
+    stdin.write('f');
+    await vi.waitFor(() => expect(lastFrame()).toContain('Filtrar por status'));
+    stdin.write('j');
+    stdin.write(ENTER);
+    await vi.waitFor(() => expect(lastFrame()).toContain('[Fechadas]'));
+
+    // Abre a busca e fecha com Esc, sem tocar no filtro.
+    stdin.write('/');
+    await vi.waitFor(() => expect(lastFrame()).toContain('digite para buscar'));
+    expect(consumeEscapeInterceptor()).toBe(true);
+
+    await vi.waitFor(() => expect(lastFrame()).not.toContain('digite para buscar'));
+    expect(lastFrame()).toContain('[Fechadas]');
+    expect(useMyIssuesModule.useMyIssues).toHaveBeenLastCalledWith(
+      expect.objectContaining({ statusFilter: 'closed' }),
+    );
+  });
+
+
+  // Achar o chamado e não conseguir abrir é o mesmo que não ter achado: a
+  // navegação da LISTA fica desligada durante a busca (as teclas pertencem ao
+  // campo), então os resultados precisam da sua própria.
+  describe('navegação nos resultados da busca', () => {
+    const ITENS = [
+      { id: 71219, subject: 'Primeiro resultado', status: 'Fechada', assignee: 'Victor' },
+      { id: 71119, subject: 'Segundo resultado', status: 'Fechada', assignee: 'Victor' },
+    ];
+
+    function buscaCom(items: typeof ITENS) {
+      mockState({ status: 'loaded', issues: ISSUES });
+      mockSearchState({
+        status: 'loaded',
+        content: '',
+        items,
+        count: items.length,
+        degraded: false,
+        warnings: [],
+      });
+    }
+
+    it('setas movem o cursor entre os resultados', async () => {
+      buscaCom(ITENS);
+      const { lastFrame, stdin } = renderHome();
+      stdin.write('/');
+      await vi.waitFor(() => expect(lastFrame()).toContain('Primeiro resultado'));
+
+      // O primeiro começa selecionado; a seta move para o segundo.
+      stdin.write(ARROW_DOWN);
+      await vi.waitFor(() => {
+        const linha = (lastFrame() ?? '').split('\n').find((l) => l.includes('Segundo resultado'));
+        expect(linha).toContain(symbols.pointerSmall);
+      });
+    });
+
+    it('Enter abre a issue sob o cursor', async () => {
+      buscaCom(ITENS);
+      const nav = navMock();
+      const { lastFrame, stdin } = renderHome(nav);
+      stdin.write('/');
+      await vi.waitFor(() => expect(lastFrame()).toContain('Primeiro resultado'));
+
+      stdin.write(ARROW_DOWN);
+      stdin.write(ENTER);
+
+      await vi.waitFor(() => expect(nav.push).toHaveBeenCalledWith('issue-detail'));
+    });
+
+    // Failure case: sem resultados, Enter não pode navegar para lugar nenhum.
+    it('Enter não faz nada quando a busca não devolveu resultados', async () => {
+      buscaCom([]);
+      const nav = navMock();
+      const { lastFrame, stdin } = renderHome(nav);
+      stdin.write('/');
+      await vi.waitFor(() => expect(lastFrame()).toContain('nenhuma issue encontrada'));
+
+      stdin.write(ENTER);
+
+      await vi.waitFor(() => expect(lastFrame()).toContain('nenhuma issue encontrada'));
+      expect(nav.push).not.toHaveBeenCalled();
+    });
+  });
+
+  it('"f" com a busca ABERTA digita na query (buscar "workflow" é possível) e NÃO abre o seletor', async () => {
     mockState({ status: 'loaded', issues: ISSUES });
     mockSearchState();
     const { lastFrame, stdin } = renderHome();
@@ -291,9 +470,10 @@ describe('TUI: HomeScreen — busca inline (M2-07, #30)', () => {
 
     stdin.write('f');
     await vi.waitFor(() => expect(lastFrame()).toMatch(/Buscar: f/));
-    // Filtro permaneceu no default (não ciclou para "aberta"):
-    expect(lastFrame()).toContain('todas');
-    expect(lastFrame()).not.toContain('[aberta]');
+    // O filtro permaneceu no default e o SELETOR não abriu — dentro do campo,
+    // "f" é texto.
+    expect(lastFrame()).toContain('[Abertas]');
+    expect(lastFrame()).not.toContain('Filtrar por status');
   });
 
   it('Esc (via consumeEscapeInterceptor) fecha a busca e restaura a lista original SEM nova chamada', async () => {
@@ -356,7 +536,7 @@ describe('TUI: HomeScreen — painel de jobs (#34)', () => {
 
     stdin.write('t');
     await vi.waitFor(() => {
-      expect(spy).toHaveBeenLastCalledWith('t', 'all');
+      expect(spy).toHaveBeenLastCalledWith('t', 'open');
     });
     expect(nav.push).not.toHaveBeenCalledWith('jobs');
   });

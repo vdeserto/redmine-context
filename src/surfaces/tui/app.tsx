@@ -36,12 +36,17 @@ import { Box, Text, useApp, useInput, useStdout } from 'ink';
 import type { SettingsStore } from '../../index.js';
 import { Breadcrumb } from './components/breadcrumb.js';
 import { isUnicodeSupported } from './glyphs.js';
-import { TerminalSizeProvider, useTerminalHeight } from './hooks/use-terminal-width.js';
+import {
+  TerminalHeightProvider,
+  TerminalSizeProvider,
+  useTerminalHeight,
+} from './hooks/use-terminal-width.js';
 import { applyTerminalColors } from './terminal-colors.js';
 import { ReAuthAbortedError } from './hooks/use-auth-guard.js';
 import { consumeEscapeInterceptor } from './hooks/use-escape-interceptor.js';
 import { useExitGuard } from './hooks/use-exit-guard.js';
 import { useOnboardingCallbacks } from './hooks/use-onboarding-callbacks.js';
+import { isTyping } from './hooks/use-typing-guard.js';
 import { JobRegistryProvider } from './job-registry.js';
 import { NavigationProvider, useNavigation, useNavigationStack } from './navigation.js';
 import { HomeSelectionProvider } from './screens/home-selection.js';
@@ -89,6 +94,9 @@ export function borderStyleFor(unicode: boolean): 'round' | 'classic' {
 
 /** Estilo resolvido para o ambiente atual — decidido uma vez, no import. */
 const BORDER_STYLE = borderStyleFor(isUnicodeSupported());
+
+/** Linhas consumidas pela moldura (topo + base). */
+const BORDER_ROWS = 2;
 
 export type EscapeAction = { kind: 'abort-reauth'; origin: ScreenName } | { kind: 'pop' };
 
@@ -241,7 +249,10 @@ function AppShell() {
   const abortReAuthRef = useRef(abortReAuth);
   abortReAuthRef.current = abortReAuth;
   const handleGlobalInput = useCallback((input: string, key: { escape: boolean }) => {
-    if (input === 'q') {
+    // `q` só sai FORA de campo de texto: o Ink entrega a tecla a todos os
+    // handlers, então sem esta guarda digitar uma URL com "q" (ou uma senha)
+    // fecharia a TUI no meio do onboarding (ver ./hooks/use-typing-guard.ts).
+    if (input === 'q' && !isTyping()) {
       exitRef.current();
       return;
     }
@@ -289,7 +300,7 @@ function AppShell() {
     // terminal (o que empurraria o topo para fora no modo full-screen).
     <Box
       flexDirection="column"
-      minHeight={Math.max(1, rows - 2)}
+      minHeight={Math.max(1, rows - BORDER_ROWS)}
       borderStyle={BORDER_STYLE}
       borderColor={theme.border}
     >
@@ -300,7 +311,11 @@ function AppShell() {
         </Box>
       ) : null}
       <Box flexGrow={1} flexDirection="column">
-        <Screen />
+        {/* As telas enxergam a altura JÁ sem as linhas da moldura — quem desenha
+            a borda é quem sabe quanto ela custa. */}
+        <TerminalHeightProvider height={Math.max(1, rows - BORDER_ROWS)}>
+          <Screen />
+        </TerminalHeightProvider>
       </Box>
     </Box>
   );

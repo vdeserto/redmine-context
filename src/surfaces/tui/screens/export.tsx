@@ -53,6 +53,7 @@ import { useExportBundle, type ExportFormat } from '../hooks/use-export-bundle.j
 import { useListNavigation } from '../hooks/use-list-navigation.js';
 import { useJobRegistry } from '../job-registry.js';
 import { useTerminalWidth } from '../hooks/use-terminal-width.js';
+import { isTyping } from '../hooks/use-typing-guard.js';
 import { useNavigation } from '../navigation.js';
 import { symbols } from '../symbols.js';
 import { useTheme } from '../theme.js';
@@ -192,8 +193,11 @@ export function ExportScreen() {
       return;
     }
     // "b" não interrompe uma exportação em andamento — evita voltar no meio
-    // de uma gravação em disco.
-    if (input === 'b' && stateStatusRef.current !== 'exporting') {
+    // de uma gravação em disco — nem dispara enquanto o campo "Destino" está
+    // capturando teclado: o Ink entrega a tecla aos dois handlers, então um
+    // caminho como `~/backup/` ou `bundle.json` fecharia a tela no meio da
+    // digitação (ver ../hooks/use-typing-guard.ts).
+    if (input === 'b' && !isTyping() && stateStatusRef.current !== 'exporting') {
       popRef.current();
       return;
     }
