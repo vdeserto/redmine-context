@@ -1,5 +1,154 @@
 # redmine-context
 
+## 1.2.0
+
+### Minor Changes
+
+- 41a3d79: Paginação na lista: `←`/`→` saltam uma tela por vez.
+
+  Navegar item a item não escala — uma lista filtrada por status pode ter centenas
+  de entradas, e chegar ao fim exigia segurar a seta para baixo. As setas
+  HORIZONTAIS não tinham uso na lista e passam a paginar (junto de `PageUp`/
+  `PageDown`, para quem tem as teclas).
+
+  Uma página equivale à ALTURA da janela visível, então cada salto troca a tela
+  inteira. Ao contrário de `↑`/`↓`, a paginação NÃO dá a volta: para nas bordas,
+  como em qualquer paginador — pular do topo direto para o fim da lista desorienta.
+
+- 3717cdf: Filtro por status REAL da instância, com seletor visível.
+
+  O filtro da home ciclava entre `todas → abertas → fechadas`. Numa instância real
+  isso não filtra nada: todos os status de trabalho (Nova, Fila, Estimativa,
+  Atribuída, Em Andamento, Aguardando, Validação…) são ABERTOS, então alternar
+  entre "todas" e "abertas" devolvia exatamente a mesma lista — e o filtro parecia
+  quebrado.
+
+  Agora `f` abre um **seletor** com os status da própria instância
+  (`/issue_statuses.json`, já memoizado), cada um na cor que a lista usa para ele,
+  com o atual marcado e os agregados (`Todas`/`Abertas`/`Fechadas`) separados dos
+  status concretos. Navega com `↑/↓`, aplica com `Enter`, cancela com `Esc` — o
+  mesmo padrão da tela de Aparência.
+
+  Três decisões de UX vieram de ver a tela com dados reais:
+
+  - **Ciclo → lista.** Ciclar às cegas não diz quais opções existem; com uma dezena
+    de status, o usuário não tem como adivinhar o que vem a seguir.
+  - **Contagem no cabeçalho** (`[Em Andamento] · 4 issues`). Sem ela, aplicar um
+    filtro que devolve o mesmo conjunto parece não fazer nada — foi o que levou o
+    filtro a ser reportado como quebrado.
+  - **Default `Abertas`, não `Todas`.** Com `all`, o Redmine devolve o histórico
+    inteiro (centenas de fechadas), que estoura a tela e enterra o trabalho atual.
+
+  Corrige também o `Enter` do seletor, que aplicava o filtro **e** abria a issue
+  selecionada por baixo: o Ink entrega a tecla a todos os handlers, então a
+  navegação da lista precisa ficar inativa enquanto o seletor está aberto.
+
+### Patch Changes
+
+- 41a3d79: Busca da TUI não mostra mais a marcação `<untrusted-content>`.
+
+  A tela renderizava o Markdown devolvido pelo core, que embrulha todo texto vindo
+  do Redmine em fences `<untrusted-content>`. Essa marcação existe para o LLM — é
+  a barreira anti prompt-injection do bundle — e não tem função nenhuma numa
+  interface: o usuário via as tags em volta de cada assunto de issue.
+
+  O resultado da busca passa a expor os itens ESTRUTURADOS (`items`) além do
+  Markdown, e a TUI renderiza a partir deles, com o mesmo layout da lista
+  principal (id, assunto truncado, status colorido, responsável). O `content`
+  continua disponível para quem precisa do Markdown — o MCP, que é justamente
+  quem deve receber as fences.
+
+  Corrige também o rodapé da busca, que ainda mandava apertar `f` para "ciclar o
+  filtro": `f` abre o seletor de status e só funciona com a busca FECHADA, porque
+  dentro do campo toda letra é texto.
+
+- 64d1bdd: Lista da home rola numa janela, em vez de estourar a tela.
+
+  A home renderizava TODAS as issues de uma vez. Com a lista curta (as abertas de
+  uma pessoa) isso passava despercebido; filtrando por um status com centenas de
+  itens — 288 fechadas, no caso real — a lista transbordava a altura do terminal,
+  empurrava o rodapé de atalhos para fora e levava junto o cursor, que começa no
+  topo: não dava para saber onde a seleção estava.
+
+  Agora só a fatia visível é renderizada, numa janela que ACOMPANHA o cursor (ele
+  fica ao meio sempre que possível, e a janela gruda nas pontas). Um contador
+  `1-28 de 288 ↓` mostra a posição na lista inteira.
+
+  A janela é função pura de `(total, selecionado, altura)` — sem offset guardado,
+  que precisaria ser sincronizado com a seleção, com a troca de filtro e com o
+  redimensionamento do terminal.
+
+- 8cfdd9a: Corrige o texto embaralhado na tela de detalhe e a busca sem como abrir a issue.
+
+  **Resultados da busca não eram navegáveis.** Achar o chamado e não conseguir
+  abri-lo é o mesmo que não ter achado: a navegação da lista fica desligada
+  enquanto a busca está aberta (as teclas pertencem ao campo) e os resultados não
+  tinham navegação própria. Agora `↑`/`↓` percorrem os resultados — setas não são
+  texto, então não disputam com a query — e `Enter` abre. O cursor volta ao topo
+  quando a consulta muda, senão o `Enter` abriria uma issue de uma busca anterior.
+
+  **Texto sobreposto no detalhe**, com o fim de um parágrafo colado no meio de
+  outro. Eram três causas somadas, todas quebrando a mesma invariante — o viewport
+  conta ITENS como linhas de tela:
+
+  - um journal detail de edição de descrição carrega o texto INTEIRO, com quebras
+    de linha, nos dois lados da alteração: um único item virava dezenas de linhas.
+    Um resumo de alteração é de uma linha por definição, então o valor é achatado
+    (no bundle isso também tirava a fence do lugar) e cortado na exibição — o
+    conteúdo completo segue na seção Descrição;
+  - a moldura da aplicação consome 2 linhas e as telas não sabiam disso. Em vez de
+    cada tela carregar uma constante acoplada ao shell, o shell passou a entregar
+    a altura já descontada (`TerminalHeightProvider`);
+  - qualquer linha mais larga que a tela era quebrada pelo Ink em duas. As linhas
+    do viewport passam a truncar, garantindo a invariante mesmo se o cálculo de
+    largura errar.
+
+- 380fbf5: Corrige dois bugs de teclado/filtro na TUI.
+
+  **`q` fechava a TUI no meio da digitação.** O Ink entrega cada tecla a TODOS os
+  `useInput` registrados — um campo de texto ativo não consome a tecla. O atalho
+  global de sair não tinha guarda, então digitar uma URL com "q" no onboarding
+  (`https://redmine.qualquer...`), ou uma senha que contivesse a letra, encerrava
+  o aplicativo. Agora qualquer `TextInput` ativo suspende os atalhos de LETRA
+  (`src/surfaces/tui/hooks/use-typing-guard.ts`), no mesmo desenho do interceptor
+  de `Esc` que já existia. Atalhos com modificador (`Ctrl+C`) seguem livres, pois
+  não colidem com texto.
+
+  **Trocar o filtro de status não mudava nada na tela.** O `f` alimentava apenas a
+  busca, cujos resultados só são renderizados com a busca ABERTA — com ela fechada,
+  o rótulo `[Abertas]` mudava no cabeçalho mas a lista continuava idêntica. Agora o
+  filtro chega à lista de "Minhas issues" (`status_id` na query), usando a MESMA
+  tradução da busca para as duas não divergirem.
+
+  A dica na tela também estava errada: "pressione f para ciclar o filtro" aparecia
+  dentro da busca aberta, exatamente onde `f` é texto e não atalho.
+
+  **O mesmo bug existia no `b` da tela de exportação.** O campo "Destino" e o
+  atalho de voltar convivem na mesma tela, então digitar um caminho como
+  `~/backup/` ou `bundle.json` fechava a tela no meio da digitação. A guarda foi
+  construída como mecanismo geral mas estava ligada em um único ponto — agora a
+  tela de exportação também a consulta.
+
+  **Teclas perdidas ao digitar rápido.** A ref do valor do `TextInput` era
+  sincronizada apenas no render, então duas teclas chegadas antes do commit do
+  React partiam do mesmo valor antigo e a última vencia: digitar uma URL em
+  velocidade normal corrompia o campo (`abcdefgh` virava `h`). A ref passa a
+  avançar junto com a emissão, na escrita e no backspace.
+
+  **Fechar a busca não apaga mais o filtro.** Com o filtro governando a LISTA,
+  resetá-lo ao fechar a busca desfazia uma escolha feita ANTES de abri-la — `f`,
+  `/`, `Esc` devolvia [Todas].
+
+  **Um request a menos por `f`.** Com a busca fechada, o filtro ia também para o
+  hook de busca, que fazia uma chamada de rede cujo resultado nunca era
+  renderizado. Agora o filtro só chega à busca quando ela está aberta.
+
+  **Badge do filtro colorido.** `[Abertas]`/`[Fechadas]` puxam cor do tema (sinal
+  de filtro ativo); `[Todas]` fica discreto, por ser a ausência de filtro. As cores
+  concordam com a heurística de status já usada nas listas — "fechado" é `success`
+  nos dois lugares — e saem sempre de tokens da paleta, calibrados para contraste
+  tanto nas claras quanto nas escuras.
+
 ## 1.1.0
 
 ### Minor Changes
