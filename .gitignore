@@ -14,3 +14,9 @@ coverage/
 
 # Vídeo do demo: o GIF é versionado (vitrine do README); o mp4 é subproduto do vhs.
 demo/*.mp4
+
+# Bundles exportados com `redmine-context issue <id> --out .` caem na raiz como
+# <id>.md/<id>.json e trazem dados reais da instância (inclusive dados pessoais).
+# Nunca versionar.
+/[0-9]*.md
+/[0-9]*.json
