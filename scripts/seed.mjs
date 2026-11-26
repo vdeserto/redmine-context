@@ -6,6 +6,7 @@
 // Cria 1 projeto (identifier fixo `rc-fixtures`) e 3 issues enriquecidas.
 // É idempotente: cada recurso é verificado via GET antes de qualquer POST/PUT,
 // então re-execuções não duplicam nada (nem journals, relations ou anexos).
+// Projeto e journal usam a idempotência por marca de scripts/lib/seed-helpers.mjs.
 // Ao final, asserções via GET validam as contagens e o processo sai com código
 // != 0 se algo estiver errado.
 //
@@ -36,14 +37,7 @@
 // Infra script (fora de src/): não usa console. Loga em stderr via helper.
 
 import { existsSync, readFileSync } from 'node:fs';
-
-/** Loga uma linha em stderr (o eslint proíbe console; isto é script de infra). */
-const log = (msg) => process.stderr.write(`[seed] ${msg}\n`);
-
-const BASE = (process.env.REDMINE_URL ?? 'http://localhost:3080').replace(/\/+$/, '');
-const USER = process.env.REDMINE_ADMIN_USER ?? 'admin';
-const PASS = process.env.REDMINE_ADMIN_PASSWORD ?? 'admin';
-const AUTH = 'Basic ' + Buffer.from(`${USER}:${PASS}`).toString('base64');
+import { BASE, USER, api, ensureByMarker, getIssue, log, putIssue, uploadBytes } from './lib/seed-helpers.mjs';
 
 const PROJECT_ID = 'rc-fixtures';
 const PROJECT_NAME = 'RC Fixtures';
@@ -84,35 +78,6 @@ const ISSUES = [
 ];
 
 /**
- * Chama a REST API do Redmine com Basic auth.
- * @param {string} method
- * @param {string} path
- * @param {unknown} [body]
- * @returns {Promise<{ status: number, ok: boolean, json: any, text: string }>}
- */
-async function api(method, path, body) {
-  const res = await fetch(BASE + path, {
-    method,
-    headers: {
-      Authorization: AUTH,
-      'Content-Type': 'application/json',
-      Accept: 'application/json',
-    },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  const text = await res.text();
-  let json = null;
-  if (text) {
-    try {
-      json = JSON.parse(text);
-    } catch {
-      json = null;
-    }
-  }
-  return { status: res.status, ok: res.ok, json, text };
-}
-
-/**
  * Preflight: falha alto se a auth admin não funciona.
  *
  * O ambiente (docker/docker-compose.yml) já deixa a API utilizável sem passo
@@ -132,46 +97,43 @@ async function preflightAuth() {
   log(`preflight ok: autenticado como ${me.json.user.login} (id ${me.json.user.id})`);
 }
 
-/** Garante o projeto `rc-fixtures` (GET antes de POST). */
+/** Garante o projeto `rc-fixtures` (marca = identifier). */
 async function ensureProject() {
-  const got = await api('GET', `/projects/${PROJECT_ID}.json`);
-  if (got.status === 200) {
-    log(`projeto ${PROJECT_ID} já existe (id ${got.json?.project?.id})`);
-    return;
-  }
-  if (got.status !== 404) {
-    throw new Error(`GET projeto inesperado: status ${got.status} — ${got.text}`);
-  }
-  const created = await api('POST', '/projects.json', {
-    project: {
-      name: PROJECT_NAME,
-      identifier: PROJECT_ID,
-      description: 'Projeto de fixtures do redmine-context (seed base M1-02.2).',
-      is_public: true,
-    },
+  await ensureByMarker('project', PROJECT_ID, async () => {
+    const created = await api('POST', '/projects.json', {
+      project: {
+        name: PROJECT_NAME,
+        identifier: PROJECT_ID,
+        description: 'Projeto de fixtures do redmine-context (seed base M1-02.2).',
+        is_public: true,
+      },
+    });
+    if (created.status !== 201) {
+      throw new Error(`POST projeto falhou: status ${created.status} — ${created.text}`);
+    }
+    return created.json?.project;
   });
-  if (created.status !== 201) {
-    throw new Error(`POST projeto falhou: status ${created.status} — ${created.text}`);
-  }
-  log(`projeto ${PROJECT_ID} criado (id ${created.json?.project?.id})`);
 }
 
 /**
- * Lista os subjects das issues do projeto (todas as páginas necessárias).
- * @returns {Promise<Set<string>>}
+ * Ids das issues do projeto por subject (chave de idempotência das issues).
+ * @returns {Promise<Map<string, number>>}
  */
-async function existingSubjects() {
+async function issueIdsBySubject() {
   const got = await api('GET', `/issues.json?project_id=${PROJECT_ID}&status_id=*&limit=100`);
   if (got.status !== 200) {
     throw new Error(`GET issues falhou: status ${got.status} — ${got.text}`);
   }
-  const list = Array.isArray(got.json?.issues) ? got.json.issues : [];
-  return new Set(list.map((/** @type {{ subject: string }} */ i) => i.subject));
+  const ids = new Map();
+  for (const issue of got.json?.issues ?? []) {
+    ids.set(issue.subject, issue.id);
+  }
+  return ids;
 }
 
 /** Garante as 3 issues fixas (busca por subject antes de criar). */
 async function ensureIssues() {
-  const present = await existingSubjects();
+  const present = await issueIdsBySubject();
   for (const issue of ISSUES) {
     if (present.has(issue.subject)) {
       log(`issue já existe: "${issue.subject}"`);
@@ -192,32 +154,11 @@ async function ensureIssues() {
 }
 
 /**
- * GET de uma issue com includes opcionais (ex.: 'journals,attachments').
- * @param {number} id
- * @param {string} [include]
- * @returns {Promise<any>} objeto `issue`
- */
-async function getIssue(id, include) {
-  const q = include ? `?include=${include}` : '';
-  const got = await api('GET', `/issues/${id}.json${q}`);
-  if (got.status !== 200) {
-    throw new Error(`GET issue ${id} falhou: status ${got.status} — ${got.text}`);
-  }
-  return got.json.issue;
-}
-
-/**
  * Resolve os ids das ISSUES fixas na ordem definida (casando por subject).
  * @returns {Promise<number[]>} ids alinhados ao array ISSUES
  */
 async function resolveIssueIds() {
-  const got = await api('GET', `/issues.json?project_id=${PROJECT_ID}&status_id=*&limit=100`);
-  if (got.status !== 200) {
-    throw new Error(`GET issues falhou: status ${got.status} — ${got.text}`);
-  }
-  const bySubject = new Map(
-    (got.json?.issues ?? []).map((/** @type {{ subject: string, id: number }} */ i) => [i.subject, i.id]),
-  );
+  const bySubject = await issueIdsBySubject();
   return ISSUES.map((issue) => {
     const id = bySubject.get(issue.subject);
     if (typeof id !== 'number') {
@@ -243,28 +184,6 @@ async function severidadeFieldId() {
 }
 
 /**
- * Adiciona um comentário (journal) via PUT notes — só se ainda não houver um
- * journal do seed (marcado por JOURNAL_MARKER). Idempotente.
- * @param {number} id
- * @param {string} note
- */
-async function ensureJournal(id, note) {
-  const issue = await getIssue(id, 'journals');
-  const has = (issue.journals ?? []).some(
-    (/** @type {{ notes?: string }} */ j) => typeof j.notes === 'string' && j.notes.includes(JOURNAL_MARKER),
-  );
-  if (has) {
-    log(`issue ${id}: journal já presente`);
-    return;
-  }
-  const put = await api('PUT', `/issues/${id}.json`, { issue: { notes: note } });
-  if (put.status !== 204 && put.status !== 200) {
-    throw new Error(`PUT journal issue ${id} falhou: status ${put.status} — ${put.text}`);
-  }
-  log(`issue ${id}: journal criado`);
-}
-
-/**
  * Define o valor do custom field Severidade se ainda não estiver no valor
  * esperado. Idempotente.
  * @param {number} id
@@ -278,10 +197,7 @@ async function ensureCustomField(id, fieldId, value) {
     log(`issue ${id}: Severidade já = ${value}`);
     return;
   }
-  const put = await api('PUT', `/issues/${id}.json`, { issue: { custom_fields: [{ id: fieldId, value }] } });
-  if (put.status !== 204 && put.status !== 200) {
-    throw new Error(`PUT custom field issue ${id} falhou: status ${put.status} — ${put.text}`);
-  }
+  await putIssue(id, { custom_fields: [{ id: fieldId, value }] }, 'custom field');
   log(`issue ${id}: Severidade = ${value}`);
 }
 
@@ -296,10 +212,7 @@ async function ensureParent(childId, parentId) {
     log(`issue ${childId}: parent já = ${parentId}`);
     return;
   }
-  const put = await api('PUT', `/issues/${childId}.json`, { issue: { parent_issue_id: parentId } });
-  if (put.status !== 204 && put.status !== 200) {
-    throw new Error(`PUT parent issue ${childId} falhou: status ${put.status} — ${put.text}`);
-  }
+  await putIssue(childId, { parent_issue_id: parentId }, 'parent');
   log(`issue ${childId}: parent = ${parentId}`);
 }
 
@@ -333,32 +246,6 @@ async function ensureRelation(fromId, toId, type) {
 }
 
 /**
- * Faz upload de bytes (octet-stream) e retorna o token.
- * @param {Buffer} bytes
- * @returns {Promise<string>}
- */
-async function uploadBytes(bytes) {
-  const res = await fetch(BASE + '/uploads.json', {
-    method: 'POST',
-    headers: {
-      Authorization: AUTH,
-      'Content-Type': 'application/octet-stream',
-      Accept: 'application/json',
-    },
-    body: bytes,
-  });
-  const text = await res.text();
-  if (res.status !== 201) {
-    throw new Error(`POST upload falhou: status ${res.status} — ${text}`);
-  }
-  const token = text ? JSON.parse(text)?.upload?.token : null;
-  if (!token) {
-    throw new Error('POST upload não retornou token');
-  }
-  return token;
-}
-
-/**
  * Anexa um arquivo à issue, se ainda não houver um com esse nome.
  * Idempotente (só faz upload quando vai realmente anexar).
  * @param {number} id
@@ -374,12 +261,7 @@ async function ensureAttachment(id, filename, bytes, contentType = 'text/plain')
     return;
   }
   const token = await uploadBytes(bytes);
-  const put = await api('PUT', `/issues/${id}.json`, {
-    issue: { uploads: [{ token, filename, content_type: contentType }] },
-  });
-  if (put.status !== 204 && put.status !== 200) {
-    throw new Error(`PUT anexo issue ${id} falhou: status ${put.status} — ${put.text}`);
-  }
+  await putIssue(id, { uploads: [{ token, filename, content_type: contentType }] }, 'anexo');
   log(`issue ${id}: anexo ${filename} criado`);
 }
 
@@ -404,7 +286,10 @@ async function enrichIssues(ids) {
     if (id === undefined || fx === undefined) {
       continue;
     }
-    await ensureJournal(id, `${JOURNAL_MARKER} ${fx.note}`);
+    // Journal do seed = notes começando com JOURNAL_MARKER.
+    await ensureByMarker('journal', JOURNAL_MARKER, async () => {
+      await putIssue(id, { notes: `${JOURNAL_MARKER} ${fx.note}` }, 'journal');
+    }, id);
     await ensureCustomField(id, fieldId, fx.severity);
   }
 
