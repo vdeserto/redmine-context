@@ -3,7 +3,7 @@
  * Sem rede: o `fetch` global é trocado por um dublê que responde por URL.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { api, ensureByMarker, putIssue } from '../../scripts/lib/seed-helpers.mjs';
+import { api, ensureByMarker, getIssue, putIssue, uploadBytes } from '../../scripts/lib/seed-helpers.mjs';
 
 const BASE = 'http://localhost:3080';
 
@@ -28,7 +28,7 @@ afterEach(() => {
 
 describe('ensureByMarker', () => {
   it('marca presente: não chama create e devolve a entidade existente', async () => {
-    responses['/projects.json?limit=100'] = {
+    responses['/projects.json?limit=100&offset=0'] = {
       status: 200,
       body: JSON.stringify({ projects: [{ id: 3, identifier: 'rc-fixtures' }] }),
     };
@@ -41,7 +41,7 @@ describe('ensureByMarker', () => {
   });
 
   it('marca ausente: chama create uma vez e devolve o que ele criou', async () => {
-    responses['/users.json?status=*&limit=100'] = {
+    responses['/users.json?status=*&limit=100&offset=0'] = {
       status: 200,
       body: JSON.stringify({ users: [{ id: 1, login: 'admin' }] }),
     };
@@ -54,7 +54,7 @@ describe('ensureByMarker', () => {
   });
 
   it('não confunde prefixo de outra entidade com a marca', async () => {
-    responses['/projects.json?limit=100'] = {
+    responses['/projects.json?limit=100&offset=0'] = {
       status: 200,
       body: JSON.stringify({ projects: [{ id: 4, identifier: 'rc-fixtures-2' }] }),
     };
@@ -96,11 +96,68 @@ describe('ensureByMarker', () => {
   });
 
   it('GET da listagem falha: lança e não cria', async () => {
-    responses['/users.json?status=*&limit=100'] = { status: 500, body: 'boom' };
+    responses['/users.json?status=*&limit=100&offset=0'] = { status: 500, body: 'boom' };
     const create = vi.fn();
 
     await expect(ensureByMarker('user', 'seed-ana', create)).rejects.toThrow(/status 500/);
     expect(create).not.toHaveBeenCalled();
+  });
+
+  it('paginação: acha a marca na 2ª página de projetos', async () => {
+    const page1 = Array.from({ length: 100 }, (_, i) => ({ id: i + 10, identifier: `outro-${i}` }));
+    responses['/projects.json?limit=100&offset=0'] = {
+      status: 200,
+      body: JSON.stringify({ projects: page1, total_count: 101, offset: 0, limit: 100 }),
+    };
+    responses['/projects.json?limit=100&offset=100'] = {
+      status: 200,
+      body: JSON.stringify({ projects: [{ id: 3, identifier: 'rc-fixtures' }], total_count: 101, offset: 100, limit: 100 }),
+    };
+    const create = vi.fn();
+
+    const result = await ensureByMarker('project', 'rc-fixtures', create);
+
+    expect(create).not.toHaveBeenCalled();
+    expect(result).toEqual({ id: 3, identifier: 'rc-fixtures' });
+  });
+
+  it('journal: marca seguida de quebra de linha também casa; notes null não quebra', async () => {
+    responses['/issues/7.json?include=journals'] = {
+      status: 200,
+      body: JSON.stringify({ issue: { id: 7, journals: [{ id: 1, notes: null }, { id: 2, notes: '[seed]\nlinha 2' }] } }),
+    };
+    const create = vi.fn();
+
+    const result = await ensureByMarker('journal', '[seed]', create, 7);
+
+    expect(create).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ id: 2 });
+  });
+
+  it('tipo com dono sem parent: lança antes de ir à rede', async () => {
+    await expect(ensureByMarker('version', 'v1', vi.fn())).rejects.toThrow(/parent/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('marca vazia: lança antes de ir à rede', async () => {
+    await expect(ensureByMarker('journal', '', vi.fn(), 7)).rejects.toThrow(/marca/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('resposta 200 sem a lista esperada: lança em vez de criar duplicado', async () => {
+    responses['/projects/rc-fixtures/versions.json'] = { status: 200, body: JSON.stringify({ erro: 'x' }) };
+    const create = vi.fn();
+
+    await expect(ensureByMarker('version', 'v1', create, 'rc-fixtures')).rejects.toThrow(/versions/);
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it('mensagem de erro corta o corpo da resposta', async () => {
+    responses['/users.json?status=*&limit=100&offset=0'] = { status: 500, body: 'x'.repeat(5000) };
+
+    const err = await ensureByMarker('user', 'seed-ana', vi.fn()).catch((e: Error) => e);
+
+    expect((err as Error).message.length).toBeLessThan(500);
   });
 
   it('tipo desconhecido: lança', async () => {
@@ -144,5 +201,39 @@ describe('putIssue', () => {
     responses['/issues/3.json'] = { status: 422, body: 'inválido' };
 
     await expect(putIssue(3, { parent_issue_id: 9 }, 'parent')).rejects.toThrow(/PUT parent issue 3 falhou: status 422/);
+  });
+});
+
+describe('getIssue', () => {
+  it('pede os includes e devolve o objeto issue', async () => {
+    responses['/issues/5.json?include=journals,attachments'] = { status: 200, body: JSON.stringify({ issue: { id: 5 } }) };
+
+    expect(await getIssue(5, 'journals,attachments')).toEqual({ id: 5 });
+  });
+
+  it('status diferente de 200: lança', async () => {
+    await expect(getIssue(5)).rejects.toThrow(/GET issue 5 falhou: status 404/);
+  });
+});
+
+describe('uploadBytes', () => {
+  it('201 com token: devolve o token', async () => {
+    responses['/uploads.json'] = { status: 201, body: JSON.stringify({ upload: { token: '7.abc' } }) };
+
+    expect(await uploadBytes(Buffer.from('oi'))).toBe('7.abc');
+  });
+
+  it('status diferente de 201: lança', async () => {
+    responses['/uploads.json'] = { status: 422, body: 'grande demais' };
+
+    await expect(uploadBytes(Buffer.from('oi'))).rejects.toThrow(/status 422/);
+  });
+
+  it('201 sem token ou com corpo inválido: lança com mensagem própria', async () => {
+    responses['/uploads.json'] = { status: 201, body: '{}' };
+    await expect(uploadBytes(Buffer.from('oi'))).rejects.toThrow(/não retornou token/);
+
+    responses['/uploads.json'] = { status: 201, body: 'não é json' };
+    await expect(uploadBytes(Buffer.from('oi'))).rejects.toThrow(/não retornou token/);
   });
 });
