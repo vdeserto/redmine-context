@@ -1,6 +1,6 @@
 # ADR-004 — Cache local em duas camadas com isolamento por instância
 
-**Status**: Aceito (2026-07-21) — item 3 (chave da camada issue) substituído pelo ADR-006
+**Status**: Aceito (2026-07-21) — item 3 (chave da camada issue) a ser substituído pelo ADR-006 (Proposto)
 
 ## Contexto
 

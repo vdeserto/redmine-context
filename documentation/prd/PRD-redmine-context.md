@@ -44,7 +44,7 @@ Bundle de contexto (Markdown + JSON) com a issue completa — descrição, hist�
 - Como dev em qualquer SO, `npx redmine-context` funciona sem toolchain de compilação; CI verde na matriz macOS/Linux/Windows.
 
 ### M6 — Bundle legível (ADR-006)
-- **US1 — Nomes no lugar de códigos.** Como dev, leio o histórico sem decodificar números. ✔ nenhum `(#id)` nem id interno no bundle (asserção por regex); journal identificado por data local + autor; o que não resolve vira texto neutro; 403/404 nunca derrubam o bundle; cache quente segue < 30 s.
+- **US1 — Nomes no lugar de códigos.** Como dev, leio o histórico sem decodificar números. ✔ nenhum `(#id)` nem id interno (status, usuário, campo, journal) no bundle, por asserção de regex — exceções explícitas: referência a issue no formato `#N — assunto` e id de anexo no formato `(id N)`, que a tool `get_attachment_text` usa; journal identificado por data local + autor; o que não resolve vira texto neutro; 403/404 nunca derrubam o bundle; cache quente segue < 30 s.
 - **US2 — Fences por seção.** Como dev ou LLM, leio cada seção corrida, com a mesma proteção. ✔ uma `<untrusted-content>` por seção (bundle de referência: 26 → ≤ 8) + nota de topo; testes de fuga e de forja de estrutura passam.
 - **US3 — Compatibilidade.** Como integrador, nada quebra. ✔ JSON `schema_version` 1.1 só aditivo; MCP × CLI byte-a-byte; replay verde com fixtures 6.x reais e variantes 4.x/5.x sintéticas.
 - **US4 — Idioma.** Como dev de outro país, recebo os rótulos no meu idioma. ✔ pt-BR, en e es por env/config, padrão pt-BR; conteúdo da instância não é traduzido; catálogo com paridade testada.

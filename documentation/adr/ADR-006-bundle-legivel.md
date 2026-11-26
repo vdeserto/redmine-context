@@ -6,7 +6,7 @@
 ## Contexto
 
 O bundle chega ao leitor (humano ou LLM) com códigos que ninguém decifra: `Atribuída (#7)`,
-`#157` de um usuário que não aparece na issue, `campo #85`, `Journal #3358294`, `Anexo #94734`.
+`#42` de um usuário que não aparece na issue, `campo #17`, `Journal #1001`, `Anexo #2002`.
 O histórico do Redmine grava ids, e a issue só traz o nome do estado atual.
 
 A marcação anti prompt-injection do ADR-005 é aplicada a cada valor. Um bundle real teve 26
@@ -22,8 +22,8 @@ Restrições: a ferramenta lê instâncias 4.x, 5.x e 6.x, com usuários que nã
    busca. Uma nota no topo do bundle explica a tag. O nome `<untrusted-content>` continua o mesmo,
    é neutro em idioma e compatível com quem já lê o bundle.
 2. **Estrutura que não pode ser forjada**: dentro do bloco, cada valor externo fica numa linha
-   só; notas de journal vêm citadas linha a linha (`> `); o cabeçalho do journal (data e autor)
-   fica fora do bloco. A neutralização de fuga normaliza com NFKC e cobre atributos, sinais
+   só; notas de journal vêm citadas linha a linha (`> `); o cabeçalho do journal (data e autor,
+   este sanitizado como no item 3) fica fora do bloco. A neutralização de fuga normaliza com NFKC e cobre atributos, sinais
    de menor e maior de largura cheia, entidades HTML e caracteres de largura zero.
 3. **Dois níveis de confiança**: nomes de enumerações que só o admin define (status, tracker,
    prioridade) podem ficar fora da fence. Nomes que usuários ou gerentes editam (usuário,
@@ -32,7 +32,7 @@ Restrições: a ferramenta lê instâncias 4.x, 5.x e 6.x, com usuários que nã
    nunca são marcados como confiáveis.
 4. **Nomes, nunca números**: some o `(#id)`. O que não puder ser resolvido aparece como texto
    neutro ("usuário removido", "(valor não resolvido)"). Referências que as pessoas usam
-   aparecem de forma discreta: `#123 — assunto` para issue e `arquivo.mp4 (id 94734)` para anexo,
+   aparecem de forma discreta: `#123 — assunto` para issue e `arquivo.mp4 (id 2002)` para anexo,
    porque a tool `get_attachment_text` precisa desse id.
 5. **Resolução em camadas, sempre com degradação**: payload da issue → enumerações da
    instância → memberships do projeto → versões e categorias do projeto → `/users/:id`, com
@@ -48,8 +48,9 @@ Restrições: a ferramenta lê instâncias 4.x, 5.x e 6.x, com usuários que nã
    passa a valer para "mesmo estado + mesmas resoluções".
 8. **Chave da camada issue do cache (substitui o item 3 do ADR-004)**: quando essa camada for
    ligada, a chave será
-   `(instance_hash, issue_id, updated_on, format, lang, schema_version, tool_version)`,
-   com TTL menor ou igual ao dos dicionários. Renomear um usuário ou status não
+   `(instance_hash, credential_hash, issue_id, updated_on, format, lang, schema_version, tool_version)`,
+   com TTL menor ou igual ao dos dicionários. A credencial entra na chave pelo mesmo motivo do
+   item 6: nomes resolvidos por uma credencial não podem ser servidos a outra. Renomear um usuário ou status não
    muda o `updated_on` da issue. A alternativa aceita é guardar só a issue normalizada e
    renderizar de novo a cada chamada.
 9. **Idioma no core**: catálogo de rótulos próprios em pt-BR, en e es, com o idioma como entrada
