@@ -23,8 +23,9 @@ Restrições: a ferramenta lê instâncias 4.x, 5.x e 6.x, com usuários que nã
    é neutro em idioma e compatível com quem já lê o bundle.
 2. **Estrutura que não pode ser forjada**: dentro do bloco, cada valor externo fica numa linha
    só; notas de journal vêm citadas linha a linha (`> `); o cabeçalho do journal (data e autor,
-   este sanitizado como no item 3) fica fora do bloco. A neutralização de fuga normaliza com NFKC e cobre atributos, sinais
-   de menor e maior de largura cheia, entidades HTML e caracteres de largura zero.
+   este sanitizado como no item 3) fica fora do bloco. A neutralização de fuga normaliza com
+   NFKC e cobre atributos, sinais de menor e maior de largura cheia, entidades HTML e
+   caracteres de largura zero.
 3. **Dois níveis de confiança**: nomes de enumerações que só o admin define (status, tracker,
    prioridade) podem ficar fora da fence. Nomes que usuários ou gerentes editam (usuário,
    projeto, versão, categoria, custom field) passam por sanitização (uma linha, sem caracteres
@@ -50,9 +51,9 @@ Restrições: a ferramenta lê instâncias 4.x, 5.x e 6.x, com usuários que nã
    ligada, a chave será
    `(instance_hash, credential_hash, issue_id, updated_on, format, lang, schema_version, tool_version)`,
    com TTL menor ou igual ao dos dicionários. A credencial entra na chave pelo mesmo motivo do
-   item 6: nomes resolvidos por uma credencial não podem ser servidos a outra. Renomear um usuário ou status não
-   muda o `updated_on` da issue. A alternativa aceita é guardar só a issue normalizada e
-   renderizar de novo a cada chamada.
+   item 6: nomes resolvidos por uma credencial não podem ser servidos a outra. Renomear um
+   usuário ou status não muda o `updated_on` da issue. A alternativa aceita é guardar só a
+   issue normalizada e renderizar de novo a cada chamada.
 9. **Idioma no core**: catálogo de rótulos próprios em pt-BR, en e es, com o idioma como entrada
    das funções do core. Precedência: variável de ambiente > config > pt-BR. Conteúdo da
    instância não é traduzido.
