@@ -349,8 +349,10 @@ A idempotência por **marca** vive em `scripts/lib/seed-helpers.mjs`
 (`ensureByMarker(kind, marker, create, parent?)`): lista a coleção do tipo
 (`user` por login, inclusive bloqueados; `project` por identifier;
 `version`/`category` por nome dentro do projeto; `journal` pelas notes da issue)
-e só cria se nenhuma entrada tiver a marca — o campo igual a ela ou começando
-com ela seguida de espaço (os journals do seed começam com `[seed]`).
+(todas as páginas, nas coleções que paginam) e só cria se nenhuma entrada tiver
+a marca — o campo igual a ela ou começando com ela seguida de espaço em branco
+(os journals do seed começam com `[seed]`). Marca vazia ou tipo sem o `parent`
+de que precisa lançam erro antes de qualquer chamada.
 Ao final, asserções via `GET` validam as contagens e o processo sai com código
 `!= 0` se algo estiver errado.
 
