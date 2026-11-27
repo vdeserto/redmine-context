@@ -353,6 +353,9 @@ A idempotência por **marca** vive em `scripts/lib/seed-helpers.mjs`
 a marca — o campo igual a ela ou começando com ela seguida de espaço em branco
 (os journals do seed começam com `[seed]`). Marca vazia ou tipo sem o `parent`
 de que precisa lançam erro antes de qualquer chamada.
+Também cria um 2º projeto **`rc-fixtures-2`** (com todos os trackers da instância)
+e 2 versões + 2 categorias com nome marcado `[seed] …` em cada projeto
+(`scripts/lib/seed-projects.mjs`).
 Usuários e grupo ficam em `scripts/lib/seed-users.mjs`: 3 usuários não-admin
 (`seed-ana`, `seed-bruno`, `seed-carla`, com senha gerada pelo Redmine — nenhuma
 senha no código), o grupo `seed-equipe` (com `seed-bruno`) e memberships de
