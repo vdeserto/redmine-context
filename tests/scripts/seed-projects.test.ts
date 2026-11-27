@@ -212,4 +212,11 @@ describe('assertProjectFixtures', () => {
 
     await expect(assertProjectFixtures()).rejects.toThrow(/500/);
   });
+
+  it('GET do projeto falha: lança com o status', async () => {
+    seededRedmine();
+    responses['GET /projects/rc-fixtures-2.json'] = { status: 404, body: '' };
+
+    await expect(assertProjectFixtures()).rejects.toThrow(/rc-fixtures-2.*404/);
+  });
 });

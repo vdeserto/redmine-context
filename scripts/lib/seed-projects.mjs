@@ -72,6 +72,9 @@ export async function ensureProjectFixtures() {
   const projects = {};
   for (const identifier in PROJECT_FIXTURES) {
     const fixtures = PROJECT_FIXTURES[identifier];
+    // rc-fixtures já vem do ensureProject do seed.mjs (roda antes): aqui só se obtém o id.
+    // Chamada avulsa (#258) deve vir depois do ensureProject. Projeto já existente sem
+    // trackers não é corrigido; assertProjectFixtures avisa.
     const project = await ensureByMarker('project', identifier, async () => {
       const newProject = { name: fixtures.name, identifier, is_public: true, tracker_ids: await trackerIds() };
       return create('/projects.json', 'project', newProject);
@@ -95,9 +98,15 @@ export async function ensureProjectFixtures() {
 /**
  * Asserções via GET, só sobre as entidades daqui: cada versão/categoria de
  * PROJECT_FIXTURES no seu projeto e o 2º projeto com trackers habilitados.
+ * A lista de versões inclui as compartilhadas de outros projetos; só conta a do próprio.
  */
 export async function assertProjectFixtures() {
   for (const identifier in PROJECT_FIXTURES) {
+    const project = await api('GET', `/projects/${identifier}.json`);
+    if (project.status !== 200) {
+      throw new Error(`ASSERT ${identifier}: GET projeto esperado 200, obtido ${project.status}`);
+    }
+    const projectId = project.json?.project?.id;
     for (const collection in COLLECTIONS) {
       const { kind, path } = COLLECTIONS[collection];
       const got = await api('GET', `/projects/${identifier}/${path}.json`);
@@ -107,7 +116,9 @@ export async function assertProjectFixtures() {
       /** @type {Record<string, boolean>} */
       const present = {};
       for (const item of got.json?.[path] ?? []) {
-        present[item.name] = true;
+        if (item.project?.id === projectId) {
+          present[item.name] = true;
+        }
       }
       for (const name of PROJECT_FIXTURES[identifier][collection]) {
         if (!present[name]) {
