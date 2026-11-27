@@ -20,6 +20,22 @@ const IMAGE_PATH = new URL('../../demo/fixture-error.png', import.meta.url);
 const SUBJECT = '[seed] Anexos no histórico';
 const ADDED_FILENAME = 'seed-added.txt';
 const REMOVED_FILENAME = 'seed-removed.txt';
+const HISTORY_BYTES = Buffer.from('Anexo do histórico gerado pelo seed (rc-fixtures).\n', 'utf8');
+
+/**
+ * Id do primeiro anexo da issue com esse filename, ou undefined.
+ * @param {number} issueId
+ * @param {string} filename
+ * @returns {Promise<number | undefined>}
+ */
+async function findAttachmentId(issueId, filename) {
+  for (const attachment of (await getIssue(issueId, 'attachments')).attachments ?? []) {
+    if (attachment.filename === filename) {
+      return attachment.id;
+    }
+  }
+  return undefined;
+}
 
 /**
  * Anexa o arquivo à issue se ainda não houver um com esse nome (só faz upload quando vai anexar).
@@ -28,18 +44,18 @@ const REMOVED_FILENAME = 'seed-removed.txt';
  * @param {Buffer} bytes
  * @param {string} [contentType] default 'text/plain'
  * @param {string} [notes] notes do journal que grava o anexo
+ * @returns {Promise<number | undefined>} id do anexo
  */
 async function ensureAttachment(id, filename, bytes, contentType = 'text/plain', notes) {
-  const issue = await getIssue(id, 'attachments');
-  for (const attachment of issue.attachments ?? []) {
-    if (attachment.filename === filename) {
-      log(`issue ${id}: anexo ${filename} já presente`);
-      return;
-    }
+  const presentId = await findAttachmentId(id, filename);
+  if (presentId !== undefined) {
+    log(`issue ${id}: anexo ${filename} já presente`);
+    return presentId;
   }
   const token = await uploadBytes(bytes);
   await putIssue(id, { uploads: [{ token, filename, content_type: contentType }], notes }, 'anexo');
   log(`issue ${id}: anexo ${filename} criado`);
+  return findAttachmentId(id, filename); // o PUT responde 204, sem o id
 }
 
 /**
@@ -99,30 +115,35 @@ async function countAttachmentDetails(issueId) {
 }
 
 /**
+ * Garante a remoção de seed-removed.txt no histórico: anexa se preciso e apaga
+ * um anexo (só o primeiro, se houver duplicata manual).
+ * @param {number} issueId
+ * @returns {Promise<Record<string, number>>} details do histórico já com a remoção
+ */
+async function ensureRemoved(issueId) {
+  const counts = await countAttachmentDetails(issueId);
+  if (counts[`-${REMOVED_FILENAME}`]) {
+    log(`issue ${issueId}: remoção de ${REMOVED_FILENAME} já no histórico`);
+    return counts;
+  }
+  const attachmentId = await ensureAttachment(issueId, REMOVED_FILENAME, HISTORY_BYTES, 'text/plain', '[seed:anexo-removido] Anexo a remover.');
+  const removed = await api('DELETE', `/attachments/${attachmentId}.json`);
+  if (removed.status !== 204 && removed.status !== 200) {
+    throw new Error(`DELETE anexo ${attachmentId} falhou: status ${removed.status}`);
+  }
+  log(`issue ${issueId}: anexo ${REMOVED_FILENAME} removido`);
+  return countAttachmentDetails(issueId);
+}
+
+/**
  * Garante a issue "[seed] Anexos no histórico" com o anexo adicionado e o
  * removido, e confere 1 detail de cada no histórico. Idempotente.
  * @param {string} projectId identifier do projeto
  */
 export async function ensureAttachmentHistory(projectId) {
   const issueId = await findOrCreateIssue(projectId);
-  const bytes = Buffer.from('Anexo do histórico gerado pelo seed (rc-fixtures).\n', 'utf8');
-  await ensureAttachment(issueId, ADDED_FILENAME, bytes, 'text/plain', '[seed:anexo] Anexo adicionado.');
-  if ((await countAttachmentDetails(issueId))[`-${REMOVED_FILENAME}`]) {
-    log(`issue ${issueId}: remoção de ${REMOVED_FILENAME} já no histórico`);
-  } else {
-    await ensureAttachment(issueId, REMOVED_FILENAME, bytes, 'text/plain', '[seed:anexo-removido] Anexo a remover.');
-    for (const attachment of (await getIssue(issueId, 'attachments')).attachments) {
-      if (attachment.filename === REMOVED_FILENAME) {
-        const removed = await api('DELETE', `/attachments/${attachment.id}.json`);
-        if (removed.status !== 204 && removed.status !== 200) {
-          throw new Error(`DELETE anexo ${attachment.id} falhou: status ${removed.status}`);
-        }
-        log(`issue ${issueId}: anexo ${REMOVED_FILENAME} removido`);
-      }
-    }
-  }
-
-  const counts = await countAttachmentDetails(issueId);
+  await ensureAttachment(issueId, ADDED_FILENAME, HISTORY_BYTES, 'text/plain', '[seed:anexo] Anexo adicionado.');
+  const counts = await ensureRemoved(issueId);
   for (const key of [`+${ADDED_FILENAME}`, `-${REMOVED_FILENAME}`]) {
     if (counts[key] !== 1) {
       throw new Error(`ASSERT anexos: issue ${issueId} esperava 1 detail ${key}, obtido ${counts[key] ?? 0}`);
