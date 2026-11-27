@@ -6,6 +6,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ensureAttachmentHistory, ensureFixtureAttachments } from '../../scripts/lib/seed-attachments.mjs';
 
+// `imageMissing` liga o ramo "demo/fixture-error.png ausente" sem mexer no disco.
+const fsState = vi.hoisted(() => ({ imageMissing: false }));
+vi.mock('node:fs', async (importOriginal) => {
+  const fs = await importOriginal<typeof import('node:fs')>();
+  return { ...fs, existsSync: (path: URL) => !fsState.imageMissing && fs.existsSync(path) };
+});
+
 const BASE = 'http://localhost:3080';
 const SUBJECT = '[seed] Anexos no histórico';
 const ISSUES_PATH = `/issues.json?project_id=rc-fixtures&status_id=*&subject=~${encodeURIComponent(SUBJECT)}`;
@@ -18,7 +25,7 @@ type Init = { method?: string; body?: unknown };
 
 let issues: Record<number, FakeIssue>;
 let nextAttachmentId: number;
-let failDelete: boolean; // DELETE de anexo responde 500
+let deleteStatus: number; // status do DELETE de anexo; 500 não remove nada
 let calls: string[];
 
 /** Grava um journal com o detail `attachment` (new_value no envio, old_value na remoção). */
@@ -57,7 +64,7 @@ async function fakeRedmine(url: string, init?: Init) {
   }
   const attachmentMatch = /^\/attachments\/(\d+)\.json$/.exec(path);
   if (method === 'DELETE' && attachmentMatch) {
-    if (failDelete) {
+    if (deleteStatus === 500) {
       return new Response('erro', { status: 500 });
     }
     for (const id in issues) {
@@ -66,7 +73,7 @@ async function fakeRedmine(url: string, init?: Init) {
         if (attachment.id === Number(attachmentMatch[1])) {
           issue.attachments = issue.attachments.filter((other) => other !== attachment);
           journalize(issue, '', attachment, true); // o DELETE grava journal sem notes
-          return new Response(null, { status: 204 });
+          return new Response(null, { status: deleteStatus });
         }
       }
     }
@@ -105,7 +112,8 @@ function attachmentDetails() {
 beforeEach(() => {
   issues = {};
   nextAttachmentId = 100;
-  failDelete = false;
+  deleteStatus = 204;
+  fsState.imageMissing = false;
   calls = [];
   vi.stubGlobal('fetch', vi.fn(fakeRedmine));
   vi.spyOn(process.stderr, 'write').mockReturnValue(true);
@@ -139,6 +147,15 @@ describe('ensureFixtureAttachments', () => {
     expect(issues[7]?.attachments).toHaveLength(2);
     expect(writes()).toEqual([]);
   });
+
+  it('imagem ausente: anexa só o texto e avisa', async () => {
+    fsState.imageMissing = true;
+
+    await ensureFixtureAttachments(7);
+
+    expect(issues[7]?.attachments.map((a) => a.filename)).toEqual(['fixture-note.txt']);
+    expect(process.stderr.write).toHaveBeenCalledWith(expect.stringMatching(/fixture-error\.png não encontrado/));
+  });
 });
 
 describe('ensureAttachmentHistory', () => {
@@ -165,17 +182,57 @@ describe('ensureAttachmentHistory', () => {
     expect(writes()).toEqual([]);
   });
 
-  it('busca a issue filtrando pelo subject no servidor e compara o subject exato', async () => {
+  it('ignora a issue cujo subject só contém o do seed (filtro ~ do Redmine)', async () => {
     await ensureAttachmentHistory('rc-fixtures');
 
-    expect(calls).toContain(`GET ${ISSUES_PATH}`);
     expect(calls.some((call) => call.startsWith('GET /issues/40.json'))).toBe(false);
   });
 
+  it('seed-removed.txt já anexado (sem remoção no histórico): não reenvia, só o remove', async () => {
+    issues[41] = { id: 41, subject: SUBJECT, attachments: [{ id: 200, filename: 'seed-removed.txt', content_type: 'text/plain' }], journals: [] };
+
+    await ensureAttachmentHistory('rc-fixtures');
+
+    // O único upload/PUT é o de seed-added.txt.
+    expect(writes()).toEqual(['POST /uploads.json', 'PUT /issues/41.json', 'DELETE /attachments/200.json']);
+    expect(issues[41]?.attachments.map((a) => a.filename)).toEqual(['seed-added.txt']);
+  });
+
+  it('dois seed-removed.txt anexados: remove só o primeiro', async () => {
+    const duplicate = { filename: 'seed-removed.txt', content_type: 'text/plain' };
+    issues[41] = { id: 41, subject: SUBJECT, attachments: [{ id: 200, ...duplicate }, { id: 201, ...duplicate }], journals: [] };
+
+    await ensureAttachmentHistory('rc-fixtures');
+
+    expect(writes().filter((call) => call.startsWith('DELETE '))).toEqual(['DELETE /attachments/200.json']);
+    expect(issues[41]?.attachments.map((a) => a.id)).toEqual([201, 100]);
+  });
+
+  it('DELETE respondendo 200 também conta como removido', async () => {
+    deleteStatus = 200;
+
+    await ensureAttachmentHistory('rc-fixtures');
+
+    expect(attachmentDetails()).toContainEqual(
+      { property: 'attachment', name: '101', old_value: 'seed-removed.txt', new_value: null },
+    );
+  });
+
+  it('GET da issue com status != 200: lança com o status', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: Init) => {
+      if (url === BASE + ISSUES_PATH) {
+        return new Response('erro', { status: 500 });
+      }
+      return fakeRedmine(url, init);
+    }));
+
+    await expect(ensureAttachmentHistory('rc-fixtures')).rejects.toThrow(/GET issue de anexos falhou: status 500/);
+  });
+
   it('retoma após DELETE falho: não reenvia o anexo a remover, só o remove', async () => {
-    failDelete = true;
+    deleteStatus = 500;
     await expect(ensureAttachmentHistory('rc-fixtures')).rejects.toThrow(/DELETE anexo 101.*status 500/);
-    failDelete = false;
+    deleteStatus = 204;
     calls = [];
 
     await ensureAttachmentHistory('rc-fixtures');
