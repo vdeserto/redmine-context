@@ -49,7 +49,7 @@ import {
 /** Loga uma linha em stderr (o eslint proíbe console; script de infra). */
 const log = (/** @type {string} */ msg) => process.stderr.write(`[e2e-ci] ${msg}\n`);
 
-const { fetchAdminApiKey, resolveIds, cliIssue, cliLast, mcpGetIssueContext, mcpGetLast, grepAll } = createE2E({
+const { fetchAdminApiKey, resolveIds, newestIssueIds, cliIssue, cliLast, mcpGetIssueContext, mcpGetLast, grepAll } = createE2E({
   log,
   mcpClientName: 'e2e-ci-mcp-client',
 });
@@ -118,10 +118,10 @@ async function main() {
   }
 
   // 2b) get_last == CLI last, com ordem determinística.
-  // `created` desc é o critério ESTÁVEL: o seed cria as fixtures em sequência,
-  // então a de maior id é sempre a mais nova (`updated` dependeria da ordem de
-  // enriquecimento).
-  const newestId = Math.max(...ids);
+  // `created` desc é o critério ESTÁVEL (`updated` dependeria da ordem de
+  // enriquecimento). A mais nova vem da API, não das fixtures base: o seed cria
+  // outras issues depois delas.
+  const [newestId] = await newestIssueIds(1);
   const lastCli = await cliLast(apiKey, ['--order', 'created', '--count', '3']);
   if (lastCli.code !== 0) fail(`CLI last saiu ${lastCli.code}: ${lastCli.stderr}`);
   if (!lastCli.stdout.startsWith(`# Issue #${newestId}`)) {
