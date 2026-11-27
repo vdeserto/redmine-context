@@ -3,7 +3,8 @@
 //
 // seed.mjs — Seed de fixtures ricas no Redmine via REST API.
 //
-// Cria 1 projeto (identifier fixo `rc-fixtures`) e 3 issues enriquecidas.
+// Cria 1 projeto (identifier fixo `rc-fixtures`), 3 issues base enriquecidas e
+// issues temáticas para o histórico (ver as fixtures abaixo).
 // É idempotente: cada recurso é verificado via GET antes de qualquer POST/PUT,
 // então re-execuções não duplicam nada (nem journals, relations ou anexos).
 // Projeto e journal usam a idempotência por marca de scripts/lib/seed-helpers.mjs.
@@ -20,6 +21,8 @@
 //                  alvo da relation vinda da issue base 1.
 //   issue base 3 → journal (comentário), custom field Severidade=Baixa,
 //                  é FILHA (child) da issue base 1.
+//   trocas de estado → status/tracker/prioridade (scripts/lib/seed-changes.mjs).
+//   anexos no histórico → anexo adicionado e removido (scripts/lib/seed-attachments.mjs).
 //
 // O custom field 'Severidade' (list) não é criável pela REST API
 // (POST /custom_fields.json não existe), então é criado via SQL idempotente no
@@ -347,12 +350,12 @@ async function main() {
   const ids = await resolveIssueIds();
   await enrichIssues(ids);
   await ensureStateChanges(PROJECT_ID);
+  await ensureAttachmentHistory(PROJECT_ID);
   const seedUserIds = await ensureSeedUsers(PROJECT_ID, ids[1]);
   const total = await assertSeed();
   await assertProjectFixtures();
   await assertSeedUsers(PROJECT_ID, seedUserIds);
   await assertStateChanges(PROJECT_ID);
-  await ensureAttachmentHistory(PROJECT_ID);
   log(`seed concluído. issues no projeto: ${total}`);
 }
 
