@@ -19,6 +19,7 @@ let stderr: ReturnType<typeof vi.spyOn>;
 const USERS_LIST = 'GET /users.json?status=*&limit=100&offset=0';
 const MEMBERS_LIST = 'GET /projects/rc-fixtures/memberships.json?limit=100';
 const JOURNALS = 'GET /issues/12.json?include=journals';
+const GROUP_USERS = 'GET /groups/30.json?include=users';
 
 beforeEach(() => {
   routes = {};
@@ -67,6 +68,7 @@ function seededRoutes(carlaStatus: number, journalNotes: string | null) {
       ],
     },
   };
+  routes[GROUP_USERS] = { status: 200, body: { group: { id: 30, name: 'seed-equipe', users: [{ id: 22, name: 'Bruno Seed' }] } } };
   routes[JOURNALS] = { status: 200, body: { issue: { id: 12, journals: [{ id: 1, notes: journalNotes }] } } };
 }
 
@@ -81,6 +83,7 @@ describe('ensureSeedUsers', () => {
     routes['POST /users.json'] = (body) => ({ status: 201, body: { user: { id: nextUserId++, login: body.user.login, status: 1 } } });
     routes['GET /groups.json'] = { status: 200, body: { groups: [] } };
     routes['POST /groups.json'] = { status: 201, body: { group: { id: 30, name: 'seed-equipe' } } };
+    routes[GROUP_USERS] = { status: 200, body: { group: { id: 30, users: [{ id: 22 }] } } };
     routes['GET /roles.json'] = { status: 200, body: { roles: [{ id: 3, name: 'Manager' }, { id: 4, name: 'Developer' }] } };
     routes[MEMBERS_LIST] = { status: 200, body: { memberships: [] } };
     routes['POST /projects/rc-fixtures/memberships.json'] = { status: 201, body: { membership: { id: 1 } } };
@@ -127,6 +130,66 @@ describe('ensureSeedUsers', () => {
     await ensureSeedUsers('rc-fixtures', 12);
 
     expect(writes()).toEqual([{ method: 'PUT', path: '/users/23.json', body: { user: { status: 3 } } }]);
+  });
+
+  it('grupo já existe sem seed-bruno: devolve o bruno ao grupo', async () => {
+    seededRoutes(3, null);
+    routes[GROUP_USERS] = { status: 200, body: { group: { id: 30, users: [] } } };
+    routes['POST /groups/30/users.json'] = { status: 204 };
+
+    await ensureSeedUsers('rc-fixtures', 12);
+
+    expect(writes()).toEqual([{ method: 'POST', path: '/groups/30/users.json', body: { user_id: 22 } }]);
+  });
+
+  it('membership parcial: cria só as que faltam e loga "já existe" para a existente', async () => {
+    seededRoutes(3, null);
+    routes[MEMBERS_LIST] = { status: 200, body: { memberships: [{ id: 1, user: { id: 21, name: 'Ana Seed' } }] } };
+    routes['POST /projects/rc-fixtures/memberships.json'] = { status: 201, body: { membership: { id: 9 } } };
+
+    await ensureSeedUsers('rc-fixtures', 12);
+
+    expect(writes().map((c) => c.body.membership)).toEqual([
+      { user_id: 23, role_ids: [3] },
+      { user_id: 30, role_ids: [3] },
+    ]);
+    const logged = stderr.mock.calls.map((c) => String(c[0])).join('');
+    expect(logged).toContain('membership seed-ana (rc-fixtures): já existe');
+  });
+
+  it('seed-carla ativa, sem journal e já atribuída: grava o journal e bloqueia, uma vez cada', async () => {
+    seededRoutes(1, null);
+    routes[JOURNALS] = { status: 200, body: { issue: { id: 12, assigned_to: { id: 23 }, journals: [] } } };
+    routes['PUT /issues/12.json'] = { status: 204 };
+    routes['PUT /users/23.json'] = { status: 204 };
+
+    await ensureSeedUsers('rc-fixtures', 12);
+
+    expect(writes().map((c) => `${c.method} ${c.path}`)).toEqual(['PUT /issues/12.json', 'PUT /users/23.json']);
+    expect(writes()[0].body.issue.notes).toMatch(/^\[seed-users\] /);
+  });
+
+  it('/roles.json sem papéis: lança com a pista', async () => {
+    seededRoutes(3, null);
+    routes['GET /roles.json'] = { status: 200, body: { roles: [] } };
+
+    await expect(ensureSeedUsers('rc-fixtures', 12)).rejects.toThrow('GET /roles.json: nenhum papel disponível');
+  });
+
+  it('POST de grupo falha: lança com o status', async () => {
+    seededRoutes(3, null);
+    routes['GET /groups.json'] = { status: 200, body: { groups: [] } };
+    routes['POST /groups.json'] = { status: 422, body: { errors: ['Name has already been taken'] } };
+
+    await expect(ensureSeedUsers('rc-fixtures', 12)).rejects.toThrow(/POST \/groups\.json.*422/);
+  });
+
+  it('POST de membership falha: lança com o status', async () => {
+    seededRoutes(3, null);
+    routes[MEMBERS_LIST] = { status: 200, body: { memberships: [] } };
+    routes['POST /projects/rc-fixtures/memberships.json'] = { status: 422, body: { errors: ['Role cannot be empty'] } };
+
+    await expect(ensureSeedUsers('rc-fixtures', 12)).rejects.toThrow(/POST \/projects\/rc-fixtures\/memberships\.json.*422/);
   });
 
   it('POST de usuário falha: lança com o status', async () => {
@@ -185,5 +248,14 @@ describe('assertSeedUsers', () => {
     };
 
     await expect(assertSeedUsers('rc-fixtures', ids)).rejects.toThrow(/seed-equipe/);
+  });
+
+  it('grupo no projeto mas sem seed-bruno (membership herdada ausente): lança', async () => {
+    routes[MEMBERS_LIST] = {
+      status: 200,
+      body: { memberships: [{ id: 1, user: { id: 21 } }, { id: 2, user: { id: 23 } }, { id: 3, group: { id: 30 } }] },
+    };
+
+    await expect(assertSeedUsers('rc-fixtures', ids)).rejects.toThrow(/seed-bruno/);
   });
 });
