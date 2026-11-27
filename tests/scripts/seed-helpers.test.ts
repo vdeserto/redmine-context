@@ -95,6 +95,19 @@ describe('ensureByMarker', () => {
     expect(create).toHaveBeenCalledTimes(1);
   });
 
+  it('grupo: procura pelo nome em /groups.json', async () => {
+    responses['/groups.json'] = {
+      status: 200,
+      body: JSON.stringify({ groups: [{ id: 30, name: 'seed-equipe' }] }),
+    };
+    const create = vi.fn();
+
+    const result = await ensureByMarker('group', 'seed-equipe', create);
+
+    expect(create).not.toHaveBeenCalled();
+    expect(result).toEqual({ id: 30, name: 'seed-equipe' });
+  });
+
   it('GET da listagem falha: lança e não cria', async () => {
     responses['/users.json?status=*&limit=100&offset=0'] = { status: 500, body: 'boom' };
     const create = vi.fn();
