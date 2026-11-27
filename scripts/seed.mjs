@@ -3,7 +3,8 @@
 //
 // seed.mjs — Seed de fixtures ricas no Redmine via REST API.
 //
-// Cria 1 projeto (identifier fixo `rc-fixtures`) e 3 issues enriquecidas.
+// Cria 1 projeto (identifier fixo `rc-fixtures`), 3 issues base enriquecidas e
+// issues temáticas para o histórico (ver as fixtures abaixo).
 // É idempotente: cada recurso é verificado via GET antes de qualquer POST/PUT,
 // então re-execuções não duplicam nada (nem journals, relations ou anexos).
 // Projeto e journal usam a idempotência por marca de scripts/lib/seed-helpers.mjs.
@@ -20,6 +21,8 @@
 //                  alvo da relation vinda da issue base 1.
 //   issue base 3 → journal (comentário), custom field Severidade=Baixa,
 //                  é FILHA (child) da issue base 1.
+//   trocas de estado → status/tracker/prioridade (scripts/lib/seed-changes.mjs).
+//   anexos no histórico → anexo adicionado e removido (scripts/lib/seed-attachments.mjs).
 //
 // O custom field 'Severidade' (list) não é criável pela REST API
 // (POST /custom_fields.json não existe), então é criado via SQL idempotente no
@@ -36,12 +39,13 @@
 //
 // Infra script (fora de src/): não usa console. Loga em stderr via helper.
 
-import { existsSync, readFileSync } from 'node:fs';
-import { BASE, USER, api, ensureByMarker, getIssue, log, putIssue, uploadBytes } from './lib/seed-helpers.mjs';
+import { BASE, USER, api, ensureByMarker, getIssue, log, putIssue } from './lib/seed-helpers.mjs';
+import { ensureAttachmentHistory, ensureFixtureAttachments } from './lib/seed-attachments.mjs';
 import { assertStateChanges, ensureStateChanges } from './lib/seed-changes.mjs';
 import { ensureUnlinkedCustomField } from './lib/seed-cf-unlinked.mjs';
 import { assertProjectFixtures, ensureProjectFixtures } from './lib/seed-projects.mjs';
 import { assertSeedUsers, ensureSeedUsers } from './lib/seed-users.mjs';
+import { seedMoves } from './lib/seed-moves.mjs';
 
 const PROJECT_ID = 'rc-fixtures';
 const PROJECT_NAME = 'RC Fixtures';
@@ -49,12 +53,6 @@ const PROJECT_NAME = 'RC Fixtures';
 const CUSTOM_FIELD_NAME = 'Severidade';
 // Prefixo que marca um journal criado pelo seed (chave de idempotência).
 const JOURNAL_MARKER = '[seed]';
-const ATTACH_FILENAME = 'fixture-note.txt';
-// Anexo de imagem (print de stack trace) — dá ao OCR material real para extrair.
-// Versionado no repo; gerado por `demo/make-fixture-image.py`. Ausente => o seed
-// apenas avisa e segue (degradação graciosa; nenhuma asserção depende dele).
-const ATTACH_IMAGE_FILENAME = 'fixture-error.png';
-const ATTACH_IMAGE_PATH = new URL('../demo/fixture-error.png', import.meta.url);
 
 /**
  * Fixtures determinísticas: `subject` é a chave de idempotência; `severity` e
@@ -250,26 +248,6 @@ async function ensureRelation(fromId, toId, type) {
 }
 
 /**
- * Anexa um arquivo à issue, se ainda não houver um com esse nome.
- * Idempotente (só faz upload quando vai realmente anexar).
- * @param {number} id
- * @param {string} filename
- * @param {Buffer} bytes
- * @param {string} [contentType] default 'text/plain'
- */
-async function ensureAttachment(id, filename, bytes, contentType = 'text/plain') {
-  const issue = await getIssue(id, 'attachments');
-  const has = (issue.attachments ?? []).some((/** @type {{ filename: string }} */ a) => a.filename === filename);
-  if (has) {
-    log(`issue ${id}: anexo ${filename} já presente`);
-    return;
-  }
-  const token = await uploadBytes(bytes);
-  await putIssue(id, { uploads: [{ token, filename, content_type: contentType }] }, 'anexo');
-  log(`issue ${id}: anexo ${filename} criado`);
-}
-
-/**
  * Enriquece as 3 issues com journals, custom fields, parent/child, relation e
  * anexo — tudo idempotente. Ver o mapa de fixtures no topo do arquivo.
  * @param {number[]} ids ids alinhados ao array ISSUES
@@ -301,20 +279,8 @@ async function enrichIssues(ids) {
   await ensureParent(id3, id1);
   await ensureRelation(id1, id2, 'relates');
 
-  // Anexo de texto na issue 1.
-  await ensureAttachment(
-    id1,
-    ATTACH_FILENAME,
-    Buffer.from('Anexo de fixture gerado pelo seed (rc-fixtures).\n', 'utf8'),
-  );
-
-  // Anexo de imagem na issue 1 (material do OCR). Opcional: se o arquivo não
-  // estiver presente, avisa e segue — nenhuma asserção depende dele.
-  if (existsSync(ATTACH_IMAGE_PATH)) {
-    await ensureAttachment(id1, ATTACH_IMAGE_FILENAME, readFileSync(ATTACH_IMAGE_PATH), 'image/png');
-  } else {
-    log(`aviso: ${ATTACH_IMAGE_FILENAME} não encontrado — anexo de imagem pulado`);
-  }
+  // Anexos de texto e imagem na issue 1 (scripts/lib/seed-attachments.mjs).
+  await ensureFixtureAttachments(id1);
 }
 
 /**
@@ -386,11 +352,13 @@ async function main() {
   const ids = await resolveIssueIds();
   await enrichIssues(ids);
   await ensureStateChanges(PROJECT_ID);
+  await ensureAttachmentHistory(PROJECT_ID);
   const seedUserIds = await ensureSeedUsers(PROJECT_ID, ids[1]);
   const total = await assertSeed();
   await assertProjectFixtures();
   await assertSeedUsers(PROJECT_ID, seedUserIds);
   await assertStateChanges(PROJECT_ID);
+  await seedMoves();
   await ensureUnlinkedCustomField(PROJECT_ID);
   log(`seed concluído. issues no projeto: ${total}`);
 }
