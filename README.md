@@ -371,6 +371,10 @@ A issue `[seed] Anexos no histórico` (`scripts/lib/seed-attachments.mjs`) ganha
 anexo `seed-added.txt` num journal marcado e perde o `seed-removed.txt` via
 `DELETE /attachments/:id.json` (details `attachment` com `new_value`/`old_value`);
 o filename é a marca, e a remoção já no histórico não se repete.
+A issue `[seed] Trocas de projeto` (`scripts/lib/seed-moves.mjs`) troca categoria
+e versão (vazio → valor e valor → valor) no `rc-fixtures` e é movida para o
+`rc-fixtures-2` levando categoria e versão do projeto 2 no mesmo PUT, um journal
+marcado por etapa (`[seed:category-1]`... `[seed:move]`).
 Ao final, asserções via `GET` validam as contagens e o processo sai com código
 `!= 0` se algo estiver errado.
 
