@@ -1,5 +1,6 @@
 /**
- * Usuários, grupo, memberships e o usuário bloqueado do seed (#255).
+ * Usuários, grupo, memberships e o usuário bloqueado do seed (#255); trocas de
+ * responsável passando pela seed-carla antes e depois do bloqueio (#259).
  * Sem rede: o `fetch` global é trocado por um dublê que responde por "MÉTODO caminho".
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -10,9 +11,10 @@ const API_KEY = 'chave-secreta-da-ana';
 
 type Reply = { status: number; body?: unknown };
 type Call = { method: string; path: string; body: Record<string, Record<string, unknown>> };
+type SentBody = { user: { login: string }; issue: { assigned_to_id: number } };
 
 /** Respostas por "MÉTODO caminho"; função recebe o corpo enviado. O resto vira 404. */
-let routes: Record<string, Reply | ((body: { user: { login: string } }) => Reply)>;
+let routes: Record<string, Reply | ((body: SentBody) => Reply)>;
 let calls: Call[];
 let stderr: ReturnType<typeof vi.spyOn>;
 
@@ -20,6 +22,30 @@ const USERS_LIST = 'GET /users.json?status=*&limit=100&offset=0';
 const MEMBERS_LIST = 'GET /projects/rc-fixtures/memberships.json?limit=100';
 const JOURNALS = 'GET /issues/12.json?include=journals';
 const GROUP_USERS = 'GET /groups/30.json?include=users';
+const ASSIGNEE_SUBJECT = '[seed] Trocas de responsável';
+const ASSIGNEE_LIST = `GET /issues.json?project_id=rc-fixtures&status_id=*&subject=~${encodeURIComponent(ASSIGNEE_SUBJECT)}`;
+const ASSIGNEE_JOURNALS = 'GET /issues/50.json?include=journals';
+const TO_CARLA = '[seed:responsavel-1]';
+const FROM_CARLA = '[seed:responsavel-2]';
+
+/** Responsável atual da issue 50: o PUT grava, o GET devolve (como o Redmine). */
+let assigneeId: number;
+
+/** Issue de trocas de responsável (id 50) com os journals marcados já gravados. */
+function assigneeRoutes(markers: string[], exists = true) {
+  assigneeId = 21;
+  routes[ASSIGNEE_LIST] = {
+    status: 200,
+    body: { issues: [{ id: 49, subject: `${ASSIGNEE_SUBJECT} (cópia)` }, ...(exists ? [{ id: 50, subject: ASSIGNEE_SUBJECT }] : [])] },
+  };
+  routes['POST /issues.json'] = { status: 201, body: { issue: { id: 50, subject: ASSIGNEE_SUBJECT } } };
+  routes[ASSIGNEE_JOURNALS] = { status: 200, body: { issue: { id: 50, journals: markers.map((m, i) => ({ id: 90 + i, notes: `${m} x` })) } } };
+  routes['PUT /issues/50.json'] = (body) => {
+    assigneeId = body.issue.assigned_to_id;
+    return { status: 204 };
+  };
+  routes['GET /issues/50.json'] = () => ({ status: 200, body: { issue: { id: 50, assigned_to: { id: assigneeId } } } });
+}
 
 beforeEach(() => {
   routes = {};
@@ -42,7 +68,7 @@ afterEach(() => {
 });
 
 /** Tudo já criado; `carlaStatus` decide se o bloqueio ainda falta. */
-function seededRoutes(carlaStatus: number, journalNotes: string | null) {
+function seededRoutes(carlaStatus: number, journalNotes: string | null, assigneeMarkers = [TO_CARLA, FROM_CARLA]) {
   routes[USERS_LIST] = {
     status: 200,
     body: {
@@ -70,6 +96,7 @@ function seededRoutes(carlaStatus: number, journalNotes: string | null) {
   };
   routes[GROUP_USERS] = { status: 200, body: { group: { id: 30, name: 'seed-equipe', users: [{ id: 22, name: 'Bruno Seed' }] } } };
   routes[JOURNALS] = { status: 200, body: { issue: { id: 12, journals: [{ id: 1, notes: journalNotes }] } } };
+  assigneeRoutes(assigneeMarkers);
 }
 
 function writes() {
@@ -90,6 +117,7 @@ describe('ensureSeedUsers', () => {
     routes[JOURNALS] = { status: 200, body: { issue: { id: 12, journals: [] } } };
     routes['PUT /issues/12.json'] = { status: 204 };
     routes['PUT /users/23.json'] = { status: 204 };
+    assigneeRoutes([], false);
 
     const ids = await ensureSeedUsers('rc-fixtures', 12);
 
@@ -111,7 +139,17 @@ describe('ensureSeedUsers', () => {
     const assign = writes().find((c) => c.path === '/issues/12.json');
     expect(assign?.body.issue.assigned_to_id).toBe(23);
     expect(assign?.body.issue.notes).toMatch(/^\[seed-users\] /);
-    expect(writes().at(-1)).toEqual({ method: 'PUT', path: '/users/23.json', body: { user: { status: 3 } } });
+    const issue = writes().find((c) => c.path === '/issues.json')?.body.issue;
+    expect(issue).toMatchObject({ project_id: 'rc-fixtures', subject: ASSIGNEE_SUBJECT, assigned_to_id: 21 }); // nasce com seed-ana
+    // ana → carla ANTES do bloqueio; carla → bruno depois.
+    expect(writes().slice(-4).map((c) => `${c.method} ${c.path} ${JSON.stringify(c.body.issue?.assigned_to_id ?? c.body.user)}`)).toEqual([
+      'PUT /issues/12.json 23',
+      'PUT /issues/50.json 23',
+      'PUT /users/23.json {"status":3}',
+      'PUT /issues/50.json 22',
+    ]);
+    expect(writes().at(-3)?.body.issue.notes).toMatch(/^\[seed:responsavel-1\] /);
+    expect(writes().at(-1)?.body.issue.notes).toMatch(/^\[seed:responsavel-2\] /);
   });
 
   it('2ª execução com tudo pronto e bloqueado: nenhuma escrita (não reatribui nem desbloqueia)', async () => {
@@ -123,13 +161,38 @@ describe('ensureSeedUsers', () => {
     expect(writes()).toEqual([]);
   });
 
-  it('journal já gravado mas bloqueio pendente: só bloqueia', async () => {
-    seededRoutes(1, '[seed-users] Atribuída antes do bloqueio.');
+  it('journals até a carla já gravados mas bloqueio pendente: bloqueia e depois tira dela', async () => {
+    seededRoutes(1, '[seed-users] Atribuída antes do bloqueio.', [TO_CARLA]);
     routes['PUT /users/23.json'] = { status: 204 };
 
     await ensureSeedUsers('rc-fixtures', 12);
 
-    expect(writes()).toEqual([{ method: 'PUT', path: '/users/23.json', body: { user: { status: 3 } } }]);
+    expect(writes().map((c) => `${c.method} ${c.path}`)).toEqual(['PUT /users/23.json', 'PUT /issues/50.json']);
+    expect(writes()[1].body.issue.assigned_to_id).toBe(22);
+  });
+
+  it('carla bloqueada e só a troca para ela gravada: grava só carla → bruno', async () => {
+    seededRoutes(3, null, [TO_CARLA]);
+    assigneeId = 23;
+
+    await ensureSeedUsers('rc-fixtures', 12);
+
+    expect(writes().map((c) => `${c.method} ${c.path} ${c.body.issue.assigned_to_id}`)).toEqual(['PUT /issues/50.json 22']);
+  });
+
+  it('base antiga (carla já bloqueada sem a troca para ela): lança pedindo recriar, sem desbloquear', async () => {
+    seededRoutes(3, null, []);
+
+    await expect(ensureSeedUsers('rc-fixtures', 12)).rejects.toThrow(/seed-carla.*bloquead.*recrie/);
+    expect(writes()).toEqual([]);
+  });
+
+  it('Redmine ignora a troca de responsável (GET mostra outro): lança na hora', async () => {
+    seededRoutes(1, '[seed-users] x', []);
+    routes['PUT /issues/50.json'] = { status: 204 }; // não grava: GET segue com seed-ana
+
+    await expect(ensureSeedUsers('rc-fixtures', 12)).rejects.toThrow(/\[seed:responsavel-1\].*ignorou.*21/);
+    expect(writes().some((c) => c.path === '/users/23.json')).toBe(false); // não bloqueia com a troca faltando
   });
 
   it('grupo já existe sem seed-bruno: devolve o bruno ao grupo', async () => {
@@ -214,6 +277,10 @@ describe('assertSeedUsers', () => {
     seededRoutes(3, null);
     routes['GET /users/21.json'] = { status: 200, body: { user: { id: 21, admin: false, api_key: API_KEY, status: 1 } } };
     routes['GET /users/23.json'] = { status: 200, body: { user: { id: 23, admin: false, status: 3 } } };
+    assigneeJournals([
+      { notes: `${TO_CARLA} x`, old: '21', new: '23' },
+      { notes: `${FROM_CARLA} x`, old: '23', new: '22' },
+    ]);
   });
 
   it('tudo certo: passa e não escreve a api_key no log', async () => {
@@ -248,6 +315,65 @@ describe('assertSeedUsers', () => {
     };
 
     await expect(assertSeedUsers('rc-fixtures', ids)).rejects.toThrow(/seed-equipe/);
+  });
+
+  /** Journals da issue 50 com o detail de assigned_to_id de cada etapa. */
+  function assigneeJournals(journals: { notes: string; old: string | null; new: string | null }[]) {
+    routes[ASSIGNEE_JOURNALS] = {
+      status: 200,
+      body: {
+        issue: {
+          id: 50,
+          journals: journals.map((j, i) => ({
+            id: 90 + i,
+            notes: j.notes,
+            details: [
+              { property: 'attr', name: 'status_id', old_value: '1', new_value: '2' },
+              { property: 'attr', name: 'assigned_to_id', old_value: j.old, new_value: j.new },
+            ],
+          })),
+        },
+      },
+    };
+  }
+
+  it('trocas de responsável ana → carla → bruno nos details: passa e loga o caminho', async () => {
+    assigneeJournals([
+      { notes: `${TO_CARLA} x`, old: '21', new: '23' },
+      { notes: `${FROM_CARLA} x`, old: '23', new: '22' },
+    ]);
+
+    await assertSeedUsers('rc-fixtures', ids);
+
+    const logged = stderr.mock.calls.map((c) => String(c[0])).join('');
+    expect(logged).toContain('assigned_to_id 21→23; assigned_to_id 23→22');
+  });
+
+  it('details de responsável diferentes do esperado: lança com os details', async () => {
+    assigneeJournals([
+      { notes: `${TO_CARLA} x`, old: '21', new: '23' },
+      { notes: `${FROM_CARLA} x`, old: '23', new: '21' },
+    ]);
+
+    await expect(assertSeedUsers('rc-fixtures', ids)).rejects.toThrow(/\[seed:responsavel-2\].*23→22.*"new_value":"21"/);
+  });
+
+  it('troca de responsável ausente ou duplicada: lança com a contagem', async () => {
+    assigneeJournals([{ notes: `${TO_CARLA} x`, old: '21', new: '23' }]);
+    await expect(assertSeedUsers('rc-fixtures', ids)).rejects.toThrow(/\[seed:responsavel-2\].*obtido 0/);
+
+    assigneeJournals([
+      { notes: `${TO_CARLA} x`, old: '21', new: '23' },
+      { notes: `${TO_CARLA} x`, old: '21', new: '23' },
+      { notes: `${FROM_CARLA} x`, old: '23', new: '22' },
+    ]);
+    await expect(assertSeedUsers('rc-fixtures', ids)).rejects.toThrow(/\[seed:responsavel-1\].*obtido 2/);
+  });
+
+  it('issue de trocas de responsável ausente: lança', async () => {
+    assigneeRoutes([], false);
+
+    await expect(assertSeedUsers('rc-fixtures', ids)).rejects.toThrow(/Trocas de responsável.*ausente/);
   });
 
   it('grupo no projeto mas sem seed-bruno (membership herdada ausente): lança', async () => {
