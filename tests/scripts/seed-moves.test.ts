@@ -16,7 +16,7 @@ vi.mock('../../scripts/lib/seed-projects.mjs', () => ({
 
 const BASE = 'http://localhost:3080';
 const SUBJECT = '[seed] Trocas de projeto';
-const SEARCH_PATH = `/issues.json?status_id=*&subject=~${encodeURIComponent(SUBJECT)}`;
+const SEARCH_PATH = `/issues.json?status_id=*&subject=~${encodeURIComponent(SUBJECT)}&limit=100`;
 
 type Detail = { property: string; name: string; old_value: string | null; new_value: string | null };
 type Journal = { id: number; notes: string; details: Detail[] };
@@ -138,6 +138,33 @@ describe('seedMoves — gravação', () => {
     expect(calls.some((call) => call.startsWith('GET /issues/40.json'))).toBe(false);
   });
 
+  it('GET da busca com status != 200: lança com o status', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: Init) => {
+      if (url === `${BASE}${SEARCH_PATH}`) {
+        return new Response('erro', { status: 503 });
+      }
+      return fakeRedmine(url, init);
+    }));
+
+    await expect(seedMoves()).rejects.toThrow(/falhou: status 503/);
+    expect(issue).toBeNull();
+  });
+
+  it('issue achada no rc-fixtures com só a [seed:move] pendente: só ela roda', async () => {
+    failPutMarker = '[seed:move]';
+    await expect(seedMoves()).rejects.toThrow(/status 500/);
+    expect(issue?.project.id).toBe(1);
+    failPutMarker = '';
+    calls = [];
+
+    await seedMoves();
+
+    expect(calls.filter((call) => !call.startsWith('GET '))).toEqual(['PUT /issues/41.json']);
+    expect(issue?.journals).toHaveLength(5);
+    expect(issue?.journals[4]?.notes.startsWith('[seed:move] ')).toBe(true);
+    expect(issue?.project.id).toBe(2);
+  });
+
   it('POST da issue com status != 201: lança com o status', async () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: Init) => {
       if (init?.method === 'POST') {
@@ -169,6 +196,16 @@ describe('seedMoves — gravação', () => {
     await expect(run).rejects.toThrow(/\[seed:version-1\].*fixed_version_id/);
     await expect(run).rejects.toThrow(`apague a issue "${SUBJECT}"`);
     expect(issue?.journals).toHaveLength(3);
+  });
+
+  it('project_id ignorado na própria [seed:move]: lança pedindo para apagar a issue', async () => {
+    ignoreFields = { project_id: true };
+
+    const run = seedMoves();
+
+    await expect(run).rejects.toThrow(/\[seed:move\].*project_id/);
+    await expect(run).rejects.toThrow(`apague a issue "${SUBJECT}"`);
+    expect(issue?.project.id).toBe(1);
   });
 });
 
