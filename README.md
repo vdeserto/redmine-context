@@ -479,10 +479,40 @@ git add tests/fixtures/redmine-e2e tests/integration/__snapshots__
 ```
 
 O `scripts/record-fixtures.mjs` obtém a `api_key` do admin no fluxo real
-(`GET /users/current.json`, Basic auth), mas **nunca** a grava: ela viaja só no
+(`GET /users/current.json`, Basic auth) e a do não-admin `seed-ana`
+(`GET /users/:id.json` com o admin), mas **nunca** as grava: elas viajam só no
 header (não serializado), campos sensíveis são redigidos para `[REDACTED]` e o
-script **aborta** se a chave real aparecer no arquivo. O teste versionado
+script **aborta** se alguma chave real aparecer no arquivo. O teste versionado
 reafirma a ausência de segredos por grep.
+
+**O que é gravado** (#260): a lista é fixa em `scripts/lib/record-plan.mjs` e
+travada por `tests/scripts/record-plan.test.ts` — gravar um endpoint fora dela,
+deixar de gravar um caso ou mudar o status esperado quebra o teste. Na gravação,
+uma resposta com status diferente do planejado **aborta** o script.
+
+| Endpoint (caminho e query exatos do cliente)                     | Quem chama  | Status    |
+| ---------------------------------------------------------------- | ----------- | --------- |
+| `/issues/{id}.json?include=journals,attachments,relations,children` (3 issues base) | admin | 200 |
+| `/attachments/download/{id}/fixture-note.txt`                    | admin       | 200       |
+| `/issue_statuses.json`, `/trackers.json`, `/enumerations/issue_priorities.json` | admin | 200 |
+| `/projects/{rc-fixtures,rc-fixtures-2}/memberships.json?offset=0&limit=100` | admin | 200 |
+| `/projects/{rc-fixtures,rc-fixtures-2}/versions.json` e `/issue_categories.json` | admin | 200 |
+| `/users/{seed-ana}.json` (ativo) e `/users/{seed-carla}.json` (bloqueado) | admin | 200 |
+| `/users/{seed-carla}.json` (bloqueado)                           | `seed-ana`  | **404**   |
+| `/users/999999.json` (id inexistente)                            | admin       | **404**   |
+| `/custom_fields.json`                                            | admin       | 200       |
+| `/custom_fields.json`                                            | `seed-ana`  | **403**   |
+| `/issues.json?issue_id={ids base}&status_id=*`                   | admin       | 200       |
+
+**Rótulos**: cada interação leva o campo `case` com o caso de origem (ex.:
+`"memberships do 2º projeto"`, `"usuário bloqueado (seed-carla) visto por
+não-admin"`, `"custom fields sem admin"`). O rótulo é único por interação e é o
+que distingue duas gravações do mesmo caminho (admin 200 × não-admin 404/403) —
+o header com a chave não é serializado.
+
+> O `interactions.json` versionado ainda é o da gravação anterior (4 interações):
+> regravá-lo com a lista acima exige atualizar o replay (contagem e snapshots),
+> o que fica para o filtro de PII/voláteis (#261) e o replay verde (#263).
 
 ### Reproduzir instância limpa / derrubar
 

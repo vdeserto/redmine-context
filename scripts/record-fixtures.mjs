@@ -7,20 +7,25 @@
 // PRESSUPOSTO: o stack de teste (docker/docker-compose.yml) JÁ ESTÁ up e
 // SEEDADO — rode `npm run ci:e2e:up` (#79) antes. Este script NÃO sobe nem
 // derruba nada: só EXERCITA o Redmine real e grava as respostas HTTP que o
-// fluxo `getIssue → normalize → bundle` (e o download de anexo) consome.
+// fluxo `getIssue → normalize → bundle` (e o download de anexo) consome, mais
+// os endpoints de nomes do M8/M9 (enumerações, memberships, versões, categorias,
+// /users/:id, /custom_fields.json, /issues.json?issue_id=) com seus 403/404.
+// A lista fixa vem de scripts/lib/record-plan.mjs (#260); cada interação leva o
+// rótulo `case` do caso de origem, e status diferente do planejado aborta.
 //
 // O arquivo gerado (tests/fixtures/redmine-e2e/interactions.json) é
 // REPRODUZIDO offline por tests/integration/redmine-replay.test.ts em qualquer
 // SO (macOS/Windows/Linux), sem docker e sem rede — cobertura E2E-equivalente
 // na matriz do CI (#77) onde o Docker não está disponível.
 //
-// SEGREDOS REDIGIDOS (CRÍTICO, ADR-003): a api_key nunca é gravada. Ela viaja
+// SEGREDOS REDIGIDOS (CRÍTICO, ADR-003): nenhuma api_key é gravada — nem a do
+// admin nem a do não-admin seed-ana (que grava os 403/404). Elas viajam
 // apenas no header X-Redmine-API-Key (que NÃO é serializado) e este script:
 //   1) redige recursivamente qualquer campo cujo nome bata em
-//      api_key/token/password/authorization → "[REDACTED]";
+//      api_key/token/password/authorization → "[REDACTED]" (scripts/lib/record-body.mjs);
 //   2) reescreve a URL base real (http://localhost:3080) para o placeholder
 //      estável https://redmine.example (também some com o host local);
-//   3) ao final, ABORTA se a api_key real ainda aparecer no arquivo.
+//   3) ao final, ABORTA se alguma das api_keys reais aparecer no arquivo.
 //
 // Uso (com o stack já up+seedado):
 //   npm run ci:e2e:up && npm run record:fixtures
@@ -33,6 +38,8 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { CANONICAL_BASE, recordedBody } from './lib/record-body.mjs';
+import { ATTACH_FILENAME, recordingPlan, requestUrl } from './lib/record-plan.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..');
@@ -44,17 +51,12 @@ const USER = process.env.REDMINE_ADMIN_USER ?? 'admin';
 const PASS = process.env.REDMINE_ADMIN_PASSWORD ?? 'admin';
 const AUTH = 'Basic ' + Buffer.from(`${USER}:${PASS}`).toString('base64');
 
-/** Placeholder estável que substitui a URL base real nas fixtures versionadas. */
-const CANONICAL_BASE = 'https://redmine.example';
-/** Placeholder de valor redigido. */
-const REDACTED = '[REDACTED]';
 
 /** Subjects das fixtures (chave de idempotência do seed), na ordem base 1..3. */
 const SUBJECTS = ['RC Fixture: issue base 1', 'RC Fixture: issue base 2', 'RC Fixture: issue base 3'];
-/** Include padrão do detalhe de issue (deve casar com src/client/issues.ts). */
-const ISSUE_INCLUDE = 'journals,attachments,relations,children';
-/** Nome do anexo de texto que o seed cria na issue base 1. */
-const ATTACH_FILENAME = 'fixture-note.txt';
+/** Não-admin cuja api_key grava os 403/404 e usuário bloqueado do seed (seed-users.mjs). */
+const NON_ADMIN_LOGIN = 'seed-ana';
+const LOCKED_LOGIN = 'seed-carla';
 
 /** Loga uma linha em stderr (o eslint proíbe console; script de infra). */
 const log = (/** @type {string} */ msg) => process.stderr.write(`[record] ${msg}\n`);
@@ -116,6 +118,33 @@ async function fetchAdminApiKey() {
   return key;
 }
 
+/**
+ * Ids de seed-ana e seed-carla e a api_key da seed-ana (lida com o admin, nunca logada).
+ * @returns {Promise<{ activeUserId: number, lockedUserId: number, nonAdminKey: string }>}
+ */
+async function resolveUsers() {
+  const got = await apiBasic('/users.json?status=*&limit=100');
+  if (got.status !== 200) fail(`GET users falhou: status ${got.status}`);
+  /** @type {Record<string, number>} */
+  const idByLogin = {};
+  for (const user of got.json?.users ?? []) {
+    idByLogin[user.login] = user.id;
+  }
+  const activeUserId = idByLogin[NON_ADMIN_LOGIN];
+  const lockedUserId = idByLogin[LOCKED_LOGIN];
+  if (activeUserId === undefined || lockedUserId === undefined) {
+    fail(`não achei ${NON_ADMIN_LOGIN}/${LOCKED_LOGIN} — o seed rodou (ci:e2e:up)?`);
+  }
+  const nonAdmin = await apiBasic(`/users/${activeUserId}.json`);
+  const nonAdminKey = nonAdmin.json?.user?.api_key;
+  if (typeof nonAdminKey !== 'string' || nonAdminKey.length === 0) {
+    fail(`não obtive a api_key de ${NON_ADMIN_LOGIN} (status ${nonAdmin.status})`);
+  }
+  log(`usuários: ${NON_ADMIN_LOGIN}=${activeUserId}, ${LOCKED_LOGIN}=${lockedUserId}`);
+  log(`api_key de ${NON_ADMIN_LOGIN} obtida — NÃO será gravada`);
+  return { activeUserId, lockedUserId, nonAdminKey };
+}
+
 /** Resolve os ids das 3 fixtures por subject (na ordem base 1..3). */
 async function resolveIds() {
   const got = await apiBasic('/issues.json?project_id=rc-fixtures&status_id=*&limit=100');
@@ -130,85 +159,54 @@ async function resolveIds() {
   return ids;
 }
 
-/** Nomes de campo cujo VALOR deve ser redigido (defesa em profundidade). */
-const SECRET_KEY = /(^|_)(api_?key|token|password|passwd|authorization|secret)($|_)/i;
-
-/**
- * Redige recursivamente valores de campos sensíveis e reescreve a URL base real
- * para o placeholder canônico. Preserva a forma; só troca segredos e o host.
- * @param {unknown} value
- * @returns {unknown}
- */
-function redact(value) {
-  if (typeof value === 'string') {
-    return value.split(BASE).join(CANONICAL_BASE);
-  }
-  if (Array.isArray(value)) {
-    return value.map(redact);
-  }
-  if (value !== null && typeof value === 'object') {
-    /** @type {Record<string, unknown>} */
-    const out = {};
-    for (const [k, v] of Object.entries(value)) {
-      out[k] = SECRET_KEY.test(k) ? REDACTED : redact(v);
-    }
-    return out;
-  }
-  return value;
-}
-
 async function main() {
   log(`alvo: ${BASE} (stack assumido up+seedado via ci:e2e:up)`);
   const apiKey = await fetchAdminApiKey();
   const ids = await resolveIds();
+  const { activeUserId, lockedUserId, nonAdminKey } = await resolveUsers();
+  const keys = { admin: apiKey, nonAdmin: nonAdminKey };
 
-  /** @type {any[]} */
-  const interactions = [];
-
-  // 1) Detalhe completo das 3 issues (o que o getIssue do core consome).
-  for (const id of ids) {
-    const path = `/issues/${id}.json`;
-    const got = await apiKeyGet(apiKey, `${path}?include=${ISSUE_INCLUDE}`, 'json');
-    if (got.status !== 200) fail(`GET ${path} respondeu ${got.status}`);
-    const body = redact(JSON.parse(got.text ?? 'null'));
-    interactions.push({
-      method: 'GET',
-      path,
-      query: { include: ISSUE_INCLUDE },
-      status: got.status,
-      statusText: got.statusText,
-      bodyKind: 'json',
-      body,
-    });
-    log(`gravado: GET ${path} (${got.text?.length ?? 0} bytes de JSON)`);
-  }
-
-  // 2) Download do anexo de texto da issue base 1 (o que o downloadAttachment consome).
   const id1 = ids[0];
   const detail = await apiBasic(`/issues/${id1}.json?include=attachments`);
-  const attachment = (detail.json?.issue?.attachments ?? []).find(
-    (/** @type {any} */ a) => a.filename === ATTACH_FILENAME,
-  );
+  let attachment;
+  for (const candidate of detail.json?.issue?.attachments ?? []) {
+    if (candidate.filename === ATTACH_FILENAME) {
+      attachment = candidate;
+    }
+  }
   if (!attachment) fail(`anexo "${ATTACH_FILENAME}" não encontrado na issue ${id1} (seed ok?)`);
-  const downloadPath = `/attachments/download/${attachment.id}/${encodeURIComponent(ATTACH_FILENAME)}`;
-  const bin = await apiKeyGet(apiKey, downloadPath, 'binary');
-  if (bin.status !== 200 || !bin.bytes) fail(`download do anexo respondeu ${bin.status}`);
-  interactions.push({
-    method: 'GET',
-    path: downloadPath,
-    query: {},
-    status: bin.status,
-    statusText: bin.statusText,
-    bodyKind: 'base64',
-    body: bin.bytes.toString('base64'),
-  });
-  log(`gravado: GET ${downloadPath} (${bin.bytes.length} bytes binários)`);
+
+  const planIds = { issueIds: ids, attachmentId: attachment.id, activeUserId, lockedUserId };
+  /** @type {any[]} */
+  const interactions = [];
+  let downloadPath = '';
+  for (const request of recordingPlan(planIds)) {
+    const url = requestUrl(request);
+    const got = await apiKeyGet(keys[request.as], url, request.kind);
+    if (got.status !== request.status) {
+      fail(`GET ${url} (${request.case}, como ${request.as}) respondeu ${got.status}, esperado ${request.status}`);
+    }
+    if (request.kind === 'binary') {
+      downloadPath = request.path;
+    }
+    interactions.push({
+      case: request.case,
+      method: 'GET',
+      path: request.path,
+      query: request.query,
+      status: got.status,
+      statusText: got.statusText,
+      ...recordedBody(request, url, got, BASE),
+    });
+    log(`gravado: GET ${request.path} → ${got.status} (${request.case})`);
+  }
 
   const fixture = {
     schemaVersion: '1.0',
     recordedWith: 'scripts/record-fixtures.mjs',
     note:
-      'Fixtures HTTP do Redmine seedado (projeto rc-fixtures) para REPLAY OFFLINE (issue #81, M5-06). ' +
+      'Fixtures HTTP do Redmine seedado (projetos rc-fixtures e rc-fixtures-2) para REPLAY OFFLINE ' +
+      '(#81, M5-06; endpoints de nomes com 403/404 e rótulo `case` por interação: #260). ' +
       'Segredos redigidos: nenhuma api_key/senha/Authorization real. URL base reescrita para ' +
       `${CANONICAL_BASE}. Regravar com: npm run ci:e2e:up && npm run record:fixtures.`,
     baseUrl: CANONICAL_BASE,
@@ -224,15 +222,17 @@ async function main() {
 
   const serialized = JSON.stringify(fixture, null, 2) + '\n';
 
-  // GUARDA FINAL: a api_key real NUNCA pode estar no arquivo versionado.
-  if (serialized.includes(apiKey)) {
-    fail('ABORTADO: a api_key real vazou para o arquivo de fixtures — verifique a redação.');
+  // GUARDA FINAL: nenhuma api_key real pode estar no arquivo versionado.
+  for (const who in keys) {
+    if (serialized.includes(keys[who])) {
+      fail(`ABORTADO: a api_key real (${who}) vazou para o arquivo de fixtures — verifique a redação.`);
+    }
   }
 
   await mkdir(OUT_DIR, { recursive: true });
   await writeFile(OUT_FILE, serialized, 'utf8');
   log(`OK: ${interactions.length} interações gravadas em ${OUT_FILE}`);
-  log('segredos redigidos e api_key ausente do arquivo (verificado).');
+  log('segredos redigidos e api_keys ausentes do arquivo (verificado).');
 }
 
 main().catch((err) => {
