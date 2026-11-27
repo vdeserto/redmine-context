@@ -4,7 +4,7 @@
  * um caso ou mudar o status esperado de um 403/404 quebra este teste. Sem rede.
  */
 import { describe, expect, it } from 'vitest';
-import { recordingPlan } from '../../scripts/lib/record-plan.mjs';
+import { recordingPlan, requestUrl } from '../../scripts/lib/record-plan.mjs';
 
 const ids = { issueIds: [11, 12, 13], attachmentId: 7, activeUserId: 21, lockedUserId: 23 };
 
@@ -12,9 +12,7 @@ const ids = { issueIds: [11, 12, 13], attachmentId: 7, activeUserId: 21, lockedU
 function lines() {
   const out = [];
   for (const request of recordingPlan(ids)) {
-    const query = new URLSearchParams(request.query).toString();
-    const url = query === '' ? request.path : `${request.path}?${query}`;
-    out.push(`${request.as} ${url} → ${request.status} | ${request.case}`);
+    out.push(`${request.as} ${requestUrl(request)} → ${request.status} | ${request.case}`);
   }
   return out;
 }
