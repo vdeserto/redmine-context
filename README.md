@@ -363,7 +363,11 @@ senha no código), o grupo `seed-equipe` (com `seed-bruno`) e memberships de
 base 2 num journal `[seed-users]` e depois é **bloqueada** (`status: 3`), e
 re-execuções não a reatribuem nem a desbloqueiam. A api_key de `seed-ana` (para
 gravar respostas 403) sai de `GET /users/<id>.json` com a credencial admin.
-A issue `[seed] Trocas de responsável` passa de `seed-ana` para `seed-carla` antes do bloqueio e dela para `seed-bruno` depois (`[seed:responsavel-1]`/`-2`); numa base semeada antes disso, com a carla já bloqueada, o seed falha pedindo para recriar a base (`down -v`), sem desbloqueá-la.
+A issue `[seed] Trocas de responsável` passa de `seed-ana` para `seed-carla`
+antes do bloqueio e dela para `seed-bruno` depois (`[seed:responsavel-1]`/`-2`);
+numa base semeada antes disso, com a carla já bloqueada, o seed falha antes de
+qualquer escrita pedindo para recriar a base (`down -v`), sem desbloqueá-la. Se
+o Redmine ignorar uma troca, apague essa issue e rode o seed de novo.
 A issue `[seed] Trocas de estado` (`scripts/lib/seed-changes.mjs`) ganha 2 trocas
 de status, 1 de tracker e 1 de prioridade, cada uma num journal com marca de
 etapa própria (`[seed:status-1]`, `[seed:tracker]`...), com ids descobertos nas

@@ -12,8 +12,14 @@
 // A issue "[seed] Trocas de responsável" (#259) nasce com seed-ana e troca de
 // responsável em journals marcados: ana → carla ANTES do bloqueio (o Redmine
 // recusa atribuir a bloqueado) e carla → bruno depois (tirar de bloqueado é
-// permitido). Base semeada antes do #259 (carla já bloqueada, sem a 1ª troca):
-// o seed lança pedindo para recriar a base — nunca desbloqueia a carla.
+// permitido). Base semeada antes do #259 (carla já bloqueada, sem a 1ª troca,
+// com ou sem a issue): o seed lança antes de qualquer escrita pedindo para recriar
+// a base — nunca desbloqueia a carla.
+//
+// Troca ignorada: o Redmine pode responder 204 e gravar o journal com a nota
+// marcada, mas sem detail. Como a marca já existe, a re-execução pularia a etapa
+// para sempre; por isso o GET logo após cada PUT lança na hora. Para refazer,
+// apague a issue "[seed] Trocas de responsável" e rode o seed de novo.
 //
 // seed-ana é o não-admin cuja api_key grava as respostas 403 (M6-07.1). A chave
 // sai de `GET /users/:id.json` com a credencial admin (campo `api_key`); nunca
@@ -33,8 +39,23 @@ const GROUP = 'seed-equipe';
 const JOURNAL_MARKER = '[seed-users]';
 const LOCKED_STATUS = 3;
 const ASSIGNEE_SUBJECT = '[seed] Trocas de responsável';
-const TO_LOCKED = { marker: '[seed:responsavel-1]', from: API_USER, to: LOCKED_USER, note: 'Repassada à Carla.' }; // antes do bloqueio
-const FROM_LOCKED = { marker: '[seed:responsavel-2]', from: LOCKED_USER, to: GROUP_MEMBER, note: 'Carla bloqueada; repassada ao Bruno.' };
+const REDO_HINT = `apague a issue ${ASSIGNEE_SUBJECT} e rode o seed de novo`;
+const TO_LOCKED = {
+  marker: '[seed:responsavel-1]', // antes do bloqueio
+  from: API_USER,
+  to: LOCKED_USER,
+  note: 'Repassada à Carla.',
+};
+const FROM_LOCKED = {
+  marker: '[seed:responsavel-2]',
+  from: LOCKED_USER,
+  to: GROUP_MEMBER,
+  note: 'Carla bloqueada; repassada ao Bruno.',
+};
+/** Base semeada antes do #259: a 1ª troca exige a carla ativa, e ela nunca é desbloqueada. */
+const OLD_BASE_ERROR =
+  `${TO_LOCKED.marker}: ${LOCKED_USER} já está bloqueada e o Redmine não atribui a bloqueado — ` +
+  'base semeada antes do #259; recrie-a (docker compose -f docker/docker-compose.yml down -v && up -d) e rode o seed';
 
 const USERS = {
   [API_USER]: { firstname: 'Ana', lastname: 'Seed' },
@@ -69,7 +90,8 @@ async function call(method, path, body, expected) {
  * @returns {Promise<Record<number, true>>}
  */
 async function projectMemberIds(project) {
-  const got = await call('GET', `/projects/${project}/memberships.json?limit=100`, undefined, 200); // fixture tem poucos membros
+  // A fixture tem poucos membros: uma página basta.
+  const got = await call('GET', `/projects/${project}/memberships.json?limit=100`, undefined, 200);
   /** @type {Record<number, true>} */
   const ids = {};
   for (const membership of got.memberships) {
@@ -105,17 +127,13 @@ async function ensureAssigneeChange(issueId, step, users) {
   await ensureByMarker('journal', step.marker, async () => {
     const target = users[step.to];
     if (target.status === LOCKED_STATUS) {
-      throw new Error(
-        `${step.marker}: ${step.to} já está bloqueada e o Redmine não atribui a bloqueado — base semeada antes do #259; ` +
-          'recrie-a (docker compose -f docker/docker-compose.yml down -v && up -d) e rode o seed',
-      );
+      throw new Error(OLD_BASE_ERROR);
     }
     await putIssue(issueId, { assigned_to_id: target.id, notes: `${step.marker} ${step.note}` }, step.marker);
     const savedId = (await getIssue(issueId)).assigned_to?.id;
     if (savedId !== target.id) {
       throw new Error(
-        `${step.marker}: o Redmine ignorou assigned_to_id → ${target.id} (ficou ${savedId}); ` +
-          `apague a issue "${ASSIGNEE_SUBJECT}" para refazer o seed`,
+        `${step.marker}: o Redmine ignorou assigned_to_id → ${target.id} (ficou ${savedId}); ${REDO_HINT}`,
       );
     }
   }, issueId);
@@ -171,6 +189,9 @@ export async function ensureSeedUsers(project, issueId) {
 
   let assigneeIssueId = await findAssigneeIssue(project);
   if (assigneeIssueId === undefined) {
+    if (users[LOCKED_USER].status === LOCKED_STATUS) {
+      throw new Error(OLD_BASE_ERROR); // sem a issue não há a 1ª troca: nada de POST órfão
+    }
     const description = 'Troca de responsável passando por um usuário depois bloqueado (seed).';
     const issue = { project_id: project, subject: ASSIGNEE_SUBJECT, description, assigned_to_id: ids[API_USER] };
     assigneeIssueId = (await call('POST', '/issues.json', { issue }, 201)).issue.id;
@@ -224,15 +245,14 @@ export async function assertSeedUsers(project, ids) {
   if (assigneeIssueId === undefined) {
     throw new Error(`ASSERT responsável: issue "${ASSIGNEE_SUBJECT}" ausente`);
   }
-  const journalsByMarker = {};
+  /** @type {Map<string, any[]>} só as marcas das trocas; as demais notas ficam de fora */
+  const journalsByMarker = new Map([[TO_LOCKED.marker, []], [FROM_LOCKED.marker, []]]);
   for (const journal of (await getIssue(assigneeIssueId, 'journals')).journals ?? []) {
-    const marker = (journal.notes ?? '').split(/\s/, 1)[0];
-    journalsByMarker[marker] ??= [];
-    journalsByMarker[marker].push(journal);
+    journalsByMarker.get((journal.notes ?? '').split(/\s/, 1)[0])?.push(journal);
   }
   const summary = [];
   for (const step of [TO_LOCKED, FROM_LOCKED]) {
-    const journals = journalsByMarker[step.marker] ?? [];
+    const journals = journalsByMarker.get(step.marker) ?? [];
     if (journals.length !== 1) {
       throw new Error(`ASSERT responsável: ${step.marker} esperado 1 journal, obtido ${journals.length}`);
     }
@@ -245,7 +265,10 @@ export async function assertSeedUsers(project, ids) {
     }
     const expected = `${ids[step.from]}→${ids[step.to]}`;
     if (`${detail?.old_value}→${detail?.new_value}` !== expected) {
-      throw new Error(`ASSERT responsável: ${step.marker} esperado assigned_to_id ${expected} — details ${JSON.stringify(details)}`);
+      throw new Error(
+        `ASSERT responsável: ${step.marker} esperado assigned_to_id ${expected} — ` +
+          `details ${JSON.stringify(details)}; ${REDO_HINT}`,
+      );
     }
     summary.push(`assigned_to_id ${expected}`);
   }
