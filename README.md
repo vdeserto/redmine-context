@@ -367,6 +367,7 @@ A issue `[seed] Trocas de estado` (`scripts/lib/seed-changes.mjs`) ganha 2 troca
 de status, 1 de tracker e 1 de prioridade, cada uma num journal com marca de
 etapa própria (`[seed:status-1]`, `[seed:tracker]`...), com ids descobertos nas
 enumerações da instância.
+A issue `[seed] CF desvinculado` (`scripts/lib/seed-cf-unlinked.mjs`) guarda um journal `[seed:cf-desvinculado]` com detail `cf` de um custom field que o seed cria, preenche e depois desvincula do tracker da issue por `rails runner` no container do compose (a REST API não edita custom fields; exige o docker do compose, trocável por `COMPOSE_FILE`), e o bundle mostra `campo #<id>` para ele.
 Ao final, asserções via `GET` validam as contagens e o processo sai com código
 `!= 0` se algo estiver errado.
 
