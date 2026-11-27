@@ -42,6 +42,7 @@
 import { BASE, USER, api, ensureByMarker, getIssue, log, putIssue } from './lib/seed-helpers.mjs';
 import { ensureAttachmentHistory, ensureFixtureAttachments } from './lib/seed-attachments.mjs';
 import { assertStateChanges, ensureStateChanges } from './lib/seed-changes.mjs';
+import { ensureUnlinkedCustomField } from './lib/seed-cf-unlinked.mjs';
 import { assertProjectFixtures, ensureProjectFixtures } from './lib/seed-projects.mjs';
 import { assertSeedUsers, ensureSeedUsers } from './lib/seed-users.mjs';
 import { seedMoves } from './lib/seed-moves.mjs';
@@ -358,6 +359,7 @@ async function main() {
   await assertSeedUsers(PROJECT_ID, seedUserIds);
   await assertStateChanges(PROJECT_ID);
   await seedMoves();
+  await ensureUnlinkedCustomField(PROJECT_ID);
   log(`seed concluído. issues no projeto: ${total}`);
 }
 

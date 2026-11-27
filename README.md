@@ -375,6 +375,11 @@ A issue `[seed] Trocas de projeto` (`scripts/lib/seed-moves.mjs`) troca categori
 e versão (vazio → valor e valor → valor) no `rc-fixtures` e é movida para o
 `rc-fixtures-2` levando categoria e versão do projeto 2 no mesmo PUT, um journal
 marcado por etapa (`[seed:category-1]`... `[seed:move]`).
+A issue `[seed] CF desvinculado` (`scripts/lib/seed-cf-unlinked.mjs`) guarda um
+journal `[seed:cf-desvinculado]` com detail `cf` de um custom field que o seed
+cria, preenche e depois desvincula do tracker da issue por `rails runner` no
+container do compose (a REST API não edita custom fields; exige o docker do
+compose, trocável por `COMPOSE_FILE`), e o bundle mostra `campo #<id>` para ele.
 Ao final, asserções via `GET` validam as contagens e o processo sai com código
 `!= 0` se algo estiver errado.
 
