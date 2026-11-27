@@ -41,16 +41,19 @@ function seededRedmine() {
     body: { projects: [{ id: 1, identifier: 'rc-fixtures' }, { id: 2, identifier: 'rc-fixtures-2' }], total_count: 2 },
   };
   let nextId = 10;
+  const projectIds = { 'rc-fixtures': 1, 'rc-fixtures-2': 2 };
   for (const identifier in PROJECT_FIXTURES) {
     const fixtures = PROJECT_FIXTURES[identifier as keyof typeof PROJECT_FIXTURES];
+    const project = { id: projectIds[identifier as keyof typeof projectIds], name: fixtures.name };
     const versions = [];
     for (const name of fixtures.versions) {
-      versions.push({ id: nextId++, name });
+      versions.push({ id: nextId++, name, project });
     }
     const categories = [];
     for (const name of fixtures.categories) {
-      categories.push({ id: nextId++, name });
+      categories.push({ id: nextId++, name, project });
     }
+    responses[`GET /projects/${identifier}.json`] = { status: 200, body: { project: { id: project.id, identifier } } };
     responses[`GET /projects/${identifier}/versions.json`] = { status: 200, body: { versions } };
     responses[`GET /projects/${identifier}/issue_categories.json`] = { status: 200, body: { issue_categories: categories } };
   }
@@ -138,6 +141,23 @@ describe('ensureProjectFixtures', () => {
     await expect(ensureProjectFixtures()).rejects.toThrow(/versions\.json.*422/);
   });
 
+  it('POST de categoria falha: lança com o status', async () => {
+    seededRedmine();
+    responses['GET /projects/rc-fixtures-2/issue_categories.json'] = { status: 200, body: { issue_categories: [] } };
+    responses['POST /projects/rc-fixtures-2/issue_categories.json'] = { status: 403, body: '' };
+
+    await expect(ensureProjectFixtures()).rejects.toThrow(/issue_categories\.json.*403/);
+  });
+
+  it('POST do projeto falha: lança com o status', async () => {
+    seededRedmine();
+    responses[PROJECTS_PAGE] = { status: 200, body: { projects: [{ id: 1, identifier: 'rc-fixtures' }], total_count: 1 } };
+    responses['GET /trackers.json'] = { status: 200, body: { trackers: [{ id: 1 }] } };
+    responses['POST /projects.json'] = { status: 422, body: { errors: ['Identifier has already been taken'] } };
+
+    await expect(ensureProjectFixtures()).rejects.toThrow(/projects\.json.*422/);
+  });
+
   it('GET /trackers.json falha: lança sem criar o projeto', async () => {
     responses[PROJECTS_PAGE] = { status: 200, body: { projects: [], total_count: 0 } };
     responses['GET /trackers.json'] = { status: 500, body: 'boom' };
@@ -159,6 +179,17 @@ describe('assertProjectFixtures', () => {
     responses['GET /projects/rc-fixtures-2/versions.json'] = { status: 200, body: { versions: [{ id: 1, name: 'outra' }] } };
 
     await expect(assertProjectFixtures()).rejects.toThrow(/rc-fixtures-2.*\[seed\]/);
+  });
+
+  it('versão compartilhada de outro projeto com o mesmo nome não conta como do 2º projeto', async () => {
+    seededRedmine();
+    const shared = [];
+    for (const name of PROJECT_FIXTURES['rc-fixtures-2'].versions) {
+      shared.push({ id: 90, name, project: { id: 1, name: 'RC Fixtures' }, sharing: 'system' });
+    }
+    responses['GET /projects/rc-fixtures-2/versions.json'] = { status: 200, body: { versions: shared } };
+
+    await expect(assertProjectFixtures()).rejects.toThrow(/rc-fixtures-2.*\[seed\] P2 v1\.0/);
   });
 
   it('categoria do seed ausente: lança', async () => {
