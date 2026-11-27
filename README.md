@@ -353,6 +353,13 @@ A idempotência por **marca** vive em `scripts/lib/seed-helpers.mjs`
 a marca — o campo igual a ela ou começando com ela seguida de espaço em branco
 (os journals do seed começam com `[seed]`). Marca vazia ou tipo sem o `parent`
 de que precisa lançam erro antes de qualquer chamada.
+Usuários e grupo ficam em `scripts/lib/seed-users.mjs`: 3 usuários não-admin
+(`seed-ana`, `seed-bruno`, `seed-carla`, com senha gerada pelo Redmine — nenhuma
+senha no código), o grupo `seed-equipe` (com `seed-bruno`) e memberships de
+`seed-ana`, `seed-carla` e do grupo no `rc-fixtures`; `seed-carla` recebe a issue
+base 2 num journal `[seed-users]` e depois é **bloqueada** (`status: 3`), e
+re-execuções não a reatribuem nem a desbloqueiam. A api_key de `seed-ana` (para
+gravar respostas 403) sai de `GET /users/<id>.json` com a credencial admin.
 Ao final, asserções via `GET` validam as contagens e o processo sai com código
 `!= 0` se algo estiver errado.
 

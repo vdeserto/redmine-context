@@ -25,6 +25,7 @@ const MARKER_LOOKUP = {
   version: { path: '/projects/{parent}/versions.json', list: 'versions', field: 'name' },
   category: { path: '/projects/{parent}/issue_categories.json', list: 'issue_categories', field: 'name' },
   journal: { path: '/issues/{parent}.json?include=journals', list: 'journals', field: 'notes' },
+  group: { path: '/groups.json', list: 'groups', field: 'name' }, // /groups.json não pagina
 };
 
 /** Corpo de resposta curto o bastante para caber numa mensagem de erro. */
@@ -67,7 +68,7 @@ export async function api(method, path, body) {
 /**
  * Devolve a entidade do tipo `kind` que tem a marca; se nenhuma tiver, chama
  * `create` e devolve o resultado dele.
- * @param {string} kind user | project | version | category | journal
+ * @param {string} kind user | project | version | category | journal | group
  * @param {string} marker
  * @param {() => Promise<any>} create
  * @param {string | number} [parent] projeto (version, category) ou issue (journal)
