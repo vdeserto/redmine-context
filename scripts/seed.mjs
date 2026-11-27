@@ -8,8 +8,10 @@
 // É idempotente: cada recurso é verificado via GET antes de qualquer POST/PUT,
 // então re-execuções não duplicam nada (nem journals, relations ou anexos).
 // Projeto e journal usam a idempotência por marca de scripts/lib/seed-helpers.mjs.
-// Ao final, asserções via GET validam as contagens e o processo sai com código
-// != 0 se algo estiver errado.
+// Ao final, asserções via GET validam as contagens, a matriz completa
+// (scripts/lib/seed-matrix.mjs) confere cada caso do plano e o processo sai com
+// código != 0 se algo estiver errado. A linha `contagens:` é a que o CI compara
+// entre duas execuções seguidas (scripts/ci-e2e-up.sh).
 //
 // Fixtures geradas (o que cada issue ganha):
 //   issue base 1 → journal (comentário), custom field Severidade=Alta,
@@ -44,6 +46,7 @@ import { ensureAttachmentHistory, ensureFixtureAttachments } from './lib/seed-at
 import { assertStateChanges, ensureStateChanges } from './lib/seed-changes.mjs';
 import { ensureUnlinkedCustomField } from './lib/seed-cf-unlinked.mjs';
 import { assertProjectFixtures, ensureProjectFixtures } from './lib/seed-projects.mjs';
+import { assertSeedMatrix } from './lib/seed-matrix.mjs';
 import { assertSeedUsers, ensureSeedUsers } from './lib/seed-users.mjs';
 import { seedMoves } from './lib/seed-moves.mjs';
 
@@ -360,6 +363,7 @@ async function main() {
   await assertStateChanges(PROJECT_ID);
   await seedMoves();
   await ensureUnlinkedCustomField(PROJECT_ID);
+  log(`contagens: ${JSON.stringify(await assertSeedMatrix())}`);
   log(`seed concluído. issues no projeto: ${total}`);
 }
 

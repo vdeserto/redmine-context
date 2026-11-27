@@ -385,8 +385,15 @@ journal `[seed:cf-desvinculado]` com detail `cf` de um custom field que o seed
 cria, preenche e depois desvincula do tracker da issue por `rails runner` no
 container do compose (a REST API não edita custom fields; exige o docker do
 compose, trocável por `COMPOSE_FILE`), e o bundle mostra `campo #<id>` para ele.
-Ao final, asserções via `GET` validam as contagens e o processo sai com código
-`!= 0` se algo estiver errado.
+Ao final, asserções via `GET` validam as contagens e a **matriz completa**
+(`scripts/lib/seed-matrix.mjs`) confere cada caso do plano — usuário bloqueado,
+2º projeto, versões e categorias, as 7 trocas (`status_id`, `tracker_id`,
+`priority_id`, `assigned_to_id`, `project_id`, `category_id`,
+`fixed_version_id`), CF desvinculado e anexo +/− — falhando com o nome de
+todos os casos ausentes; o processo sai com código `!= 0` se algo estiver
+errado. O seed imprime uma linha `[seed] contagens: {...}` (issues, journals,
+anexos, usuários, versões, categorias), e o `npm run ci:e2e:up` roda o seed
+**duas vezes** e falha se essa linha mudar entre as execuções.
 
 Config via ambiente (defaults combinam com o compose de teste):
 
