@@ -38,6 +38,7 @@
 
 import { existsSync, readFileSync } from 'node:fs';
 import { BASE, USER, api, ensureByMarker, getIssue, log, putIssue, uploadBytes } from './lib/seed-helpers.mjs';
+import { assertProjectFixtures, ensureProjectFixtures } from './lib/seed-projects.mjs';
 
 const PROJECT_ID = 'rc-fixtures';
 const PROJECT_NAME = 'RC Fixtures';
@@ -377,10 +378,12 @@ async function main() {
   log(`alvo: ${BASE} (usuário ${USER})`);
   await preflightAuth();
   await ensureProject();
+  await ensureProjectFixtures();
   await ensureIssues();
   const ids = await resolveIssueIds();
   await enrichIssues(ids);
   const total = await assertSeed();
+  await assertProjectFixtures();
   log(`seed concluído. issues no projeto: ${total}`);
 }
 
