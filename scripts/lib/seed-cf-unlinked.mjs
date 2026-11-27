@@ -106,7 +106,7 @@ function positiveId(value, what) {
 }
 
 /** Detail `cf` do journal marcado, se houver. */
-function markedCfDetail(issue) {
+export function markedCfDetail(issue) {
   for (const journal of issue.journals ?? []) {
     if ((journal.notes ?? '').startsWith(`${MARKER} `)) {
       for (const detail of journal.details ?? []) {
@@ -120,7 +120,7 @@ function markedCfDetail(issue) {
 }
 
 /** O campo do detail ainda está em `issue.custom_fields`? */
-function isLinked(issue, detail) {
+export function isLinked(issue, detail) {
   for (const field of issue.custom_fields ?? []) {
     if (String(field.id) === detail.name) {
       return true;

@@ -100,7 +100,17 @@ done
 # 4) Seed via REST twice (reuses scripts/seed.mjs; asserts counts and the full
 #    matrix). The seed is idempotent, so the 2nd run must report the same
 #    `[seed] contagens:` line; the full seed output still goes to stderr.
-run_seed() { node "$ROOT/scripts/seed.mjs" 2>&1 | tee /dev/stderr | grep '^\[seed\] contagens:'; }
+#    `tee -a` keeps a stderr redirected to a file from being truncated; the
+#    `|| return 1` is explicit because $(...) does not inherit `set -e`.
+run_seed() {
+  local counts
+  counts="$(node "$ROOT/scripts/seed.mjs" 2>&1 | tee -a /dev/stderr | { grep '^\[seed\] contagens:' || true; })" || return 1
+  if [ -z "$counts" ]; then
+    log "ERROR: seed did not print the '[seed] contagens:' line"
+    return 1
+  fi
+  printf '%s\n' "$counts"
+}
 log "running REST seed (scripts/seed.mjs), 1st run..."
 first_counts="$(run_seed)"
 log "running REST seed again to check idempotency..."
