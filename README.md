@@ -345,6 +345,14 @@ O script (`scripts/seed.mjs`, Node puro, `fetch` nativo, sem dependências) cria
 um projeto de identifier fixo **`rc-fixtures`** e **3 issues** com descrição, via
 REST API. É **idempotente**: cada recurso é verificado por `GET` antes do `POST`
 (projeto por identifier, issues por subject), então re-executar não duplica nada.
+A idempotência por **marca** vive em `scripts/lib/seed-helpers.mjs`
+(`ensureByMarker(kind, marker, create, parent?)`): lista a coleção do tipo
+(`user` por login, inclusive bloqueados; `project` por identifier;
+`version`/`category` por nome dentro do projeto; `journal` pelas notes da issue)
+(todas as páginas, nas coleções que paginam) e só cria se nenhuma entrada tiver
+a marca — o campo igual a ela ou começando com ela seguida de espaço em branco
+(os journals do seed começam com `[seed]`). Marca vazia ou tipo sem o `parent`
+de que precisa lançam erro antes de qualquer chamada.
 Ao final, asserções via `GET` validam as contagens e o processo sai com código
 `!= 0` se algo estiver errado.
 
