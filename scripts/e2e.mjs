@@ -51,7 +51,7 @@ const NO_TEARDOWN = /^(1|true)$/i.test(process.env.E2E_NO_TEARDOWN ?? '');
 /** Loga uma linha em stderr (o eslint proíbe console; script de infra). */
 const log = (/** @type {string} */ msg) => process.stderr.write(`[e2e] ${msg}\n`);
 
-const { fetchAdminApiKey, resolveIds, cliIssue, cliLast, mcpGetIssueContext, mcpGetLast, grepAll } =
+const { fetchAdminApiKey, resolveIds, newestIssueIds, cliIssue, cliLast, mcpGetIssueContext, mcpGetLast, grepAll } =
   createE2E({
     log,
     mcpClientName: 'e2e-mcp-client',
@@ -162,16 +162,17 @@ async function main() {
     }
 
     // 9) get_last / CLI last: ordem, contagem e paridade MCP vs CLI.
-    // `created` desc é o critério ESTÁVEL aqui: o seed cria as 3 fixtures em
-    // sequência, então a de maior id é sempre a mais nova. (`updated` dependeria
-    // da ordem de enriquecimento e tornaria a asserção frágil.)
-    const newestId = Math.max(...ids);
+    // `created` desc é o critério ESTÁVEL aqui (`updated` dependeria da ordem de
+    // enriquecimento). As 3 mais novas vêm da API, não das fixtures base: o seed
+    // cria outras issues depois delas.
+    const newestIds = await newestIssueIds(3);
+    const newestId = newestIds[0];
     const lastCli = await cliLast(apiKey, ['--order', 'created', '--count', '3']);
     if (lastCli.code !== 0) fail(`CLI last saiu ${lastCli.code}: ${lastCli.stderr}`);
     if (!lastCli.stdout.startsWith(`# Issue #${newestId}`)) {
       fail(`last --order created não começou pela issue mais nova (#${newestId})`);
     }
-    for (const id of ids) {
+    for (const id of newestIds) {
       if (!lastCli.stdout.includes(`# Issue #${id}`)) {
         fail(`last --count 3 não trouxe a issue ${id}`);
       }

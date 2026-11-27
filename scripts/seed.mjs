@@ -38,6 +38,7 @@
 
 import { existsSync, readFileSync } from 'node:fs';
 import { BASE, USER, api, ensureByMarker, getIssue, log, putIssue, uploadBytes } from './lib/seed-helpers.mjs';
+import { assertStateChanges, ensureStateChanges } from './lib/seed-changes.mjs';
 import { assertProjectFixtures, ensureProjectFixtures } from './lib/seed-projects.mjs';
 import { assertSeedUsers, ensureSeedUsers } from './lib/seed-users.mjs';
 
@@ -383,10 +384,12 @@ async function main() {
   await ensureIssues();
   const ids = await resolveIssueIds();
   await enrichIssues(ids);
+  await ensureStateChanges(PROJECT_ID);
   const seedUserIds = await ensureSeedUsers(PROJECT_ID, ids[1]);
   const total = await assertSeed();
   await assertProjectFixtures();
   await assertSeedUsers(PROJECT_ID, seedUserIds);
+  await assertStateChanges(PROJECT_ID);
   log(`seed concluído. issues no projeto: ${total}`);
 }
 

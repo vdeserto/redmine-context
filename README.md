@@ -363,6 +363,10 @@ senha no código), o grupo `seed-equipe` (com `seed-bruno`) e memberships de
 base 2 num journal `[seed-users]` e depois é **bloqueada** (`status: 3`), e
 re-execuções não a reatribuem nem a desbloqueiam. A api_key de `seed-ana` (para
 gravar respostas 403) sai de `GET /users/<id>.json` com a credencial admin.
+A issue `[seed] Trocas de estado` (`scripts/lib/seed-changes.mjs`) ganha 2 trocas
+de status, 1 de tracker e 1 de prioridade, cada uma num journal com marca de
+etapa própria (`[seed:status-1]`, `[seed:tracker]`...), com ids descobertos nas
+enumerações da instância.
 Ao final, asserções via `GET` validam as contagens e o processo sai com código
 `!= 0` se algo estiver errado.
 

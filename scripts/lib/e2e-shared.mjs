@@ -162,6 +162,23 @@ export function createE2E({ log, mcpClientName = 'e2e-mcp-client' }) {
   }
 
   /**
+   * Ids das `count` issues mais novas, pela mesma consulta do `last --order created`
+   * (sem filtro de projeto, status default). Independe das fixtures base: o seed
+   * pode criar outras issues depois delas.
+   * @param {number} count
+   * @returns {Promise<number[]>}
+   */
+  async function newestIssueIds(count) {
+    const got = await api('GET', `/issues.json?sort=created_on:desc&limit=${count}`);
+    if (got.status !== 200) fail(`GET issues mais novas falhou: status ${got.status}`);
+    const ids = [];
+    for (const issue of got.json?.issues ?? []) {
+      ids.push(issue.id);
+    }
+    return ids;
+  }
+
+  /**
    * Roda a CLI `issue <id>` (Markdown) contra o ambiente, com api_key na env.
    * Teto de tempo por-chamada (uma issue não deve levar minutos).
    * @param {number} id @param {string} apiKey @param {string[]} [extraArgs]
@@ -299,6 +316,7 @@ export function createE2E({ log, mcpClientName = 'e2e-mcp-client' }) {
   return {
     fetchAdminApiKey,
     resolveIds,
+    newestIssueIds,
     cliIssue,
     cliLast,
     mcpCallTool,
