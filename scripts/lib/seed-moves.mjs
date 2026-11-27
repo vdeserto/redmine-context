@@ -1,27 +1,17 @@
 // @ts-check
 //
-// seed-moves.mjs — issue "[seed] Trocas de projeto" com trocas de categoria e de
-// versão (vazio → valor e valor → valor) no rc-fixtures e, por fim, movida para o
-// rc-fixtures-2 (#258). É o material dos details `category_id`, `fixed_version_id`
-// e `project_id` que o bundle traduz em nomes.
-//
-// Cada etapa é um PUT com as trocas + notes `[seed:<etapa>] ...`; a marca é a chave
-// de idempotência (ensureByMarker 'journal'): já movida = não move de novo. A busca
-// da issue não filtra projeto, para achá-la também depois de movida.
-//
-// Ao mover, a categoria e a versão do rc-fixtures não valem no rc-fixtures-2 (o
-// Redmine as limpa em Issue#project=, com new_value vazio); por isso o PUT da
-// mudança leva as do projeto 2, e o journal grava os 3 details valor → valor.
-//
-// Campo ignorado pelo Redmine (204 com o journal marcado, sem detail): o GET logo
-// após o PUT lança na hora, porque a re-execução pularia a etapa para sempre. Para
-// refazer, apague a issue "[seed] Trocas de projeto" e rode o seed.
+// seed-moves.mjs — issue "[seed] Trocas de projeto": trocas de categoria e versão no
+// rc-fixtures e, por fim, movida para o rc-fixtures-2 (#258). Uma etapa = um PUT com
+// notes `[seed:<etapa>]`, chave de idempotência (ensureByMarker 'journal').
+// A busca não filtra projeto, para achá-la também depois de movida. O PUT da mudança
+// leva categoria e versão do projeto 2 (o Redmine limparia as do 1), gravando os 3
+// details valor → valor. Campo ignorado lança logo após o PUT: para refazer, apague a issue.
 
 import { api, ensureByMarker, getIssue, log, putIssue } from './seed-helpers.mjs';
 import { ensureProjectFixtures } from './seed-projects.mjs';
 
 const SUBJECT = '[seed] Trocas de projeto';
-const SEARCH_PATH = `/issues.json?status_id=*&subject=~${encodeURIComponent(SUBJECT)}`;
+const SEARCH_PATH = `/issues.json?status_id=*&subject=~${encodeURIComponent(SUBJECT)}&limit=100`;
 
 /** Atributo da issue (GET) que cada campo do PUT altera. */
 const ATTR_OF_FIELD = { project_id: 'project', category_id: 'category', fixed_version_id: 'fixed_version' };
@@ -138,7 +128,8 @@ export async function seedMoves() {
     for (const field in step.changes) {
       const [oldId, newId] = step.changes[field];
       const detail = detailsByField[field];
-      if ((detail?.old_value ?? null) !== (oldId === null ? null : String(oldId)) || detail?.new_value !== String(newId)) {
+      const expectedOld = oldId === null ? null : String(oldId);
+      if ((detail?.old_value ?? null) !== expectedOld || detail?.new_value !== String(newId)) {
         throw new Error(
           `ASSERT trocas de projeto: ${step.marker} esperado ${field} ${oldId ?? 'vazio'}→${newId}, ` +
             `details ${JSON.stringify(journals[0].details ?? [])}`,
