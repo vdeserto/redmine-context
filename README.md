@@ -353,6 +353,10 @@ A idempotência por **marca** vive em `scripts/lib/seed-helpers.mjs`
 a marca — o campo igual a ela ou começando com ela seguida de espaço em branco
 (os journals do seed começam com `[seed]`). Marca vazia ou tipo sem o `parent`
 de que precisa lançam erro antes de qualquer chamada.
+A issue `[seed] Trocas de estado` (`scripts/lib/seed-changes.mjs`) ganha 2 trocas
+de status, 1 de tracker e 1 de prioridade, cada uma num journal com marca de
+etapa própria (`[seed:status-1]`, `[seed:tracker]`...), com ids descobertos nas
+enumerações da instância.
 Ao final, asserções via `GET` validam as contagens e o processo sai com código
 `!= 0` se algo estiver errado.
 
