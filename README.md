@@ -367,6 +367,10 @@ A issue `[seed] Trocas de estado` (`scripts/lib/seed-changes.mjs`) ganha 2 troca
 de status, 1 de tracker e 1 de prioridade, cada uma num journal com marca de
 etapa própria (`[seed:status-1]`, `[seed:tracker]`...), com ids descobertos nas
 enumerações da instância.
+A issue `[seed] Anexos no histórico` (`scripts/lib/seed-attachments.mjs`) ganha o
+anexo `seed-added.txt` num journal marcado e perde o `seed-removed.txt` via
+`DELETE /attachments/:id.json` (details `attachment` com `new_value`/`old_value`);
+o filename é a marca, e a remoção já no histórico não se repete.
 A issue `[seed] Trocas de projeto` (`scripts/lib/seed-moves.mjs`) troca categoria
 e versão (vazio → valor e valor → valor) no `rc-fixtures` e é movida para o
 `rc-fixtures-2` levando categoria e versão do projeto 2 no mesmo PUT, um journal
