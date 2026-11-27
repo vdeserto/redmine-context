@@ -22,7 +22,7 @@
 // admin nem a do não-admin seed-ana (que grava os 403/404). Elas viajam
 // apenas no header X-Redmine-API-Key (que NÃO é serializado) e este script:
 //   1) redige recursivamente qualquer campo cujo nome bata em
-//      api_key/token/password/authorization → "[REDACTED]";
+//      api_key/token/password/authorization → "[REDACTED]" (scripts/lib/record-body.mjs);
 //   2) reescreve a URL base real (http://localhost:3080) para o placeholder
 //      estável https://redmine.example (também some com o host local);
 //   3) ao final, ABORTA se alguma das api_keys reais aparecer no arquivo.
@@ -38,7 +38,8 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ATTACH_FILENAME, recordingPlan } from './lib/record-plan.mjs';
+import { CANONICAL_BASE, recordedBody } from './lib/record-body.mjs';
+import { ATTACH_FILENAME, recordingPlan, requestUrl } from './lib/record-plan.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..');
@@ -50,10 +51,6 @@ const USER = process.env.REDMINE_ADMIN_USER ?? 'admin';
 const PASS = process.env.REDMINE_ADMIN_PASSWORD ?? 'admin';
 const AUTH = 'Basic ' + Buffer.from(`${USER}:${PASS}`).toString('base64');
 
-/** Placeholder estável que substitui a URL base real nas fixtures versionadas. */
-const CANONICAL_BASE = 'https://redmine.example';
-/** Placeholder de valor redigido. */
-const REDACTED = '[REDACTED]';
 
 /** Subjects das fixtures (chave de idempotência do seed), na ordem base 1..3. */
 const SUBJECTS = ['RC Fixture: issue base 1', 'RC Fixture: issue base 2', 'RC Fixture: issue base 3'];
@@ -162,33 +159,6 @@ async function resolveIds() {
   return ids;
 }
 
-/** Nomes de campo cujo VALOR deve ser redigido (defesa em profundidade). */
-const SECRET_KEY = /(^|_)(api_?key|token|password|passwd|authorization|secret)($|_)/i;
-
-/**
- * Redige recursivamente valores de campos sensíveis e reescreve a URL base real
- * para o placeholder canônico. Preserva a forma; só troca segredos e o host.
- * @param {unknown} value
- * @returns {unknown}
- */
-function redact(value) {
-  if (typeof value === 'string') {
-    return value.split(BASE).join(CANONICAL_BASE);
-  }
-  if (Array.isArray(value)) {
-    return value.map(redact);
-  }
-  if (value !== null && typeof value === 'object') {
-    /** @type {Record<string, unknown>} */
-    const out = {};
-    for (const [k, v] of Object.entries(value)) {
-      out[k] = SECRET_KEY.test(k) ? REDACTED : redact(v);
-    }
-    return out;
-  }
-  return value;
-}
-
 async function main() {
   log(`alvo: ${BASE} (stack assumido up+seedado via ci:e2e:up)`);
   const apiKey = await fetchAdminApiKey();
@@ -211,28 +181,23 @@ async function main() {
   const interactions = [];
   let downloadPath = '';
   for (const request of recordingPlan(planIds)) {
-    const query = new URLSearchParams(request.query).toString();
-    const url = query === '' ? request.path : `${request.path}?${query}`;
+    const url = requestUrl(request);
     const got = await apiKeyGet(keys[request.as], url, request.kind);
     if (got.status !== request.status) {
-      fail(`GET ${url} (${request.case}) respondeu ${got.status}, esperado ${request.status}`);
+      fail(`GET ${url} (${request.case}, como ${request.as}) respondeu ${got.status}, esperado ${request.status}`);
     }
-    const interaction = {
+    if (request.kind === 'binary') {
+      downloadPath = request.path;
+    }
+    interactions.push({
       case: request.case,
       method: 'GET',
       path: request.path,
       query: request.query,
       status: got.status,
       statusText: got.statusText,
-      bodyKind: 'json',
-      body: redact(got.text ? JSON.parse(got.text) : null),
-    };
-    if (request.kind === 'binary') {
-      interaction.bodyKind = 'base64';
-      interaction.body = got.bytes?.toString('base64');
-      downloadPath = request.path;
-    }
-    interactions.push(interaction);
+      ...recordedBody(request, url, got, BASE),
+    });
     log(`gravado: GET ${request.path} → ${got.status} (${request.case})`);
   }
 
@@ -240,7 +205,8 @@ async function main() {
     schemaVersion: '1.0',
     recordedWith: 'scripts/record-fixtures.mjs',
     note:
-      'Fixtures HTTP do Redmine seedado (projeto rc-fixtures) para REPLAY OFFLINE (issue #81, M5-06). ' +
+      'Fixtures HTTP do Redmine seedado (projetos rc-fixtures e rc-fixtures-2) para REPLAY OFFLINE ' +
+      '(#81, M5-06; endpoints de nomes com 403/404 e rótulo `case` por interação: #260). ' +
       'Segredos redigidos: nenhuma api_key/senha/Authorization real. URL base reescrita para ' +
       `${CANONICAL_BASE}. Regravar com: npm run ci:e2e:up && npm run record:fixtures.`,
     baseUrl: CANONICAL_BASE,

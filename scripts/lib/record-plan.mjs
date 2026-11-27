@@ -40,11 +40,9 @@ const ADMIN_OK = /** @type {const} */ ({ as: 'admin', query: {}, status: 200, ki
 export function recordingPlan(ids) {
   /** @type {PlannedRequest[]} */
   const plan = [];
-  let ordinal = 1;
-  for (const id of ids.issueIds) {
+  for (const [index, id] of ids.issueIds.entries()) {
     const issueDetail = { include: ISSUE_INCLUDE };
-    plan.push({ ...ADMIN_OK, case: `detalhe da issue base ${ordinal}`, path: `/issues/${id}.json`, query: issueDetail });
-    ordinal++;
+    plan.push({ ...ADMIN_OK, case: `detalhe da issue base ${index + 1}`, path: `/issues/${id}.json`, query: issueDetail });
   }
   const downloadPath = `/attachments/download/${ids.attachmentId}/${encodeURIComponent(ATTACH_FILENAME)}`;
   plan.push({ ...ADMIN_OK, case: 'download do anexo de texto da issue base 1', path: downloadPath, kind: 'binary' });
@@ -77,4 +75,13 @@ export function recordingPlan(ids) {
   const issueSubjects = { issue_id: ids.issueIds.join(','), status_id: '*' };
   plan.push({ ...ADMIN_OK, case: 'assuntos das issues base numa chamada', path: '/issues.json', query: issueSubjects });
   return plan;
+}
+
+/**
+ * Caminho com a query, como o cliente envia.
+ * @param {{ path: string, query: Record<string, string> }} request
+ */
+export function requestUrl(request) {
+  const query = new URLSearchParams(request.query).toString();
+  return query === '' ? request.path : `${request.path}?${query}`;
 }
