@@ -143,12 +143,12 @@ describe('ensureSeedUsers', () => {
     expect(issue).toMatchObject({ project_id: 'rc-fixtures', subject: ASSIGNEE_SUBJECT, assigned_to_id: 21 }); // nasce com seed-ana
     // ana → carla ANTES do bloqueio; carla → bruno depois.
     expect(writes().slice(-4).map((c) => `${c.method} ${c.path} ${JSON.stringify(c.body.issue?.assigned_to_id ?? c.body.user)}`)).toEqual([
-      'PUT /issues/12.json 23',
       'PUT /issues/50.json 23',
+      'PUT /issues/12.json 23',
       'PUT /users/23.json {"status":3}',
       'PUT /issues/50.json 22',
     ]);
-    expect(writes().at(-3)?.body.issue.notes).toMatch(/^\[seed:responsavel-1\] /);
+    expect(writes().at(-4)?.body.issue.notes).toMatch(/^\[seed:responsavel-1\] /);
     expect(writes().at(-1)?.body.issue.notes).toMatch(/^\[seed:responsavel-2\] /);
   });
 
