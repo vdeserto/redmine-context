@@ -367,6 +367,10 @@ A issue `[seed] Trocas de estado` (`scripts/lib/seed-changes.mjs`) ganha 2 troca
 de status, 1 de tracker e 1 de prioridade, cada uma num journal com marca de
 etapa própria (`[seed:status-1]`, `[seed:tracker]`...), com ids descobertos nas
 enumerações da instância.
+A issue `[seed] Trocas de projeto` (`scripts/lib/seed-moves.mjs`) troca categoria
+e versão (vazio → valor e valor → valor) no `rc-fixtures` e é movida para o
+`rc-fixtures-2` levando categoria e versão do projeto 2 no mesmo PUT, um journal
+marcado por etapa (`[seed:category-1]`... `[seed:move]`).
 Ao final, asserções via `GET` validam as contagens e o processo sai com código
 `!= 0` se algo estiver errado.
 

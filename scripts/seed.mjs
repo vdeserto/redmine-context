@@ -41,6 +41,7 @@ import { BASE, USER, api, ensureByMarker, getIssue, log, putIssue, uploadBytes }
 import { assertStateChanges, ensureStateChanges } from './lib/seed-changes.mjs';
 import { assertProjectFixtures, ensureProjectFixtures } from './lib/seed-projects.mjs';
 import { assertSeedUsers, ensureSeedUsers } from './lib/seed-users.mjs';
+import { seedMoves } from './lib/seed-moves.mjs';
 
 const PROJECT_ID = 'rc-fixtures';
 const PROJECT_NAME = 'RC Fixtures';
@@ -390,6 +391,7 @@ async function main() {
   await assertProjectFixtures();
   await assertSeedUsers(PROJECT_ID, seedUserIds);
   await assertStateChanges(PROJECT_ID);
+  await seedMoves();
   log(`seed concluído. issues no projeto: ${total}`);
 }
 
