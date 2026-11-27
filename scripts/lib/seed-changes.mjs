@@ -134,7 +134,7 @@ export async function assertStateChanges(projectId) {
     journalsByMarker[marker] ??= [];
     journalsByMarker[marker].push(journal);
   }
-  let summary = '';
+  const summary = [];
   for (const step of STEPS) {
     const journals = journalsByMarker[step.marker] ?? [];
     if (journals.length !== 1) {
@@ -145,7 +145,7 @@ export async function assertStateChanges(projectId) {
     if (!detail?.old_value || !detail.new_value || detail.old_value === detail.new_value) {
       throw new Error(`ASSERT trocas: ${step.marker} sem troca de ${step.field} — details ${JSON.stringify(details)}`);
     }
-    summary += ` ${step.field} ${detail.old_value}→${detail.new_value};`;
+    summary.push(`${step.field} ${detail.old_value}→${detail.new_value}`);
   }
-  log(`asserções OK: trocas na issue ${issueId}:${summary}`);
+  log(`asserções OK: trocas na issue ${issueId}: ${summary.join('; ')}`);
 }
