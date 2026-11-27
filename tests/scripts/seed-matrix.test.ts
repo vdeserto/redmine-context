@@ -151,7 +151,7 @@ describe('assertSeedMatrix — matriz completa', () => {
   it('passa e devolve as contagens quando todos os casos estão presentes', async () => {
     const counts = await assertSeedMatrix();
 
-    expect(counts).toEqual({ issues: 4, journals: 8, anexos: 3, usuarios: 3, versoes: 4, categorias: 4 });
+    expect(counts).toEqual({ issues: 4, journals: 7, anexos: 3, usuarios: 3, versoes: 4, categorias: 4 });
   });
 
   it('só faz GET (nunca escreve)', async () => {

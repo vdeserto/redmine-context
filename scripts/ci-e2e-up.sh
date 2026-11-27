@@ -15,7 +15,8 @@
 #   2) wait-for-healthy.sh postgres redmine         (core services healthy)
 #   3) poll `docker compose ps -a` for the one-shots (load-default-data +
 #      enable-rest-api must reach state=exited with exit code 0)
-#   4) node scripts/seed.mjs                        (idempotent seed; re-runnable)
+#   4) node scripts/seed.mjs, TWICE                 (idempotent seed; the
+#      `[seed] contagens:` line of both runs must be identical — issue #205)
 #
 # The stack is LEFT UP on success (teardown is the caller's job, e.g.
 # `docker compose -f docker/docker-compose.yml down -v`). Re-running this script
@@ -96,8 +97,20 @@ for svc in "${ONE_SHOTS[@]}"; do
   wait_one_shot "$svc"
 done
 
-# 4) Seed idempotently via REST (reuses scripts/seed.mjs; asserts counts).
-log "running idempotent REST seed (scripts/seed.mjs)..."
-node "$ROOT/scripts/seed.mjs"
+# 4) Seed via REST twice (reuses scripts/seed.mjs; asserts counts and the full
+#    matrix). The seed is idempotent, so the 2nd run must report the same
+#    `[seed] contagens:` line; the full seed output still goes to stderr.
+run_seed() { node "$ROOT/scripts/seed.mjs" 2>&1 | tee /dev/stderr | grep '^\[seed\] contagens:'; }
+log "running REST seed (scripts/seed.mjs), 1st run..."
+first_counts="$(run_seed)"
+log "running REST seed again to check idempotency..."
+second_counts="$(run_seed)"
+if [ "$first_counts" != "$second_counts" ]; then
+  log "ERROR: seed is not idempotent; counts changed between runs:"
+  log "  1st: $first_counts"
+  log "  2nd: $second_counts"
+  exit 1
+fi
+log "seed idempotent: $second_counts"
 
 log "OK: stack is up, one-shots done, fixtures seeded. Stack left running."
