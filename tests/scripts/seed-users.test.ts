@@ -23,7 +23,8 @@ const MEMBERS_LIST = 'GET /projects/rc-fixtures/memberships.json?limit=100';
 const JOURNALS = 'GET /issues/12.json?include=journals';
 const GROUP_USERS = 'GET /groups/30.json?include=users';
 const ASSIGNEE_SUBJECT = '[seed] Trocas de responsável';
-const ASSIGNEE_LIST = `GET /issues.json?project_id=rc-fixtures&status_id=*&subject=~${encodeURIComponent(ASSIGNEE_SUBJECT)}`;
+const ASSIGNEE_LIST =
+  `GET /issues.json?project_id=rc-fixtures&status_id=*&subject=~${encodeURIComponent(ASSIGNEE_SUBJECT)}`;
 const ASSIGNEE_JOURNALS = 'GET /issues/50.json?include=journals';
 const TO_CARLA = '[seed:responsavel-1]';
 const FROM_CARLA = '[seed:responsavel-2]';
@@ -34,12 +35,14 @@ let assigneeId: number;
 /** Issue de trocas de responsável (id 50) com os journals marcados já gravados. */
 function assigneeRoutes(markers: string[], exists = true) {
   assigneeId = 21;
-  routes[ASSIGNEE_LIST] = {
-    status: 200,
-    body: { issues: [{ id: 49, subject: `${ASSIGNEE_SUBJECT} (cópia)` }, ...(exists ? [{ id: 50, subject: ASSIGNEE_SUBJECT }] : [])] },
-  };
+  const issues = [{ id: 49, subject: `${ASSIGNEE_SUBJECT} (cópia)` }];
+  if (exists) {
+    issues.push({ id: 50, subject: ASSIGNEE_SUBJECT });
+  }
+  routes[ASSIGNEE_LIST] = { status: 200, body: { issues } };
   routes['POST /issues.json'] = { status: 201, body: { issue: { id: 50, subject: ASSIGNEE_SUBJECT } } };
-  routes[ASSIGNEE_JOURNALS] = { status: 200, body: { issue: { id: 50, journals: markers.map((m, i) => ({ id: 90 + i, notes: `${m} x` })) } } };
+  const journals = markers.map((m, i) => ({ id: 90 + i, notes: `${m} x` }));
+  routes[ASSIGNEE_JOURNALS] = { status: 200, body: { issue: { id: 50, journals } } };
   routes['PUT /issues/50.json'] = (body) => {
     assigneeId = body.issue.assigned_to_id;
     return { status: 204 };
@@ -140,9 +143,13 @@ describe('ensureSeedUsers', () => {
     expect(assign?.body.issue.assigned_to_id).toBe(23);
     expect(assign?.body.issue.notes).toMatch(/^\[seed-users\] /);
     const issue = writes().find((c) => c.path === '/issues.json')?.body.issue;
-    expect(issue).toMatchObject({ project_id: 'rc-fixtures', subject: ASSIGNEE_SUBJECT, assigned_to_id: 21 }); // nasce com seed-ana
+    // nasce com seed-ana
+    expect(issue).toMatchObject({ project_id: 'rc-fixtures', subject: ASSIGNEE_SUBJECT, assigned_to_id: 21 });
     // ana → carla ANTES do bloqueio; carla → bruno depois.
-    expect(writes().slice(-4).map((c) => `${c.method} ${c.path} ${JSON.stringify(c.body.issue?.assigned_to_id ?? c.body.user)}`)).toEqual([
+    const changes = writes()
+      .slice(-4)
+      .map((c) => `${c.method} ${c.path} ${c.body.issue?.assigned_to_id ?? JSON.stringify(c.body.user)}`);
+    expect(changes).toEqual([
       'PUT /issues/50.json 23',
       'PUT /issues/12.json 23',
       'PUT /users/23.json {"status":3}',
@@ -177,7 +184,8 @@ describe('ensureSeedUsers', () => {
 
     await ensureSeedUsers('rc-fixtures', 12);
 
-    expect(writes().map((c) => `${c.method} ${c.path} ${c.body.issue.assigned_to_id}`)).toEqual(['PUT /issues/50.json 22']);
+    const puts = writes().map((c) => `${c.method} ${c.path} ${c.body.issue.assigned_to_id}`);
+    expect(puts).toEqual(['PUT /issues/50.json 22']);
   });
 
   it('base antiga (carla já bloqueada sem a troca para ela): lança pedindo recriar, sem desbloquear', async () => {
@@ -193,6 +201,34 @@ describe('ensureSeedUsers', () => {
 
     await expect(ensureSeedUsers('rc-fixtures', 12)).rejects.toThrow(/\[seed:responsavel-1\].*ignorou.*21/);
     expect(writes().some((c) => c.path === '/users/23.json')).toBe(false); // não bloqueia com a troca faltando
+  });
+
+  it('base antiga sem a issue de trocas (carla já bloqueada): lança sem escrita, nem o POST da issue', async () => {
+    seededRoutes(3, null, []);
+    assigneeRoutes([], false);
+
+    await expect(ensureSeedUsers('rc-fixtures', 12)).rejects.toThrow(/seed-carla.*bloquead.*recrie.*down -v/);
+    expect(writes()).toEqual([]);
+  });
+
+  it('Redmine ignora a troca carla → bruno: lança dizendo para apagar a issue e rodar de novo', async () => {
+    seededRoutes(3, null, [TO_CARLA]);
+    assigneeId = 23;
+    routes['PUT /issues/50.json'] = { status: 204 }; // não grava: GET segue com seed-carla
+
+    await expect(ensureSeedUsers('rc-fixtures', 12)).rejects.toThrow(
+      /\[seed:responsavel-2\].*ignorou.*23.*apague a issue \[seed\] Trocas de responsável e rode o seed/,
+    );
+  });
+
+  it('PUT da troca ana → carla devolve 422: propaga o erro e não bloqueia', async () => {
+    seededRoutes(1, '[seed-users] x', []);
+    routes['PUT /issues/50.json'] = { status: 422, body: { errors: ['Assignee is invalid'] } };
+
+    await expect(ensureSeedUsers('rc-fixtures', 12)).rejects.toThrow(
+      /PUT \[seed:responsavel-1\] issue 50.*422.*Assignee/,
+    );
+    expect(writes().some((c) => c.path === '/users/23.json')).toBe(false);
   });
 
   it('grupo já existe sem seed-bruno: devolve o bruno ao grupo', async () => {
@@ -355,7 +391,32 @@ describe('assertSeedUsers', () => {
       { notes: `${FROM_CARLA} x`, old: '23', new: '21' },
     ]);
 
-    await expect(assertSeedUsers('rc-fixtures', ids)).rejects.toThrow(/\[seed:responsavel-2\].*23→22.*"new_value":"21"/);
+    await expect(assertSeedUsers('rc-fixtures', ids)).rejects.toThrow(
+      /\[seed:responsavel-2\].*23→22.*"new_value":"21"/,
+    );
+  });
+
+  it('troca marcada sem detail (Redmine ignorou): lança dizendo para apagar a issue e rodar de novo', async () => {
+    const journals = [
+      { id: 90, notes: `${TO_CARLA} x`, details: [] },
+      { id: 91, notes: `${FROM_CARLA} x` },
+    ];
+    routes[ASSIGNEE_JOURNALS] = { status: 200, body: { issue: { id: 50, journals } } };
+
+    await expect(assertSeedUsers('rc-fixtures', ids)).rejects.toThrow(
+      /\[seed:responsavel-1\].*21→23.*details \[\].*apague a issue \[seed\] Trocas de responsável e rode o seed/,
+    );
+  });
+
+  it('journal cuja nota começa com __proto__ ou outra palavra qualquer: ignorado', async () => {
+    assigneeJournals([
+      { notes: '__proto__ x', old: null, new: null },
+      { notes: 'constructor', old: null, new: null },
+      { notes: `${TO_CARLA} x`, old: '21', new: '23' },
+      { notes: `${FROM_CARLA} x`, old: '23', new: '22' },
+    ]);
+
+    await assertSeedUsers('rc-fixtures', ids);
   });
 
   it('troca de responsável ausente ou duplicada: lança com a contagem', async () => {
