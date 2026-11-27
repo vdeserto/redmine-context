@@ -13,6 +13,10 @@
 // sai de `GET /users/:id.json` com a credencial admin (campo `api_key`); nunca
 // é logada. Os usuários são criados com `generate_password`, então nenhuma
 // senha vive no código.
+//
+// As memberships usam o 1º papel de /roles.json (Manager nos papéis padrão), que
+// precisa ser atribuível. Assim seed-ana é Manager do rc-fixtures: o M6-07.1
+// deve gravar os 403 em endpoints SÓ de admin (ex. /users.json), não de projeto.
 
 import { api, ensureByMarker, log, putIssue } from './seed-helpers.mjs';
 
@@ -31,6 +35,8 @@ const USERS = {
 
 /** Quem precisa de membership direta no projeto (o grupo leva seed-bruno junto). */
 const DIRECT_MEMBERS = [API_USER, LOCKED_USER, GROUP];
+/** O que a asserção confere no projeto: seed-bruno aparece com a membership herdada do grupo. */
+const PROJECT_MEMBERS = [API_USER, LOCKED_USER, GROUP, GROUP_MEMBER];
 
 /**
  * Chama a API e lança se o status não for o esperado.
@@ -54,7 +60,7 @@ async function call(method, path, body, expected) {
  * @returns {Promise<Record<number, true>>}
  */
 async function projectMemberIds(project) {
-  const got = await call('GET', `/projects/${project}/memberships.json?limit=100`, undefined, 200);
+  const got = await call('GET', `/projects/${project}/memberships.json?limit=100`, undefined, 200); // fixture tem poucos membros
   /** @type {Record<number, true>} */
   const ids = {};
   for (const membership of got.memberships) {
@@ -73,16 +79,15 @@ async function projectMemberIds(project) {
 export async function ensureSeedUsers(project, issueId) {
   /** @type {Record<string, number>} */
   const ids = {};
-  let lockedStatus = 0;
+  /** @type {Record<string, { status: number }>} */
+  const users = {};
   for (const login in USERS) {
     const user = await ensureByMarker('user', login, async () => {
       const newUser = { login, ...USERS[login], mail: `${login}@example.com`, generate_password: true };
       return (await call('POST', '/users.json', { user: newUser }, 201)).user;
     });
     ids[login] = user.id;
-    if (login === LOCKED_USER) {
-      lockedStatus = user.status;
-    }
+    users[login] = user;
   }
 
   const group = await ensureByMarker('group', GROUP, async () => {
@@ -90,20 +95,28 @@ export async function ensureSeedUsers(project, issueId) {
     return (await call('POST', '/groups.json', { group: newGroup }, 201)).group;
   });
   ids[GROUP] = group.id;
+  const groupUsers = (await call('GET', `/groups/${group.id}.json?include=users`, undefined, 200)).group.users;
+  if (!groupUsers.some((user) => user.id === ids[GROUP_MEMBER])) {
+    await call('POST', `/groups/${group.id}/users.json`, { user_id: ids[GROUP_MEMBER] }, 204);
+    log(`${GROUP_MEMBER}: devolvido ao grupo ${GROUP}`);
+  }
 
-  const roleId = (await call('GET', '/roles.json', undefined, 200)).roles[0].id;
+  const role = (await call('GET', '/roles.json', undefined, 200)).roles[0];
+  if (!role) {
+    throw new Error('GET /roles.json: nenhum papel disponível');
+  }
   const memberIds = await projectMemberIds(project);
   for (const name of DIRECT_MEMBERS) {
     if (memberIds[ids[name]]) {
       log(`membership ${name} (${project}): já existe`);
       continue;
     }
-    const membership = { user_id: ids[name], role_ids: [roleId] };
+    const membership = { user_id: ids[name], role_ids: [role.id] };
     await call('POST', `/projects/${project}/memberships.json`, { membership }, 201);
     log(`membership ${name} (${project}): criada`);
   }
 
-  if (lockedStatus === LOCKED_STATUS) {
+  if (users[LOCKED_USER].status === LOCKED_STATUS) {
     log(`${LOCKED_USER}: já bloqueado`);
     return ids;
   }
@@ -117,8 +130,8 @@ export async function ensureSeedUsers(project, issueId) {
 }
 
 /**
- * Confere via GET: seed-ana não-admin com api_key, seed-carla com status 3 e
- * as memberships diretas no projeto. Lança na primeira divergência.
+ * Confere via GET: seed-ana não-admin com api_key, seed-carla com status 3,
+ * as memberships diretas e a herdada de seed-bruno no projeto. Lança na primeira divergência.
  * @param {string} project identifier
  * @param {Record<string, number>} ids retorno de ensureSeedUsers
  */
@@ -135,10 +148,10 @@ export async function assertSeedUsers(project, ids) {
     throw new Error(`ASSERT ${LOCKED_USER}: esperado status ${LOCKED_STATUS}, obtido ${locked.status}`);
   }
   const memberIds = await projectMemberIds(project);
-  for (const name of DIRECT_MEMBERS) {
+  for (const name of PROJECT_MEMBERS) {
     if (!memberIds[ids[name]]) {
       throw new Error(`ASSERT membership: ${name} ausente em ${project}`);
     }
   }
-  log(`asserções de usuários OK: ${LOCKED_USER} status=${LOCKED_STATUS}, memberships=${DIRECT_MEMBERS.join(', ')}`);
+  log(`asserções de usuários OK: ${LOCKED_USER} status=${LOCKED_STATUS}, memberships=${PROJECT_MEMBERS.join(', ')}`);
 }
