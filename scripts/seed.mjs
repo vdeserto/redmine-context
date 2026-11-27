@@ -37,7 +37,7 @@
 // Infra script (fora de src/): não usa console. Loga em stderr via helper.
 
 import { BASE, USER, api, ensureByMarker, getIssue, log, putIssue } from './lib/seed-helpers.mjs';
-import { ensureFixtureAttachments } from './lib/seed-attachments.mjs';
+import { ensureAttachmentHistory, ensureFixtureAttachments } from './lib/seed-attachments.mjs';
 import { assertStateChanges, ensureStateChanges } from './lib/seed-changes.mjs';
 import { assertProjectFixtures, ensureProjectFixtures } from './lib/seed-projects.mjs';
 import { assertSeedUsers, ensureSeedUsers } from './lib/seed-users.mjs';
@@ -352,6 +352,7 @@ async function main() {
   await assertProjectFixtures();
   await assertSeedUsers(PROJECT_ID, seedUserIds);
   await assertStateChanges(PROJECT_ID);
+  await ensureAttachmentHistory(PROJECT_ID);
   log(`seed concluído. issues no projeto: ${total}`);
 }
 
