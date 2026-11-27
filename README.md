@@ -372,6 +372,19 @@ A issue `[seed] Trocas de estado` (`scripts/lib/seed-changes.mjs`) ganha 2 troca
 de status, 1 de tracker e 1 de prioridade, cada uma num journal com marca de
 etapa própria (`[seed:status-1]`, `[seed:tracker]`...), com ids descobertos nas
 enumerações da instância.
+A issue `[seed] Anexos no histórico` (`scripts/lib/seed-attachments.mjs`) ganha o
+anexo `seed-added.txt` num journal marcado e perde o `seed-removed.txt` via
+`DELETE /attachments/:id.json` (details `attachment` com `new_value`/`old_value`);
+o filename é a marca, e a remoção já no histórico não se repete.
+A issue `[seed] Trocas de projeto` (`scripts/lib/seed-moves.mjs`) troca categoria
+e versão (vazio → valor e valor → valor) no `rc-fixtures` e é movida para o
+`rc-fixtures-2` levando categoria e versão do projeto 2 no mesmo PUT, um journal
+marcado por etapa (`[seed:category-1]`... `[seed:move]`).
+A issue `[seed] CF desvinculado` (`scripts/lib/seed-cf-unlinked.mjs`) guarda um
+journal `[seed:cf-desvinculado]` com detail `cf` de um custom field que o seed
+cria, preenche e depois desvincula do tracker da issue por `rails runner` no
+container do compose (a REST API não edita custom fields; exige o docker do
+compose, trocável por `COMPOSE_FILE`), e o bundle mostra `campo #<id>` para ele.
 Ao final, asserções via `GET` validam as contagens e o processo sai com código
 `!= 0` se algo estiver errado.
 
